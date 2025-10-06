@@ -1,0 +1,700 @@
+import React, { useState, useEffect } from 'react';
+import { 
+  Calendar, 
+  Save, 
+  RefreshCw, 
+  Plus, 
+  Edit2, 
+  Trash2, 
+  LogIn, 
+  LogOut, 
+  Users, 
+  Play,
+  Settings,
+  BarChart3,
+  Clock
+} from 'lucide-react';
+
+// Import our new components and services
+import { Staff, Student, Schedule, Assignment, SchedulingUtils } from './types/index.js';
+import { SharePointService } from './services/SharePointService.js';
+import { PeoplePickerService } from './services/PeoplePickerService.js';
+import { AutoAssignmentEngine } from './services/AutoAssignmentEngine.js';
+import { 
+  ScheduleGrid, 
+  SessionSummary 
+} from './components/SchedulingComponents.js';
+import { 
+  ValidationPanel, 
+  ConstraintRulesDisplay 
+} from './components/ValidationComponents.js';
+import { 
+  StaffForm, 
+  StudentForm 
+} from './components/DataManagementComponents.js';
+import TeamManagement from './components/TeamManagement.js';
+
+const ABAScheduler = () => {
+  // SharePoint configuration
+  const [spConfig] = useState({
+    siteUrl: 'https://evokebehavioralhealthcom.sharepoint.com/sites/Clinistrators',
+    staffListName: 'Staff',
+    studentsListName: 'Students',
+    scheduleListName: 'ABASchedules',
+    // Azure AD Configuration
+    clientId: 'c9f70b7e-8ffb-403d-af93-80b95b38a0bb',
+    tenantId: 'a4adcc38-7b4e-485c-80f9-7d9ca4e83d64',
+    redirectUri: window.location.hostname === 'localhost' 
+      ? 'http://localhost:3000' 
+      : 'https://mlr3037.github.io/EvokeSchedule2.0'
+  });
+
+  // Services
+  const [sharePointService] = useState(() => new SharePointService(spConfig));
+  const [peoplePickerService] = useState(() => new PeoplePickerService(spConfig));
+  const [autoAssignEngine] = useState(() => new AutoAssignmentEngine());
+
+  // Authentication state
+  const [isAuthenticated, setIsAuthenticated] = useState(false);
+  const [accessToken, setAccessToken] = useState(null);
+
+  // Core data
+  const [staff, setStaff] = useState([]);
+  const [students, setStudents] = useState([]);
+  const [currentDate, setCurrentDate] = useState(new Date());
+  const [schedule, setSchedule] = useState(new Schedule({ date: new Date() }));
+
+  // UI state
+  const [activeTab, setActiveTab] = useState('schedule');
+  const [loading, setLoading] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [autoAssigning, setAutoAssigning] = useState(false);
+  const [validationResults, setValidationResults] = useState(null);
+  
+  // Modal states
+  const [showAddStaff, setShowAddStaff] = useState(false);
+  const [showAddStudent, setShowAddStudent] = useState(false);
+  const [editingStaff, setEditingStaff] = useState(null);
+  const [editingStudent, setEditingStudent] = useState(null);
+  const [showSettings, setShowSettings] = useState(false);
+
+  useEffect(() => {
+    initializeApp();
+  }, []);
+
+  // Initialize application
+  const initializeApp = async () => {
+    try {
+      const isAuth = await sharePointService.checkAuthentication();
+      setIsAuthenticated(isAuth);
+      setAccessToken(sharePointService.accessToken);
+      
+      // Set access token for People Picker service
+      if (sharePointService.accessToken) {
+        peoplePickerService.setAccessToken(sharePointService.accessToken);
+      }
+      
+      if (isAuth) {
+        await loadData();
+      }
+    } catch (error) {
+      console.error('Error initializing app:', error);
+    }
+  };
+
+  // Load all data from SharePoint
+  const loadData = async () => {
+    setLoading(true);
+    try {
+      // Load staff, students, and schedule in parallel
+      const [staffData, studentsData, scheduleData] = await Promise.all([
+        sharePointService.loadStaff(),
+        sharePointService.loadStudents(),
+        sharePointService.loadSchedule(currentDate)
+      ]);
+
+      setStaff(staffData);
+      setStudents(studentsData);
+      setSchedule(scheduleData);
+      
+      console.log(`Loaded ${staffData.length} staff, ${studentsData.length} students`);
+    } catch (error) {
+      console.error('Error loading data:', error);
+      // Show error to user
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // Handle date change
+  const handleDateChange = async (newDate) => {
+    setCurrentDate(newDate);
+    if (isAuthenticated) {
+      try {
+        const scheduleData = await sharePointService.loadSchedule(newDate);
+        setSchedule(scheduleData);
+      } catch (error) {
+        console.error('Error loading schedule for new date:', error);
+      }
+    }
+  };
+
+  // Authentication handlers
+  const handleLogin = async () => {
+    try {
+      await sharePointService.login();
+    } catch (error) {
+      console.error('Login error:', error);
+    }
+  };
+
+  const handleLogout = () => {
+    sharePointService.logout();
+    setIsAuthenticated(false);
+    setAccessToken(null);
+    setStaff([]);
+    setStudents([]);
+    setSchedule(new Schedule({ date: currentDate }));
+  };
+
+  // Auto-assignment
+  const handleAutoAssign = async () => {
+    if (!validationResults?.isValid) {
+      if (!window.confirm('There are validation errors. Do you want to proceed with auto-assignment anyway?')) {
+        return;
+      }
+    }
+
+    setAutoAssigning(true);
+    autoAssignEngine.setDebugMode(true);
+    
+    try {
+      const result = await autoAssignEngine.autoAssignSchedule(schedule, staff, students);
+      
+      if (result.assignments.length > 0) {
+        console.log(`Auto-assignment created ${result.assignments.length} new assignments`);
+        // Assignments were already added to schedule in the engine
+        setSchedule({ ...schedule }); // Force re-render
+      }
+      
+      if (result.errors.length > 0) {
+        console.warn('Auto-assignment errors:', result.errors);
+        // Show errors to user
+      }
+    } catch (error) {
+      console.error('Auto-assignment failed:', error);
+    } finally {
+      setAutoAssigning(false);
+    }
+  };
+
+  // Assignment management
+  const handleAssignmentLock = (assignmentId) => {
+    schedule.lockAssignment(assignmentId);
+    setSchedule({ ...schedule });
+  };
+
+  const handleAssignmentUnlock = (assignmentId) => {
+    schedule.unlockAssignment(assignmentId);
+    setSchedule({ ...schedule });
+  };
+
+  const handleManualAssignment = ({ staffId, studentId, session, program }) => {
+    const assignment = new Assignment({
+      id: SchedulingUtils.generateAssignmentId(),
+      staffId,
+      studentId,
+      session,
+      program,
+      date: currentDate,
+      isLocked: false,
+      assignedBy: 'manual'
+    });
+
+    schedule.addAssignment(assignment);
+    setSchedule({ ...schedule });
+  };
+
+  const handleAssignmentRemove = (assignmentId) => {
+    schedule.removeAssignment(assignmentId);
+    schedule.unlockAssignment(assignmentId); // Also unlock if it was locked
+    setSchedule({ ...schedule });
+  };
+
+  // Save schedule
+  const handleSaveSchedule = async () => {
+    setSaving(true);
+    try {
+      await sharePointService.saveSchedule(schedule);
+      console.log('Schedule saved successfully');
+      // Show success message to user
+    } catch (error) {
+      console.error('Error saving schedule:', error);
+      // Show error message to user
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  // Staff management
+  const handleAddStaff = async (staffData) => {
+    try {
+      const newStaff = new Staff(staffData);
+      await sharePointService.saveStaff(newStaff);
+      await loadData(); // Reload data to get updated list
+      setShowAddStaff(false);
+    } catch (error) {
+      console.error('Error adding staff:', error);
+    }
+  };
+
+  const handleEditStaff = async (staffData) => {
+    try {
+      const updatedStaff = new Staff({ ...staffData, id: editingStaff.id });
+      await sharePointService.saveStaff(updatedStaff, true);
+      await loadData(); // Reload data
+      setEditingStaff(null);
+    } catch (error) {
+      console.error('Error updating staff:', error);
+    }
+  };
+
+  const handleDeleteStaff = async (staffId) => {
+    if (window.confirm('Are you sure you want to delete this staff member?')) {
+      try {
+        await sharePointService.deleteStaff(staffId);
+        await loadData();
+      } catch (error) {
+        console.error('Error deleting staff:', error);
+      }
+    }
+  };
+
+  // Student management
+  const handleAddStudent = async (studentData) => {
+    try {
+      const newStudent = new Student(studentData);
+      await sharePointService.saveStudent(newStudent);
+      await loadData();
+      setShowAddStudent(false);
+    } catch (error) {
+      console.error('Error adding student:', error);
+    }
+  };
+
+  const handleEditStudent = async (studentData) => {
+    try {
+      const updatedStudent = new Student({ ...studentData, id: editingStudent.id });
+      await sharePointService.saveStudent(updatedStudent, true);
+      await loadData();
+      setEditingStudent(null);
+    } catch (error) {
+      console.error('Error updating student:', error);
+    }
+  };
+
+  const handleDeleteStudent = async (studentId) => {
+    if (window.confirm('Are you sure you want to delete this student?')) {
+      try {
+        await sharePointService.deleteStudent(studentId);
+        await loadData();
+      } catch (error) {
+        console.error('Error deleting student:', error);
+      }
+    }
+  };
+
+  // Validation change handler
+  const handleValidationChange = (results) => {
+    setValidationResults(results);
+  };
+
+  // Render login screen if not authenticated
+  if (!isAuthenticated) {
+    return (
+      <div className="min-h-screen bg-gray-100 flex items-center justify-center">
+        <div className="bg-white p-8 rounded-lg shadow-lg max-w-md w-full mx-4">
+          <div className="text-center mb-6">
+            <Users className="w-12 h-12 text-blue-600 mx-auto mb-4" />
+            <h1 className="text-2xl font-bold text-gray-900 mb-2">ABA Scheduler</h1>
+            <p className="text-gray-600">Staff & Student Scheduling System</p>
+          </div>
+          
+          <button
+            onClick={handleLogin}
+            className="w-full bg-blue-600 text-white py-3 px-4 rounded-lg hover:bg-blue-700 flex items-center justify-center gap-2"
+          >
+            <LogIn className="w-5 h-5" />
+            Sign in with Microsoft
+          </button>
+          
+          <div className="mt-6 text-sm text-gray-500 text-center">
+            <p>Sign in to access the ABA scheduling system</p>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // Main application UI
+  return (
+    <div className="min-h-screen bg-gray-100">
+      {/* Header */}
+      <header className="bg-white shadow-sm border-b border-gray-200">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+          <div className="flex justify-between items-center h-16">
+            <div className="flex items-center gap-3">
+              <Users className="w-8 h-8 text-blue-600" />
+              <div>
+                <h1 className="text-xl font-bold text-gray-900">ABA Scheduler</h1>
+                <p className="text-sm text-gray-500">Staff & Student Scheduling</p>
+              </div>
+            </div>
+            
+            <div className="flex items-center gap-4">
+              {/* Date selector */}
+              <div className="flex items-center gap-2">
+                <Calendar className="w-5 h-5 text-gray-500" />
+                <input
+                  type="date"
+                  value={currentDate.toISOString().split('T')[0]}
+                  onChange={(e) => handleDateChange(new Date(e.target.value))}
+                  className="border border-gray-300 rounded px-3 py-1 text-sm"
+                />
+              </div>
+              
+              {/* Action buttons */}
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={handleAutoAssign}
+                  disabled={autoAssigning || loading}
+                  className="bg-green-600 text-white px-4 py-2 rounded hover:bg-green-700 disabled:opacity-50 flex items-center gap-2"
+                >
+                  {autoAssigning ? <RefreshCw className="w-4 h-4 animate-spin" /> : <Play className="w-4 h-4" />}
+                  Auto Assign
+                </button>
+                
+                <button
+                  onClick={handleSaveSchedule}
+                  disabled={saving || loading}
+                  className="bg-blue-600 text-white px-4 py-2 rounded hover:bg-blue-700 disabled:opacity-50 flex items-center gap-2"
+                >
+                  {saving ? <RefreshCw className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
+                  Save
+                </button>
+                
+                <button
+                  onClick={loadData}
+                  disabled={loading}
+                  className="bg-gray-600 text-white px-4 py-2 rounded hover:bg-gray-700 disabled:opacity-50 flex items-center gap-2"
+                >
+                  <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
+                  Refresh
+                </button>
+              </div>
+              
+              {/* User menu */}
+              <div className="relative">
+                <button
+                  onClick={handleLogout}
+                  className="flex items-center gap-2 text-gray-700 hover:text-gray-900"
+                >
+                  <LogOut className="w-5 h-5" />
+                  Sign Out
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </header>
+
+      {/* Navigation Tabs */}
+      <nav className="bg-white border-b border-gray-200">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+          <div className="flex space-x-8">
+            {[
+              { id: 'schedule', label: 'Schedule', icon: Clock },
+              { id: 'staff', label: 'Staff', icon: Users },
+              { id: 'students', label: 'Students', icon: Users },
+              { id: 'teams', label: 'Teams', icon: Users },
+              { id: 'validation', label: 'Validation', icon: BarChart3 },
+              { id: 'rules', label: 'Rules', icon: Settings }
+            ].map(tab => {
+              const Icon = tab.icon;
+              return (
+                <button
+                  key={tab.id}
+                  onClick={() => setActiveTab(tab.id)}
+                  className={`py-4 px-1 border-b-2 font-medium text-sm flex items-center gap-2 ${
+                    activeTab === tab.id
+                      ? 'border-blue-500 text-blue-600'
+                      : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
+                  }`}
+                >
+                  <Icon className="w-4 h-4" />
+                  {tab.label}
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      </nav>
+
+      {/* Main Content */}
+      <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+        {loading && (
+          <div className="flex justify-center items-center py-12">
+            <RefreshCw className="w-8 h-8 animate-spin text-blue-600" />
+            <span className="ml-2 text-gray-600">Loading...</span>
+          </div>
+        )}
+
+        {!loading && (
+          <>
+            {/* Schedule Tab */}
+            {activeTab === 'schedule' && (
+              <div className="space-y-6">
+                <div className="grid grid-cols-1 lg:grid-cols-4 gap-6 mb-6">
+                  <SessionSummary 
+                    schedule={schedule} 
+                    staff={staff} 
+                    students={students} 
+                    session="AM" 
+                    program="Primary" 
+                  />
+                  <SessionSummary 
+                    schedule={schedule} 
+                    staff={staff} 
+                    students={students} 
+                    session="PM" 
+                    program="Primary" 
+                  />
+                  <SessionSummary 
+                    schedule={schedule} 
+                    staff={staff} 
+                    students={students} 
+                    session="AM" 
+                    program="Secondary" 
+                  />
+                  <SessionSummary 
+                    schedule={schedule} 
+                    staff={staff} 
+                    students={students} 
+                    session="PM" 
+                    program="Secondary" 
+                  />
+                </div>
+                
+                <ScheduleGrid
+                  schedule={schedule}
+                  staff={staff}
+                  students={students}
+                  onAssignmentLock={handleAssignmentLock}
+                  onAssignmentUnlock={handleAssignmentUnlock}
+                  onManualAssignment={handleManualAssignment}
+                  onAssignmentRemove={handleAssignmentRemove}
+                  selectedDate={currentDate}
+                />
+              </div>
+            )}
+
+            {/* Staff Tab */}
+            {activeTab === 'staff' && (
+              <div className="space-y-6">
+                <div className="flex justify-between items-center">
+                  <h2 className="text-2xl font-bold text-gray-900">Staff Management</h2>
+                  <button
+                    onClick={() => setShowAddStaff(true)}
+                    className="bg-blue-600 text-white px-4 py-2 rounded hover:bg-blue-700 flex items-center gap-2"
+                  >
+                    <Plus className="w-4 h-4" />
+                    Add Staff
+                  </button>
+                </div>
+                
+                <div className="bg-white rounded-lg shadow overflow-hidden">
+                  <table className="min-w-full divide-y divide-gray-200">
+                    <thead className="bg-gray-50">
+                      <tr>
+                        <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Name</th>
+                        <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Role</th>
+                        <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Primary Program</th>
+                        <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Secondary Program</th>
+                        <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Status</th>
+                        <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">Actions</th>
+                      </tr>
+                    </thead>
+                    <tbody className="bg-white divide-y divide-gray-200">
+                      {staff.map(staffMember => (
+                        <tr key={staffMember.id}>
+                          <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">
+                            {staffMember.name}
+                          </td>
+                          <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                            {staffMember.role}
+                          </td>
+                          <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                            {staffMember.primaryProgram || '-'}
+                          </td>
+                          <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                            {staffMember.secondaryProgram || '-'}
+                          </td>
+                          <td className="px-6 py-4 whitespace-nowrap">
+                            <span className={`px-2 inline-flex text-xs leading-5 font-semibold rounded-full ${
+                              staffMember.isActive ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'
+                            }`}>
+                              {staffMember.isActive ? 'Active' : 'Inactive'}
+                            </span>
+                          </td>
+                          <td className="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
+                            <button
+                              onClick={() => setEditingStaff(staffMember)}
+                              className="text-blue-600 hover:text-blue-900 mr-3"
+                            >
+                              <Edit2 className="w-4 h-4" />
+                            </button>
+                            <button
+                              onClick={() => handleDeleteStaff(staffMember.id)}
+                              className="text-red-600 hover:text-red-900"
+                            >
+                              <Trash2 className="w-4 h-4" />
+                            </button>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            )}
+
+            {/* Students Tab */}
+            {activeTab === 'students' && (
+              <div className="space-y-6">
+                <div className="flex justify-between items-center">
+                  <h2 className="text-2xl font-bold text-gray-900">Student Management</h2>
+                  <button
+                    onClick={() => setShowAddStudent(true)}
+                    className="bg-blue-600 text-white px-4 py-2 rounded hover:bg-blue-700 flex items-center gap-2"
+                  >
+                    <Plus className="w-4 h-4" />
+                    Add Student
+                  </button>
+                </div>
+                
+                <div className="bg-white rounded-lg shadow overflow-hidden">
+                  <table className="min-w-full divide-y divide-gray-200">
+                    <thead className="bg-gray-50">
+                      <tr>
+                        <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Name</th>
+                        <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Program</th>
+                        <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Ratio</th>
+                        <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Status</th>
+                        <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">Actions</th>
+                      </tr>
+                    </thead>
+                    <tbody className="bg-white divide-y divide-gray-200">
+                      {students.map(student => (
+                        <tr key={student.id}>
+                          <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">
+                            {student.name}
+                          </td>
+                          <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                            {student.program}
+                          </td>
+                          <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                            {student.ratio}
+                          </td>
+                          <td className="px-6 py-4 whitespace-nowrap">
+                            <span className={`px-2 inline-flex text-xs leading-5 font-semibold rounded-full ${
+                              student.isActive ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'
+                            }`}>
+                              {student.isActive ? 'Active' : 'Inactive'}
+                            </span>
+                          </td>
+                          <td className="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
+                            <button
+                              onClick={() => setEditingStudent(student)}
+                              className="text-blue-600 hover:text-blue-900 mr-3"
+                            >
+                              <Edit2 className="w-4 h-4" />
+                            </button>
+                            <button
+                              onClick={() => handleDeleteStudent(student.id)}
+                              className="text-red-600 hover:text-red-900"
+                            >
+                              <Trash2 className="w-4 h-4" />
+                            </button>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            )}
+
+            {/* Teams Tab */}
+            {activeTab === 'teams' && (
+              <TeamManagement
+                staff={staff}
+                students={students}
+                onEditStaff={(staff) => {
+                  setEditingStaff(staff);
+                  setShowAddStaff(true);
+                }}
+                onEditStudent={(student) => {
+                  setEditingStudent(student);
+                  setShowAddStudent(true);
+                }}
+              />
+            )}
+
+            {/* Validation Tab */}
+            {activeTab === 'validation' && (
+              <ValidationPanel
+                schedule={schedule}
+                staff={staff}
+                students={students}
+                onValidationChange={handleValidationChange}
+              />
+            )}
+
+            {/* Rules Tab */}
+            {activeTab === 'rules' && (
+              <ConstraintRulesDisplay />
+            )}
+          </>
+        )}
+      </main>
+
+      {/* Staff and Student Forms */}
+      {showAddStaff && (
+        <StaffForm
+          staff={editingStaff}
+          onSave={editingStaff ? handleEditStaff : handleAddStaff}
+          onCancel={() => {
+            setShowAddStaff(false);
+            setEditingStaff(null);
+          }}
+          peoplePickerService={peoplePickerService}
+        />
+      )}
+
+      {showAddStudent && (
+        <StudentForm
+          student={editingStudent}
+          onSave={editingStudent ? handleEditStudent : handleAddStudent}
+          onCancel={() => {
+            setShowAddStudent(false);
+            setEditingStudent(null);
+          }}
+          allStaff={staff}
+          peoplePickerService={peoplePickerService}
+        />
+      )}
+    </div>
+  );
+};
+
+export default ABAScheduler;
