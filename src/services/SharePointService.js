@@ -9,13 +9,14 @@ export class SharePointService {
     this.config = {
       siteUrl: config.siteUrl || 'https://evokebehavioralhealthcom.sharepoint.com/sites/Clinistrators',
       staffListName: config.staffListName || 'Staff',
-      studentsListName: config.studentsListName || 'Students', // Renamed from Clients
+      studentsListName: config.studentsListName || 'Clients', // Points to 'Clients' list in SharePoint
       scheduleListName: config.scheduleListName || 'ABASchedules', // New list name
       clientId: config.clientId,
       tenantId: config.tenantId,
       redirectUri: config.redirectUri
     };
     this.accessToken = null;
+    this.tokenExpiry = null;
   }
 
   /**
@@ -49,7 +50,7 @@ export class SharePointService {
       `client_id=${this.config.clientId}&` +
       `response_type=code&` +
       `redirect_uri=${encodeURIComponent(this.config.redirectUri)}&` +
-      `scope=${encodeURIComponent('https://graph.microsoft.com/Sites.ReadWrite.All')}&` +
+      `scope=${encodeURIComponent('https://graph.microsoft.com/Sites.ReadWrite.All https://graph.microsoft.com/User.Read')}&` +
       `code_challenge=${codeChallenge}&` +
       `code_challenge_method=S256`;
     
@@ -83,7 +84,9 @@ export class SharePointService {
       if (response.ok) {
         const tokenData = await response.json();
         this.accessToken = tokenData.access_token;
+        this.tokenExpiry = Date.now() + (tokenData.expires_in * 1000); // Convert seconds to milliseconds
         localStorage.setItem('sp_access_token', this.accessToken);
+        localStorage.setItem('sp_token_expiry', this.tokenExpiry.toString());
         localStorage.removeItem('code_verifier');
         return this.accessToken;
       } else {
@@ -98,8 +101,22 @@ export class SharePointService {
 
   logout() {
     this.accessToken = null;
+    this.tokenExpiry = null;
     localStorage.removeItem('sp_access_token');
+    localStorage.removeItem('sp_token_expiry');
     localStorage.removeItem('code_verifier');
+    console.log('🚪 Logged out - all tokens cleared');
+  }
+
+  /**
+   * Force logout and clear all authentication data
+   */
+  forceLogout() {
+    this.logout();
+    // Also clear any other auth-related data
+    localStorage.clear();
+    sessionStorage.clear();
+    console.log('🧹 Force logout - all storage cleared');
   }
 
   /**
@@ -119,9 +136,23 @@ export class SharePointService {
 
     // Check for existing token
     const savedToken = localStorage.getItem('sp_access_token');
-    if (savedToken) {
-      this.accessToken = savedToken;
-      return true;
+    const savedExpiry = localStorage.getItem('sp_token_expiry');
+    
+    if (savedToken && savedExpiry) {
+      const expiryTime = parseInt(savedExpiry);
+      const now = Date.now();
+      
+      // Check if token is still valid (give 5 minute buffer)
+      if (now < (expiryTime - 300000)) {
+        this.accessToken = savedToken;
+        this.tokenExpiry = expiryTime;
+        return true;
+      } else {
+        // Token expired, clear it
+        console.log('🔄 Token expired, clearing cached token');
+        localStorage.removeItem('sp_access_token');
+        localStorage.removeItem('sp_token_expiry');
+      }
     }
 
     return false;
@@ -139,33 +170,141 @@ export class SharePointService {
   }
 
   /**
-   * Load staff data from SharePoint
+   * Get headers for Microsoft Graph API calls
+   */
+  getGraphHeaders() {
+    return {
+      'Authorization': `Bearer ${this.accessToken}`,
+      'Accept': 'application/json',
+      'Content-Type': 'application/json'
+    };
+  }
+
+  /**
+   * Make API call with automatic re-authentication on 401
+   */
+  async makeAuthenticatedRequest(url, options = {}) {
+    if (!this.accessToken) {
+      throw new Error('Not authenticated. Please log in first.');
+    }
+
+    try {
+      const response = await fetch(url, options);
+      
+      if (response.status === 401) {
+        console.log('🔄 401 Unauthorized - Token expired, attempting silent refresh...');
+        
+        // For production: attempt silent token refresh
+        // For now: clear expired token and prompt re-auth
+        this.logout();
+        
+        // In production, you could implement silent refresh here:
+        // const refreshed = await this.silentRefresh();
+        // if (refreshed) return await fetch(url, options);
+        
+        throw new Error('Your session has expired. Please log in again.');
+      }
+      
+      return response;
+    } catch (error) {
+      if (error.message.includes('session has expired')) {
+        // Auto-trigger re-authentication UI
+        if (typeof window !== 'undefined' && window.location) {
+          // Could trigger a modal or redirect to login
+          console.log('🔄 Triggering re-authentication...');
+        }
+        throw error;
+      }
+      console.error('API request failed:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Load staff data from SharePoint using Microsoft Graph API
    */
   async loadStaff() {
     try {
-      // Expand Person fields to get full user information
-      const response = await fetch(
-        `${this.config.siteUrl}/_api/web/lists/getbytitle('${this.config.staffListName}')/items?$select=*,StaffPerson/Title,StaffPerson/EMail,StaffPerson/Id&$expand=StaffPerson`,
-        { headers: this.getHeaders() }
-      );
-
-      if (!response.ok) {
-        throw new Error(`Failed to load staff: ${response.status}`);
-      }
-
-      const data = await response.json();
+      console.log('🔍 Loading staff using Microsoft Graph API...');
       
-      return data.d.results.map(item => new Staff({
-        id: item.ID,
-        name: item.StaffPerson ? item.StaffPerson.Title : item.Title,
-        email: item.StaffPerson ? item.StaffPerson.EMail : '',
-        userId: item.StaffPerson ? item.StaffPerson.Id : null,
-        staffPerson: item.StaffPerson,
-        role: item.Position || item.Role,
-        primaryProgram: item.PrimaryProgram === true, // Yes/No field
-        secondaryProgram: item.SecondaryProgram === true, // Yes/No field
-        isActive: item.IsActive !== false // Default to true if not specified
-      }));
+      // First, get the site ID
+      const siteResponse = await this.makeAuthenticatedRequest(
+        `https://graph.microsoft.com/v1.0/sites/evokebehavioralhealthcom.sharepoint.com:/sites/Clinistrators`,
+        { headers: this.getGraphHeaders() }
+      );
+      
+      if (!siteResponse.ok) {
+        throw new Error(`Failed to get site: ${siteResponse.status}`);
+      }
+      
+      const siteData = await siteResponse.json();
+      const siteId = siteData.id;
+      console.log('✅ Got site ID:', siteId);
+      
+      // Get the Staff list
+      const listsResponse = await this.makeAuthenticatedRequest(
+        `https://graph.microsoft.com/v1.0/sites/${siteId}/lists?$filter=displayName eq 'Staff'`,
+        { headers: this.getGraphHeaders() }
+      );
+      
+      if (!listsResponse.ok) {
+        throw new Error(`Failed to get Staff list: ${listsResponse.status}`);
+      }
+      
+      const listsData = await listsResponse.json();
+      if (listsData.value.length === 0) {
+        throw new Error('Staff list not found');
+      }
+      
+      const listId = listsData.value[0].id;
+      console.log('✅ Got Staff list ID:', listId);
+      
+      // Get list items
+      const itemsResponse = await this.makeAuthenticatedRequest(
+        `https://graph.microsoft.com/v1.0/sites/${siteId}/lists/${listId}/items?expand=fields`,
+        { headers: this.getGraphHeaders() }
+      );
+      
+      if (!itemsResponse.ok) {
+        throw new Error(`Failed to load staff items: ${itemsResponse.status}`);
+      }
+      
+      const itemsData = await itemsResponse.json();
+      console.log('✅ Successfully loaded staff data via Graph API');
+      
+      return itemsData.value.map(item => {
+        const fields = item.fields;
+        const staffMember = new Staff({
+          id: item.id,
+          name: fields.Title,
+          role: fields.Role,
+          email: fields.Email || '',
+          primaryProgram: fields.PrimaryProgram === true,
+          secondaryProgram: fields.SecondaryProgram === true,
+          isActive: fields.IsActive !== false
+        });
+        
+        // Log staff details for debugging
+        if (fields.Title.toLowerCase().includes('sam')) {
+          console.log(`🔍 SAM STAFF DETAILS:`, {
+            name: fields.Title,
+            role: fields.Role,
+            primaryProgram: fields.PrimaryProgram,
+            secondaryProgram: fields.SecondaryProgram,
+            isActive: fields.IsActive,
+            allFields: Object.keys(fields).filter(k => !k.startsWith('_') && !k.startsWith('@'))
+          });
+        }
+        
+        console.log(`  Staff: ${staffMember.name} (ID: ${staffMember.id}, Role: ${staffMember.role})`, {
+          id: staffMember.id,
+          email: staffMember.email,
+          userId: staffMember.userId,
+          allFields: fields
+        });
+        
+        return staffMember;
+      });
     } catch (error) {
       console.error('Error loading staff:', error);
       throw error;
@@ -173,41 +312,119 @@ export class SharePointService {
   }
 
   /**
-   * Load student data from SharePoint
+   * Load student data from SharePoint using Microsoft Graph API
    */
   async loadStudents() {
     try {
-      // Expand Person fields for team members (previously preferred staff)
-      const response = await fetch(
-        `${this.config.siteUrl}/_api/web/lists/getbytitle('${this.config.studentsListName}')/items?$select=*,Team/Title,Team/Id,Team/EMail&$expand=Team`,
-        { headers: this.getHeaders() }
-      );
-
-      if (!response.ok) {
-        throw new Error(`Failed to load students: ${response.status}`);
-      }
-
-      const data = await response.json();
+      console.log('🔍 Loading students using Microsoft Graph API...');
       
-      return data.d.results.map(item => {
-        // Extract team members from People Picker field
-        let team = [];
-        if (item.Team && item.Team.results) {
-          team = item.Team.results.map(person => ({
-            id: person.Id,
-            title: person.Title,
-            email: person.EMail
-          }));
+      // First, get the site ID
+      const siteResponse = await this.makeAuthenticatedRequest(
+        `https://graph.microsoft.com/v1.0/sites/evokebehavioralhealthcom.sharepoint.com:/sites/Clinistrators`,
+        { headers: this.getGraphHeaders() }
+      );
+      
+      if (!siteResponse.ok) {
+        throw new Error(`Failed to get site: ${siteResponse.status}`);
+      }
+      
+      const siteData = await siteResponse.json();
+      const siteId = siteData.id;
+      console.log('✅ Got site ID:', siteId);
+      
+      // Get the Clients list
+      const listsResponse = await this.makeAuthenticatedRequest(
+        `https://graph.microsoft.com/v1.0/sites/${siteId}/lists?$filter=displayName eq 'Clients'`,
+        { headers: this.getGraphHeaders() }
+      );
+      
+      if (!listsResponse.ok) {
+        throw new Error(`Failed to get Clients list: ${listsResponse.status}`);
+      }
+      
+      const listsData = await listsResponse.json();
+      if (listsData.value.length === 0) {
+        throw new Error('Clients list not found');
+      }
+      
+      const listId = listsData.value[0].id;
+      console.log('✅ Got Clients list ID:', listId);
+      
+      // Get list items
+      const itemsResponse = await this.makeAuthenticatedRequest(
+        `https://graph.microsoft.com/v1.0/sites/${siteId}/lists/${listId}/items?expand=fields`,
+        { headers: this.getGraphHeaders() }
+      );
+      
+      if (!itemsResponse.ok) {
+        throw new Error(`Failed to load client items: ${itemsResponse.status}`);
+      }
+      
+      const itemsData = await itemsResponse.json();
+      console.log('✅ Successfully loaded students data via Graph API');
+      
+      return itemsData.value.map((item, index) => {
+        const fields = item.fields;
+        
+        // Debug: log the first few students' ratio fields
+        if (index < 5 || fields.Title.toLowerCase().includes('tejas')) {
+          console.log(`Student ${fields.Title} ratios:`, {
+            RatioAM: fields.RatioAM,
+            RatioPM: fields.RatioPM,
+            allRatioFields: Object.keys(fields).filter(k => k.toLowerCase().includes('ratio'))
+          });
         }
-
+        
+        // Handle team members - look for common People Picker field names
+        let teamIds = [];
+        let team = [];
+        
+        // Try different possible field names for team members
+        const teamFieldNames = [
+          'TeamStaffPeopleId', 'Team', 'TeamMembers', 'AssignedStaff', 
+          'StaffTeam', 'TeamStaff', 'TeamStaffPeople'
+        ];
+        
+        for (const fieldName of teamFieldNames) {
+          if (fields[fieldName]) {
+            console.log(`Found team field: ${fieldName}`, fields[fieldName]);
+            
+            // Handle different formats of People Picker data
+            if (Array.isArray(fields[fieldName])) {
+              teamIds = fields[fieldName].map(person => person.LookupId || person.Id || person);
+              team = fields[fieldName].map(person => ({
+                id: person.LookupId || person.Id || person,
+                title: person.LookupValue || person.Title || person.title,
+                email: person.Email || person.email
+              }));
+            } else if (fields[fieldName].results) {
+              teamIds = fields[fieldName].results.map(person => person.LookupId || person.Id || person);
+              team = fields[fieldName].results.map(person => ({
+                id: person.LookupId || person.Id || person,
+                title: person.LookupValue || person.Title || person.title,
+                email: person.Email || person.email
+              }));
+            }
+            
+            // Log the processed team data for debugging
+            if (team.length > 0) {
+              console.log(`  Student ${fields.Title} team:`, team);
+              console.log(`  Team IDs:`, teamIds);
+              console.log(`  First team member details:`, team[0]);
+            }
+            break;
+          }
+        }
+        
         return new Student({
-          id: item.ID,
-          name: item.Title,
-          program: item.Program || PROGRAMS.PRIMARY,
-          ratioAM: item.RatioAM || '1:1',
-          ratioPM: item.RatioPM || '1:1',
-          isActive: item.IsActive !== false,
-          team
+          id: item.id,
+          name: fields.Title,
+          program: fields.Program || PROGRAMS.PRIMARY,
+          ratioAM: fields.RatioAM || '1:1',
+          ratioPM: fields.RatioPM || '1:1',
+          isActive: fields.IsActive !== false,
+          team: team,
+          teamIds: teamIds // Add this for backward compatibility
         });
       });
     } catch (error) {
@@ -221,27 +438,64 @@ export class SharePointService {
    */
   async loadSchedule(date) {
     try {
+      console.log('📅 Loading schedule for date:', date);
+      
+      // First, get the site ID
+      const siteResponse = await this.makeAuthenticatedRequest(
+        `https://graph.microsoft.com/v1.0/sites/evokebehavioralhealthcom.sharepoint.com:/sites/Clinistrators`,
+        { headers: this.getGraphHeaders() }
+      );
+      
+      if (!siteResponse.ok) {
+        throw new Error(`Failed to get site: ${siteResponse.status}`);
+      }
+      
+      const siteData = await siteResponse.json();
+      const siteId = siteData.id;
+      
+      // Get the ABASchedules list
+      const listsResponse = await this.makeAuthenticatedRequest(
+        `https://graph.microsoft.com/v1.0/sites/${siteId}/lists?$filter=displayName eq '${this.config.scheduleListName}'`,
+        { headers: this.getGraphHeaders() }
+      );
+      
+      if (!listsResponse.ok) {
+        throw new Error(`Failed to get schedule list: ${listsResponse.status}`);
+      }
+      
+      const listsData = await listsResponse.json();
+      if (listsData.value.length === 0) {
+        console.log('📅 Schedule list not found, returning empty schedule');
+        return new Schedule({ date, assignments: [] });
+      }
+      
+      const listId = listsData.value[0].id;
+      
+      // Get schedule items for the specific date
       const dateStr = date.toISOString().split('T')[0];
-      const response = await fetch(
-        `${this.config.siteUrl}/_api/web/lists/getbytitle('${this.config.scheduleListName}')/items?$filter=ScheduleDate eq '${dateStr}'`,
-        { headers: this.getHeaders() }
+      const itemsResponse = await this.makeAuthenticatedRequest(
+        `https://graph.microsoft.com/v1.0/sites/${siteId}/lists/${listId}/items?expand=fields&$filter=fields/ScheduleDate eq '${dateStr}'`,
+        { headers: this.getGraphHeaders() }
       );
 
-      if (!response.ok) {
-        throw new Error(`Failed to load schedule: ${response.status}`);
+      if (!itemsResponse.ok) {
+        throw new Error(`Failed to load schedule items: ${itemsResponse.status}`);
       }
 
-      const data = await response.json();
-      const assignments = data.d.results.map(item => new Assignment({
-        id: item.ID,
-        staffId: item.StaffId,
-        studentId: item.StudentId,
-        session: item.Session,
-        program: item.Program,
-        date: new Date(item.ScheduleDate),
-        isLocked: item.IsLocked || false,
-        assignedBy: item.AssignedBy || 'auto'
-      }));
+      const itemsData = await itemsResponse.json();
+      const assignments = itemsData.value.map(item => {
+        const fields = item.fields;
+        return new Assignment({
+          id: item.id,
+          staffId: fields.StaffId,
+          studentId: fields.StudentId,
+          session: fields.Session,
+          program: fields.Program,
+          date: new Date(fields.ScheduleDate),
+          isLocked: fields.IsLocked || false,
+          assignedBy: fields.AssignedBy || 'auto'
+        });
+      });
 
       // Create locked assignments set
       const lockedAssignments = new Set(
@@ -252,7 +506,7 @@ export class SharePointService {
         date,
         assignments,
         lockedAssignments,
-        isFinalized: data.d.results.some(item => item.IsFinalized)
+        isFinalized: assignments.some(a => a.fields?.IsFinalized || false)
       });
     } catch (error) {
       console.error('Error loading schedule:', error);
@@ -317,7 +571,7 @@ export class SharePointService {
         : `${this.config.siteUrl}/_api/web/lists/getbytitle('${this.config.studentsListName}')/items`;
 
       const body = {
-        __metadata: { type: 'SP.Data.StudentsListItem' },
+        __metadata: { type: 'SP.Data.ClientsListItem' }, // Updated to match SharePoint list name
         Title: student.name,
         Program: student.program,
         RatioAM: student.ratioAM,
@@ -500,6 +754,53 @@ export class SharePointService {
       return response;
     } catch (error) {
       console.error('Error deleting student:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Debug method to list all available lists in the SharePoint site using Graph API
+   */
+  async debugListAllLists() {
+    try {
+      console.log('🔍 Fetching all lists from SharePoint site using Graph API...');
+      
+      // First, get the site ID
+      const siteResponse = await fetch(
+        `https://graph.microsoft.com/v1.0/sites/evokebehavioralhealthcom.sharepoint.com:/sites/Clinistrators`,
+        { headers: this.getGraphHeaders() }
+      );
+      
+      if (!siteResponse.ok) {
+        throw new Error(`Failed to get site: ${siteResponse.status}`);
+      }
+      
+      const siteData = await siteResponse.json();
+      const siteId = siteData.id;
+      console.log('✅ Got site ID:', siteId);
+      
+      // Get all lists
+      const listsResponse = await fetch(
+        `https://graph.microsoft.com/v1.0/sites/${siteId}/lists`,
+        { headers: this.getGraphHeaders() }
+      );
+
+      if (!listsResponse.ok) {
+        throw new Error(`Failed to fetch lists: ${listsResponse.status}`);
+      }
+
+      const data = await listsResponse.json();
+      console.log('📋 Available SharePoint Lists:');
+      console.table(data.value.map(list => ({
+        DisplayName: list.displayName,
+        Name: list.name,
+        ID: list.id,
+        WebUrl: list.webUrl
+      })));
+      
+      return data.value;
+    } catch (error) {
+      console.error('Error fetching lists:', error);
       throw error;
     }
   }

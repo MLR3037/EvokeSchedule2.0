@@ -33,13 +33,14 @@ import {
   StudentForm 
 } from './components/DataManagementComponents.js';
 import TeamManagement from './components/TeamManagement.js';
+import { runTests } from './tests/SchedulingTestSuite.js';
 
 const ABAScheduler = () => {
   // SharePoint configuration
   const [spConfig] = useState({
     siteUrl: 'https://evokebehavioralhealthcom.sharepoint.com/sites/Clinistrators',
     staffListName: 'Staff',
-    studentsListName: 'Students',
+    studentsListName: 'Clients', // Changed from 'Students' to match SharePoint list name
     scheduleListName: 'ABASchedules',
     // Azure AD Configuration
     clientId: 'c9f70b7e-8ffb-403d-af93-80b95b38a0bb',
@@ -78,6 +79,10 @@ const ABAScheduler = () => {
   const [editingStudent, setEditingStudent] = useState(null);
   const [showSettings, setShowSettings] = useState(false);
 
+  // Test state
+  const [testResults, setTestResults] = useState(null);
+  const [isTestRunning, setIsTestRunning] = useState(false);
+
   useEffect(() => {
     initializeApp();
   }, []);
@@ -99,6 +104,12 @@ const ABAScheduler = () => {
       }
     } catch (error) {
       console.error('Error initializing app:', error);
+      if (error.message.includes('session has expired') || error.message.includes('Authentication')) {
+        // Handle authentication errors gracefully
+        setIsAuthenticated(false);
+        setAccessToken(null);
+        console.log('🔄 Authentication issue detected - user will be prompted to log in');
+      }
     }
   };
 
@@ -106,21 +117,40 @@ const ABAScheduler = () => {
   const loadData = async () => {
     setLoading(true);
     try {
+      console.log('🔄 Starting data load...');
+      console.log('SharePoint config:', spConfig);
+      
       // Load staff, students, and schedule in parallel
       const [staffData, studentsData, scheduleData] = await Promise.all([
-        sharePointService.loadStaff(),
-        sharePointService.loadStudents(),
-        sharePointService.loadSchedule(currentDate)
+        sharePointService.loadStaff().catch(err => {
+          console.error('❌ Failed to load staff:', err);
+          return [];
+        }),
+        sharePointService.loadStudents().catch(err => {
+          console.error('❌ Failed to load students:', err);
+          return [];
+        }),
+        sharePointService.loadSchedule(currentDate).catch(err => {
+          console.error('❌ Failed to load schedule:', err);
+          return { assignments: [], date: currentDate };
+        })
       ]);
 
       setStaff(staffData);
       setStudents(studentsData);
       setSchedule(scheduleData);
       
-      console.log(`Loaded ${staffData.length} staff, ${studentsData.length} students`);
+      console.log(`✅ Loaded ${staffData.length} staff, ${studentsData.length} students`);
+      
+      if (staffData.length === 0 && studentsData.length === 0) {
+        console.warn('⚠️ No data loaded. Check authentication and SharePoint list names.');
+      }
     } catch (error) {
-      console.error('Error loading data:', error);
-      // Show error to user
+      console.error('💥 Error loading data:', error);
+      // Set empty arrays to prevent crashes
+      setStaff([]);
+      setStudents([]);
+      setSchedule({ assignments: [], date: currentDate });
     } finally {
       setLoading(false);
     }
@@ -149,12 +179,24 @@ const ABAScheduler = () => {
   };
 
   const handleLogout = () => {
-    sharePointService.logout();
+    sharePointService.forceLogout(); // Use force logout to clear everything
     setIsAuthenticated(false);
     setAccessToken(null);
     setStaff([]);
     setStudents([]);
     setSchedule(new Schedule({ date: currentDate }));
+  };
+
+  // Clear authentication (useful for fixing 401 errors)
+  const clearAuthentication = () => {
+    console.log('🔄 Clearing authentication cache...');
+    localStorage.removeItem('sp_access_token');
+    localStorage.removeItem('sp_token_expiry');
+    sharePointService.accessToken = null;
+    sharePointService.tokenExpiry = null;
+    setIsAuthenticated(false);
+    setAccessToken(null);
+    alert('Authentication cache cleared. Please refresh the page and log in again.');
   };
 
   // Auto-assignment
@@ -173,8 +215,14 @@ const ABAScheduler = () => {
       
       if (result.assignments.length > 0) {
         console.log(`Auto-assignment created ${result.assignments.length} new assignments`);
-        // Assignments were already added to schedule in the engine
-        setSchedule({ ...schedule }); // Force re-render
+        // Force re-render by creating a new Schedule instance with the same data
+        const newSchedule = new Schedule({
+          date: schedule.date,
+          assignments: schedule.assignments,
+          lockedAssignments: schedule.lockedAssignments,
+          isFinalized: schedule.isFinalized
+        });
+        setSchedule(newSchedule);
       }
       
       if (result.errors.length > 0) {
@@ -309,6 +357,56 @@ const ABAScheduler = () => {
     setValidationResults(results);
   };
 
+  // Test runner
+  const handleRunTests = async () => {
+    setIsTestRunning(true);
+    setTestResults(null);
+    
+    try {
+      console.log('🧪 Starting test suite...');
+      const results = await runTests();
+      setTestResults(results);
+      console.log('✅ Test suite completed');
+    } catch (error) {
+      console.error('❌ Test suite failed:', error);
+      setTestResults({
+        summary: { total: 0, passed: 0, failed: 1, duration: 0 },
+        results: [],
+        error: error.message
+      });
+    } finally {
+      setIsTestRunning(false);
+    }
+  };
+
+  // Debug function to check authentication and data loading
+  const handleDebugCheck = async () => {
+    console.log('🔍 Debug Check Starting...');
+    console.log('Current authentication status:', isAuthenticated);
+    console.log('Access token exists:', !!accessToken);
+    console.log('SharePoint config:', spConfig);
+    console.log('Current staff count:', staff.length);
+    console.log('Current students count:', students.length);
+    
+    try {
+      console.log('🔄 Testing authentication...');
+      const authStatus = await sharePointService.checkAuthentication();
+      console.log('Auth check result:', authStatus);
+      
+      if (authStatus) {
+        console.log('🔄 Authentication successful, listing all SharePoint lists...');
+        await sharePointService.debugListAllLists();
+        
+        console.log('🔄 Attempting to load data...');
+        await loadData();
+      } else {
+        console.log('❌ Not authenticated. Please sign in first.');
+      }
+    } catch (error) {
+      console.error('💥 Debug check failed:', error);
+    }
+  };
+
   // Render login screen if not authenticated
   if (!isAuthenticated) {
     return (
@@ -391,6 +489,21 @@ const ABAScheduler = () => {
                   <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
                   Refresh
                 </button>
+                
+                <button
+                  onClick={handleDebugCheck}
+                  className="bg-yellow-600 text-white px-4 py-2 rounded hover:bg-yellow-700 flex items-center gap-2"
+                >
+                  🔍 Debug
+                </button>
+                
+                <button
+                  onClick={clearAuthentication}
+                  className="bg-red-600 text-white px-4 py-2 rounded hover:bg-red-700 flex items-center gap-2"
+                  title="Clear authentication cache to fix 401 errors"
+                >
+                  🔄 Clear Auth
+                </button>
               </div>
               
               {/* User menu */}
@@ -418,7 +531,8 @@ const ABAScheduler = () => {
               { id: 'students', label: 'Students', icon: Users },
               { id: 'teams', label: 'Teams', icon: Users },
               { id: 'validation', label: 'Validation', icon: BarChart3 },
-              { id: 'rules', label: 'Rules', icon: Settings }
+              { id: 'rules', label: 'Rules', icon: Settings },
+              { id: 'tests', label: 'Tests', icon: Play }
             ].map(tab => {
               const Icon = tab.icon;
               return (
@@ -512,6 +626,34 @@ const ABAScheduler = () => {
                   </button>
                 </div>
                 
+                {/* Debug Information */}
+                <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-4 mb-4">
+                  <h3 className="text-lg font-semibold text-yellow-800 mb-2">Debug Information</h3>
+                  <div className="grid grid-cols-2 gap-4 text-sm">
+                    <div>
+                      <strong>Authentication Status:</strong> {isAuthenticated ? '✅ Authenticated' : '❌ Not Authenticated'}
+                    </div>
+                    <div>
+                      <strong>Access Token:</strong> {accessToken ? '✅ Present' : '❌ Missing'}
+                    </div>
+                    <div>
+                      <strong>Staff Count:</strong> {staff.length}
+                    </div>
+                    <div>
+                      <strong>Students Count:</strong> {students.length}
+                    </div>
+                    <div className="col-span-2">
+                      <strong>SharePoint Site:</strong> {spConfig.siteUrl}
+                    </div>
+                    <div>
+                      <strong>Staff List:</strong> {spConfig.staffListName}
+                    </div>
+                    <div>
+                      <strong>Students List:</strong> {spConfig.studentsListName}
+                    </div>
+                  </div>
+                </div>
+                
                 <div className="bg-white rounded-lg shadow overflow-hidden">
                   <table className="min-w-full divide-y divide-gray-200">
                     <thead className="bg-gray-50">
@@ -588,7 +730,8 @@ const ABAScheduler = () => {
                       <tr>
                         <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Name</th>
                         <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Program</th>
-                        <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Ratio</th>
+                        <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Ratio AM</th>
+                        <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Ratio PM</th>
                         <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Status</th>
                         <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">Actions</th>
                       </tr>
@@ -603,7 +746,14 @@ const ABAScheduler = () => {
                             {student.program}
                           </td>
                           <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                            {student.ratio}
+                            <span className="px-2 py-1 bg-blue-100 text-blue-800 rounded text-xs font-medium">
+                              {student.ratioAM}
+                            </span>
+                          </td>
+                          <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                            <span className="px-2 py-1 bg-purple-100 text-purple-800 rounded text-xs font-medium">
+                              {student.ratioPM}
+                            </span>
                           </td>
                           <td className="px-6 py-4 whitespace-nowrap">
                             <span className={`px-2 inline-flex text-xs leading-5 font-semibold rounded-full ${
@@ -663,6 +813,125 @@ const ABAScheduler = () => {
             {/* Rules Tab */}
             {activeTab === 'rules' && (
               <ConstraintRulesDisplay />
+            )}
+
+            {/* Tests Tab */}
+            {activeTab === 'tests' && (
+              <div className="space-y-6">
+                <div className="flex justify-between items-center">
+                  <h2 className="text-2xl font-bold text-gray-900">Test Suite</h2>
+                  <button
+                    onClick={handleRunTests}
+                    disabled={isTestRunning}
+                    className="bg-green-600 text-white px-6 py-2 rounded hover:bg-green-700 disabled:opacity-50 flex items-center gap-2"
+                  >
+                    {isTestRunning ? <RefreshCw className="w-5 h-5 animate-spin" /> : <Play className="w-5 h-5" />}
+                    {isTestRunning ? 'Running Tests...' : 'Run All Tests'}
+                  </button>
+                </div>
+
+                {/* Test Results Summary */}
+                {testResults && (
+                  <div className="bg-white rounded-lg shadow p-6">
+                    <div className="mb-6">
+                      <h3 className="text-lg font-semibold text-gray-900 mb-4">Test Results Summary</h3>
+                      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                        <div className="bg-blue-50 p-4 rounded-lg text-center">
+                          <div className="text-2xl font-bold text-blue-600">{testResults.summary.total}</div>
+                          <div className="text-sm text-blue-800">Total Tests</div>
+                        </div>
+                        <div className="bg-green-50 p-4 rounded-lg text-center">
+                          <div className="text-2xl font-bold text-green-600">{testResults.summary.passed}</div>
+                          <div className="text-sm text-green-800">Passed</div>
+                        </div>
+                        <div className="bg-red-50 p-4 rounded-lg text-center">
+                          <div className="text-2xl font-bold text-red-600">{testResults.summary.failed}</div>
+                          <div className="text-sm text-red-800">Failed</div>
+                        </div>
+                        <div className="bg-gray-50 p-4 rounded-lg text-center">
+                          <div className="text-2xl font-bold text-gray-600">{testResults.summary.duration}ms</div>
+                          <div className="text-sm text-gray-800">Duration</div>
+                        </div>
+                      </div>
+                      
+                      {/* Success Rate */}
+                      <div className="mt-4">
+                        <div className="flex items-center justify-between text-sm text-gray-600 mb-1">
+                          <span>Success Rate</span>
+                          <span>{testResults.summary.total > 0 ? ((testResults.summary.passed / testResults.summary.total) * 100).toFixed(1) : 0}%</span>
+                        </div>
+                        <div className="w-full bg-gray-200 rounded-full h-2">
+                          <div 
+                            className={`h-2 rounded-full ${testResults.summary.failed === 0 ? 'bg-green-500' : 'bg-yellow-500'}`}
+                            style={{ width: `${testResults.summary.total > 0 ? (testResults.summary.passed / testResults.summary.total) * 100 : 0}%` }}
+                          ></div>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Individual Test Results */}
+                    {testResults.results && testResults.results.length > 0 && (
+                      <div>
+                        <h4 className="text-md font-semibold text-gray-900 mb-3">Test Details</h4>
+                        <div className="space-y-2 max-h-96 overflow-y-auto">
+                          {testResults.results.map((result, index) => (
+                            <div
+                              key={index}
+                              className={`p-3 rounded border-l-4 ${
+                                result.passed 
+                                  ? 'bg-green-50 border-green-400' 
+                                  : 'bg-red-50 border-red-400'
+                              }`}
+                            >
+                              <div className="flex items-center justify-between">
+                                <div className="flex items-center gap-2">
+                                  <span className={`text-sm font-medium ${
+                                    result.passed ? 'text-green-800' : 'text-red-800'
+                                  }`}>
+                                    {result.passed ? '✅' : '❌'} {result.name}
+                                  </span>
+                                </div>
+                                <span className="text-xs text-gray-500">{result.duration}ms</span>
+                              </div>
+                              {result.error && (
+                                <div className="mt-2 text-sm text-red-700 font-mono bg-red-100 p-2 rounded">
+                                  {result.error}
+                                </div>
+                              )}
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Error Display */}
+                    {testResults.error && (
+                      <div className="mt-4 p-4 bg-red-50 border border-red-200 rounded">
+                        <h4 className="text-red-800 font-medium">Test Suite Error</h4>
+                        <p className="text-red-700 text-sm mt-1">{testResults.error}</p>
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {/* Test Information */}
+                <div className="bg-blue-50 border border-blue-200 rounded-lg p-6">
+                  <h3 className="text-lg font-semibold text-blue-900 mb-3">About the Test Suite</h3>
+                  <div className="text-blue-800 space-y-2">
+                    <p>This comprehensive test suite validates all core functionality of the ABA Scheduling System:</p>
+                    <ul className="list-disc list-inside space-y-1 ml-4">
+                      <li><strong>Data Models:</strong> Staff and Student object validation, role hierarchies</li>
+                      <li><strong>Validation Rules:</strong> Schedule constraints, ratio requirements, program separation</li>
+                      <li><strong>Auto-Assignment:</strong> Automated scheduling algorithms and optimization</li>
+                      <li><strong>Performance:</strong> Large dataset handling and response times</li>
+                      <li><strong>Integration:</strong> End-to-end workflow testing</li>
+                    </ul>
+                    <p className="mt-3 text-sm">
+                      <strong>Note:</strong> Tests run using sample data and do not affect your actual schedule or database.
+                    </p>
+                  </div>
+                </div>
+              </div>
             )}
           </>
         )}

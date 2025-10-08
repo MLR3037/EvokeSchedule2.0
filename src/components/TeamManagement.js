@@ -23,7 +23,36 @@ export const TeamManagement = ({
         staff: staffMember,
         clients: students.filter(student => 
           student.isActive && 
-          student.team.some(teamMember => teamMember.id === staffMember.userId)
+          student.team.some(teamMember => {
+            // Match by name since the IDs are different systems
+            const staffName = staffMember.name?.toLowerCase().trim();
+            const teamMemberName = teamMember.title?.toLowerCase().trim();
+            
+            // Also try matching by email if available
+            const staffEmail = staffMember.email?.toLowerCase().trim();
+            const teamMemberEmail = teamMember.email?.toLowerCase().trim();
+            
+            // Exact name match
+            if (staffName && teamMemberName && staffName === teamMemberName) {
+              return true;
+            }
+            
+            // Email match
+            if (staffEmail && teamMemberEmail && staffEmail === teamMemberEmail) {
+              return true;
+            }
+            
+            // Partial name match (first name match)
+            if (staffName && teamMemberName) {
+              const staffFirstName = staffName.split(' ')[0];
+              const teamMemberFirstName = teamMemberName.split(' ')[0];
+              if (staffFirstName === teamMemberFirstName && staffFirstName.length > 2) {
+                return true;
+              }
+            }
+            
+            return false;
+          })
         )
       };
     });
@@ -38,9 +67,36 @@ export const TeamManagement = ({
     students.filter(s => s.isActive).forEach(student => {
       result[student.id] = {
         student: student,
-        teamMembers: student.team.map(teamMember => 
-          staff.find(s => s.userId === teamMember.id || s.id === teamMember.id)
-        ).filter(Boolean)
+        teamMembers: student.team.map(teamMember => {
+          // Find staff by matching name or email instead of ID
+          return staff.find(s => {
+            const staffName = s.name?.toLowerCase().trim();
+            const teamMemberName = teamMember.title?.toLowerCase().trim();
+            const staffEmail = s.email?.toLowerCase().trim();
+            const teamMemberEmail = teamMember.email?.toLowerCase().trim();
+            
+            // Exact name match
+            if (staffName && teamMemberName && staffName === teamMemberName) {
+              return true;
+            }
+            
+            // Email match
+            if (staffEmail && teamMemberEmail && staffEmail === teamMemberEmail) {
+              return true;
+            }
+            
+            // Partial name match (first name match)
+            if (staffName && teamMemberName) {
+              const staffFirstName = staffName.split(' ')[0];
+              const teamMemberFirstName = teamMemberName.split(' ')[0];
+              if (staffFirstName === teamMemberFirstName && staffFirstName.length > 2) {
+                return true;
+              }
+            }
+            
+            return false;
+          });
+        }).filter(Boolean)
       };
     });
     

@@ -8,9 +8,13 @@ export const STAFF_ROLES = {
   EA: { level: 4, name: 'Educational Assistant' },
   MHA: { level: 5, name: 'Mental Health Assistant' },
   CC: { level: 6, name: 'Clinical Coordinator' },
-  Teacher: { level: 7, name: 'Teacher' },
-  Director: { level: 8, name: 'Director' }
+  Trainer: { level: 7, name: 'Trainer' },
+  Teacher: { level: 8, name: 'Teacher' },
+  Director: { level: 9, name: 'Director' }
 };
+
+// Export ROLES as alias for backward compatibility
+export const ROLES = STAFF_ROLES;
 
 // Program types (Yes/No columns)
 export const PROGRAMS = {
@@ -48,8 +52,8 @@ export class Staff {
     email = '',
     userId = null,
     staffPerson = null,
-    primaryProgram = false, // Yes/No field
-    secondaryProgram = false, // Yes/No field
+    primaryProgram = false, // Can be boolean or program string
+    secondaryProgram = false, // Can be boolean or program string
     isActive = true
   }) {
     this.id = id;
@@ -58,8 +62,26 @@ export class Staff {
     this.email = email;
     this.userId = userId; // SharePoint User ID for People Picker
     this.staffPerson = staffPerson; // People Picker data
-    this.primaryProgram = primaryProgram; // Boolean for Yes/No column
-    this.secondaryProgram = secondaryProgram; // Boolean for Yes/No column
+    
+    // Handle both boolean and string values for program assignment
+    if (typeof primaryProgram === 'string') {
+      // If it's a string, convert to boolean and store the program
+      this.primaryProgram = true;
+      this.primaryProgramType = primaryProgram;
+    } else {
+      this.primaryProgram = primaryProgram; // Boolean for Yes/No column
+      this.primaryProgramType = primaryProgram ? PROGRAMS.PRIMARY : null;
+    }
+    
+    if (typeof secondaryProgram === 'string') {
+      // If it's a string, convert to boolean and store the program
+      this.secondaryProgram = true;
+      this.secondaryProgramType = secondaryProgram;
+    } else {
+      this.secondaryProgram = secondaryProgram; // Boolean for Yes/No column
+      this.secondaryProgramType = secondaryProgram ? PROGRAMS.SECONDARY : null;
+    }
+    
     this.isActive = isActive;
   }
 
@@ -68,12 +90,22 @@ export class Staff {
   }
 
   canWorkProgram(program) {
-    if (program === PROGRAMS.PRIMARY) {
+    if (program === PROGRAMS.PRIMARY || program === 'Primary') {
       return this.primaryProgram;
-    } else if (program === PROGRAMS.SECONDARY) {
+    } else if (program === PROGRAMS.SECONDARY || program === 'Secondary') {
       return this.secondaryProgram;
     }
     return false;
+  }
+
+  /**
+   * Check if staff member is eligible for 1:1 sessions
+   * Teachers, Trainers, and Directors should not do 1:1 sessions
+   * @returns {boolean} True if staff can do 1:1 sessions
+   */
+  canDo1To1Sessions() {
+    const restrictedRoles = ['Teacher', 'Trainer', 'Director'];
+    return !restrictedRoles.includes(this.role);
   }
 }
 
@@ -85,21 +117,34 @@ export class Student {
     id,
     name,
     program,
+    ratio, // Backward compatibility - single ratio for both sessions
     ratioAM = RATIOS.ONE_TO_ONE, // Separate ratio for AM
     ratioPM = RATIOS.ONE_TO_ONE, // Separate ratio for PM
     isActive = true,
-    team = [] // Renamed from preferredStaff, People Picker array
+    team = [], // Team members (People Picker array)
+    teamIds = [] // Array of staff IDs extracted from team
   }) {
     this.id = id;
     this.name = name;
     this.program = program; // PRIMARY or SECONDARY
-    this.ratioAM = ratioAM; // AM session ratio
-    this.ratioPM = ratioPM; // PM session ratio
+    
+    // Handle backward compatibility - if ratio is provided, use it for both sessions
+    if (ratio) {
+      this.ratioAM = ratio;
+      this.ratioPM = ratio;
+      this.ratio = ratio; // Keep for backward compatibility
+    } else {
+      this.ratioAM = ratioAM; // AM session ratio
+      this.ratioPM = ratioPM; // PM session ratio
+      this.ratio = ratioAM; // Default to AM ratio for backward compatibility
+    }
+    
     this.isActive = isActive;
     this.team = team; // Array of team members (People Picker data)
+    this.teamIds = teamIds.length > 0 ? teamIds : team.map(t => t.id).filter(Boolean); // Extract IDs from team if not provided
   }
 
-  requiresMultipleStaff(session) {
+  requiresMultipleStaff(session = 'AM') {
     const ratio = session === 'AM' ? this.ratioAM : this.ratioPM;
     return ratio === RATIOS.TWO_TO_ONE;
   }
@@ -108,7 +153,7 @@ export class Student {
     return session === 'AM' ? this.ratioAM : this.ratioPM;
   }
 
-  isSmallGroup(session) {
+  isSmallGroup(session = 'AM') {
     const ratio = session === 'AM' ? this.ratioAM : this.ratioPM;
     return ratio === RATIOS.ONE_TO_TWO;
   }
@@ -175,8 +220,10 @@ export class Schedule {
   }
 
   isStaffAvailable(staffId, session, program) {
-    const existingAssignments = this.getAssignmentsForSession(session, program);
-    return !existingAssignments.some(a => a.staffId === staffId);
+    // Check for conflicts in the SAME SESSION across ALL PROGRAMS
+    // A staff member can't work both Primary and Secondary in the same session
+    const sessionAssignments = this.assignments.filter(a => a.session === session);
+    return !sessionAssignments.some(a => a.staffId === staffId);
   }
 
   hasStaffWorkedWithStudentToday(staffId, studentId) {
@@ -236,11 +283,7 @@ export class SchedulingRules {
 
     // Check student requirements
     const studentRecord = student.find(s => s.id === assignment.studentId);
-    if (studentRecord) {
-      if (studentRecord.excludedStaff.includes(assignment.staffId)) {
-        errors.push(`${studentRecord.name} cannot be assigned to ${staffMember.name}`);
-      }
-    }
+    // Note: excludedStaff validation removed - now using team-based assignments
 
     return errors;
   }
@@ -250,7 +293,15 @@ export class SchedulingRules {
     
     // Check all assignments for violations
     for (const assignment of schedule.assignments) {
-      const assignmentErrors = this.validateAssignment(assignment, schedule, staff, students);
+      // Create a temporary schedule without the current assignment for validation
+      const tempSchedule = new Schedule({ 
+        date: schedule.date,
+        assignments: schedule.assignments.filter(a => a.id !== assignment.id),
+        lockedAssignments: schedule.lockedAssignments,
+        isFinalized: schedule.isFinalized
+      });
+      
+      const assignmentErrors = this.validateAssignment(assignment, tempSchedule, staff, students);
       errors.push(...assignmentErrors.map(err => `Assignment ${assignment.id}: ${err}`));
     }
 
@@ -262,7 +313,9 @@ export class SchedulingRules {
         const key = `${assignment.session}-${assignment.program}-${student.id}`;
         studentRatioCounts[key] = (studentRatioCounts[key] || 0) + 1;
         
-        if (student.ratio === RATIOS.TWO_TO_ONE && studentRatioCounts[key] < 2) {
+        // Check ratio requirements using the session-specific ratio
+        const sessionRatio = student.getSessionRatio ? student.getSessionRatio(assignment.session) : student.ratio;
+        if (sessionRatio === RATIOS.TWO_TO_ONE && studentRatioCounts[key] < 2) {
           errors.push(`${student.name} requires 2:1 ratio but only has ${studentRatioCounts[key]} staff assigned`);
         }
       }
@@ -302,8 +355,14 @@ export class SchedulingUtils {
       // Must not have worked with this student already today
       if (schedule.hasStaffWorkedWithStudentToday(staffMember.id, student.id)) return false;
       
+      // Check 1:1 eligibility - if student needs 1:1, staff must be eligible
+      const sessionRatio = session === 'AM' ? student.ratioAM : student.ratioPM;
+      if (sessionRatio === RATIOS.ONE_TO_ONE && !staffMember.canDo1To1Sessions()) {
+        return false; // Teacher/Trainer/Director can't do 1:1 sessions
+      }
+      
       // Must not be excluded by student
-      if (student.excludedStaff.includes(staffMember.id)) return false;
+      // Note: excludedStaff validation removed - now using team-based assignments
       
       return true;
     });

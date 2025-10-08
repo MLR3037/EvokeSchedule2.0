@@ -1,4 +1,4 @@
-import { Staff, Student, PROGRAMS, RATIOS } from '../types/index.js';
+import { Staff, Student, Schedule, Assignment, PROGRAMS, RATIOS } from '../types/index.js';
 
 /**
  * Sample data for testing the ABA scheduling system
@@ -7,56 +7,56 @@ import { Staff, Student, PROGRAMS, RATIOS } from '../types/index.js';
 // Sample staff data (80 staff as requested)
 export const sampleStaff = [
   // RBTs (Registered Behavior Technicians) - 40 staff
-  new Staff({ id: 1, name: 'Sarah Johnson', role: 'RBT', primaryProgram: PROGRAMS.PRIMARY, isActive: true }),
-  new Staff({ id: 2, name: 'Mike Chen', role: 'RBT', primaryProgram: PROGRAMS.PRIMARY, isActive: true }),
-  new Staff({ id: 3, name: 'Emily Rodriguez', role: 'RBT', primaryProgram: PROGRAMS.SECONDARY, isActive: true }),
-  new Staff({ id: 4, name: 'David Kim', role: 'RBT', primaryProgram: PROGRAMS.PRIMARY, isActive: true }),
-  new Staff({ id: 5, name: 'Jessica Williams', role: 'RBT', primaryProgram: PROGRAMS.SECONDARY, isActive: true }),
-  new Staff({ id: 6, name: 'Alex Thompson', role: 'RBT', primaryProgram: PROGRAMS.PRIMARY, isActive: true }),
-  new Staff({ id: 7, name: 'Maria Garcia', role: 'RBT', primaryProgram: PROGRAMS.PRIMARY, isActive: true }),
-  new Staff({ id: 8, name: 'Chris Lee', role: 'RBT', primaryProgram: PROGRAMS.SECONDARY, isActive: true }),
-  new Staff({ id: 9, name: 'Amanda Davis', role: 'RBT', primaryProgram: PROGRAMS.PRIMARY, isActive: true }),
-  new Staff({ id: 10, name: 'Ryan Martinez', role: 'RBT', primaryProgram: PROGRAMS.SECONDARY, isActive: true }),
-  new Staff({ id: 11, name: 'Nicole Brown', role: 'RBT', primaryProgram: PROGRAMS.PRIMARY, isActive: true }),
-  new Staff({ id: 12, name: 'Kevin Wilson', role: 'RBT', primaryProgram: PROGRAMS.PRIMARY, isActive: true }),
-  new Staff({ id: 13, name: 'Stephanie Taylor', role: 'RBT', primaryProgram: PROGRAMS.SECONDARY, isActive: true }),
-  new Staff({ id: 14, name: 'Brandon White', role: 'RBT', primaryProgram: PROGRAMS.PRIMARY, isActive: true }),
-  new Staff({ id: 15, name: 'Melissa Adams', role: 'RBT', primaryProgram: PROGRAMS.SECONDARY, isActive: true }),
+  new Staff({ id: 1, name: 'Sarah Johnson', role: 'RBT', primaryProgram: true, secondaryProgram: false, isActive: true }),
+  new Staff({ id: 2, name: 'Mike Chen', role: 'RBT', primaryProgram: true, secondaryProgram: false, isActive: true }),
+  new Staff({ id: 3, name: 'Emily Rodriguez', role: 'RBT', primaryProgram: false, secondaryProgram: true, isActive: true }),
+  new Staff({ id: 4, name: 'David Kim', role: 'RBT', primaryProgram: true, secondaryProgram: false, isActive: true }),
+  new Staff({ id: 5, name: 'Jessica Williams', role: 'RBT', primaryProgram: false, secondaryProgram: true, isActive: true }),
+  new Staff({ id: 6, name: 'Alex Thompson', role: 'RBT', primaryProgram: true, secondaryProgram: true, isActive: true }), // Both programs
+  new Staff({ id: 7, name: 'Maria Garcia', role: 'RBT', primaryProgram: true, secondaryProgram: true, isActive: true }), // Both programs
+  new Staff({ id: 8, name: 'Chris Lee', role: 'RBT', primaryProgram: false, secondaryProgram: true, isActive: true }),
+  new Staff({ id: 9, name: 'Amanda Davis', role: 'RBT', primaryProgram: true, secondaryProgram: false, isActive: true }),
+  new Staff({ id: 10, name: 'Ryan Martinez', role: 'RBT', primaryProgram: false, secondaryProgram: true, isActive: true }),
+  new Staff({ id: 11, name: 'Nicole Brown', role: 'RBT', primaryProgram: true, secondaryProgram: false, isActive: true }),
+  new Staff({ id: 12, name: 'Kevin Wilson', role: 'RBT', primaryProgram: true, secondaryProgram: false, isActive: true }),
+  new Staff({ id: 13, name: 'Stephanie Taylor', role: 'RBT', primaryProgram: false, secondaryProgram: true, isActive: true }),
+  new Staff({ id: 14, name: 'Brandon White', role: 'RBT', primaryProgram: true, secondaryProgram: false, isActive: true }),
+  new Staff({ id: 15, name: 'Melissa Adams', role: 'RBT', primaryProgram: false, secondaryProgram: true, isActive: true }),
   // ... Add more RBTs (continuing pattern for 40 total)
-  new Staff({ id: 16, name: 'Jordan Smith', role: 'RBT', primaryProgram: PROGRAMS.PRIMARY, isActive: true }),
-  new Staff({ id: 17, name: 'Taylor Jones', role: 'RBT', primaryProgram: PROGRAMS.SECONDARY, isActive: true }),
-  new Staff({ id: 18, name: 'Morgan Clark', role: 'RBT', primaryProgram: PROGRAMS.PRIMARY, isActive: true }),
-  new Staff({ id: 19, name: 'Casey Green', role: 'RBT', primaryProgram: PROGRAMS.PRIMARY, isActive: true }),
-  new Staff({ id: 20, name: 'Riley Miller', role: 'RBT', primaryProgram: PROGRAMS.SECONDARY, isActive: true }),
+  new Staff({ id: 16, name: 'Jordan Smith', role: 'RBT', primaryProgram: true, secondaryProgram: false, isActive: true }),
+  new Staff({ id: 17, name: 'Taylor Jones', role: 'RBT', primaryProgram: false, secondaryProgram: true, isActive: true }),
+  new Staff({ id: 18, name: 'Morgan Clark', role: 'RBT', primaryProgram: true, secondaryProgram: false, isActive: true }),
+  new Staff({ id: 19, name: 'Casey Green', role: 'RBT', primaryProgram: true, secondaryProgram: false, isActive: true }),
+  new Staff({ id: 20, name: 'Riley Miller', role: 'RBT', primaryProgram: false, secondaryProgram: true, isActive: true }),
   
   // Behavior Specialists (BS) - 15 staff
-  new Staff({ id: 41, name: 'Dr. Jennifer Parker', role: 'BS', primaryProgram: PROGRAMS.PRIMARY, secondaryProgram: PROGRAMS.SECONDARY, isActive: true }),
-  new Staff({ id: 42, name: 'Lisa Anderson', role: 'BS', primaryProgram: PROGRAMS.PRIMARY, isActive: true }),
-  new Staff({ id: 43, name: 'Mark Roberts', role: 'BS', primaryProgram: PROGRAMS.SECONDARY, isActive: true }),
-  new Staff({ id: 44, name: 'Amy Foster', role: 'BS', primaryProgram: PROGRAMS.PRIMARY, isActive: true }),
-  new Staff({ id: 45, name: 'Daniel Cooper', role: 'BS', primaryProgram: PROGRAMS.SECONDARY, isActive: true }),
+  new Staff({ id: 41, name: 'Dr. Jennifer Parker', role: 'BS', primaryProgram: true, secondaryProgram: true, isActive: true }),
+  new Staff({ id: 42, name: 'Lisa Anderson', role: 'BS', primaryProgram: true, secondaryProgram: false, isActive: true }),
+  new Staff({ id: 43, name: 'Mark Roberts', role: 'BS', primaryProgram: false, secondaryProgram: true, isActive: true }),
+  new Staff({ id: 44, name: 'Amy Foster', role: 'BS', primaryProgram: true, secondaryProgram: false, isActive: true }),
+  new Staff({ id: 45, name: 'Daniel Cooper', role: 'BS', primaryProgram: false, secondaryProgram: true, isActive: true }),
   // ... more BS staff
   
   // BCBAs (Board Certified Behavior Analysts) - 10 staff
-  new Staff({ id: 61, name: 'Dr. Michael Stevens', role: 'BCBA', primaryProgram: PROGRAMS.PRIMARY, secondaryProgram: PROGRAMS.SECONDARY, isActive: true }),
-  new Staff({ id: 62, name: 'Dr. Sarah Mitchell', role: 'BCBA', primaryProgram: PROGRAMS.PRIMARY, isActive: true }),
-  new Staff({ id: 63, name: 'Dr. Robert Turner', role: 'BCBA', primaryProgram: PROGRAMS.SECONDARY, isActive: true }),
-  new Staff({ id: 64, name: 'Dr. Linda Campbell', role: 'BCBA', primaryProgram: PROGRAMS.PRIMARY, secondaryProgram: PROGRAMS.SECONDARY, isActive: true }),
+  new Staff({ id: 61, name: 'Dr. Michael Stevens', role: 'BCBA', primaryProgram: true, secondaryProgram: true, isActive: true }),
+  new Staff({ id: 62, name: 'Dr. Sarah Mitchell', role: 'BCBA', primaryProgram: true, secondaryProgram: false, isActive: true }),
+  new Staff({ id: 63, name: 'Dr. Robert Turner', role: 'BCBA', primaryProgram: false, secondaryProgram: true, isActive: true }),
+  new Staff({ id: 64, name: 'Dr. Linda Campbell', role: 'BCBA', primaryProgram: true, secondaryProgram: true, isActive: true }),
   
   // Educational Assistants (EA) - 8 staff
-  new Staff({ id: 71, name: 'Carol Henderson', role: 'EA', primaryProgram: PROGRAMS.PRIMARY, isActive: true }),
-  new Staff({ id: 72, name: 'Janet Phillips', role: 'EA', primaryProgram: PROGRAMS.SECONDARY, isActive: true }),
-  new Staff({ id: 73, name: 'Robert Evans', role: 'EA', primaryProgram: PROGRAMS.PRIMARY, isActive: true }),
+  new Staff({ id: 71, name: 'Carol Henderson', role: 'EA', primaryProgram: true, secondaryProgram: false, isActive: true }),
+  new Staff({ id: 72, name: 'Janet Phillips', role: 'EA', primaryProgram: false, secondaryProgram: true, isActive: true }),
+  new Staff({ id: 73, name: 'Robert Evans', role: 'EA', primaryProgram: true, secondaryProgram: false, isActive: true }),
   
   // Mental Health Assistants (MHA) - 4 staff
-  new Staff({ id: 76, name: 'Patricia Young', role: 'MHA', primaryProgram: PROGRAMS.PRIMARY, secondaryProgram: PROGRAMS.SECONDARY, isActive: true }),
-  new Staff({ id: 77, name: 'Thomas Hall', role: 'MHA', primaryProgram: PROGRAMS.SECONDARY, isActive: true }),
+  new Staff({ id: 76, name: 'Patricia Young', role: 'MHA', primaryProgram: true, secondaryProgram: true, isActive: true }),
+  new Staff({ id: 77, name: 'Thomas Hall', role: 'MHA', primaryProgram: false, secondaryProgram: true, isActive: true }),
   
   // Clinical Coordinators (CC) - 2 staff
-  new Staff({ id: 78, name: 'Michelle Lewis', role: 'CC', primaryProgram: PROGRAMS.PRIMARY, secondaryProgram: PROGRAMS.SECONDARY, isActive: true }),
+  new Staff({ id: 78, name: 'Michelle Lewis', role: 'CC', primaryProgram: true, secondaryProgram: true, isActive: true }),
   
   // Teachers - 1 staff
-  new Staff({ id: 79, name: 'Elizabeth Murphy', role: 'Teacher', primaryProgram: PROGRAMS.PRIMARY, secondaryProgram: PROGRAMS.SECONDARY, isActive: true }),
+  new Staff({ id: 79, name: 'Elizabeth Murphy', role: 'Teacher', primaryProgram: true, secondaryProgram: true, isActive: true }),
   
   // Director - 1 staff
   new Staff({ id: 80, name: 'James Wilson', role: 'Director', primaryProgram: PROGRAMS.PRIMARY, secondaryProgram: PROGRAMS.SECONDARY, isActive: true })
@@ -120,6 +120,11 @@ export const sampleStudents = [
 ];
 
 // Add some preferred/excluded staff relationships for testing
+// Note: The following staff preferences and exclusions are no longer used
+// since the app now uses team-based assignments from SharePoint
+// Keeping this section commented for reference, but it's not used in the algorithm
+
+/*
 sampleStudents[2].preferredStaff = [1, 2]; // Liam prefers Sarah and Mike
 sampleStudents[2].excludedStaff = [20]; // Liam cannot work with Riley
 
@@ -131,6 +136,7 @@ sampleStudents[22].excludedStaff = [3, 5]; // Adrian cannot work with Emily or J
 
 sampleStudents[24].preferredStaff = []; 
 sampleStudents[24].excludedStaff = [8, 10]; // Zara cannot work with Chris or Ryan
+*/
 
 /**
  * Create a test schedule with some pre-existing assignments
@@ -141,17 +147,17 @@ export const createTestSchedule = (date = new Date()) => {
   // Add some manual assignments for testing
   const testAssignments = [
     // Primary AM session
-    { staffId: 1, studentId: 101, session: 'AM', program: PROGRAMS.PRIMARY }, // Sarah -> Alex
-    { staffId: 2, studentId: 102, session: 'AM', program: PROGRAMS.PRIMARY }, // Mike -> Emma
-    { staffId: 3, studentId: 107, session: 'AM', program: PROGRAMS.PRIMARY }, // Emily -> Mason
+    { staffId: 1, studentId: 101, session: 'AM', program: PROGRAMS.PRIMARY }, // Sarah -> Alex (Primary staff)
+    { staffId: 2, studentId: 102, session: 'AM', program: PROGRAMS.PRIMARY }, // Mike -> Emma (Primary staff)
+    { staffId: 4, studentId: 107, session: 'AM', program: PROGRAMS.PRIMARY }, // David -> Mason (Primary staff)
     
     // Primary PM session  
-    { staffId: 4, studentId: 101, session: 'PM', program: PROGRAMS.PRIMARY }, // David -> Alex (different staff than AM)
-    { staffId: 5, studentId: 102, session: 'PM', program: PROGRAMS.PRIMARY }, // Jessica -> Emma (different staff than AM)
+    { staffId: 9, studentId: 101, session: 'PM', program: PROGRAMS.PRIMARY }, // Amanda -> Alex (different staff than AM)
+    { staffId: 11, studentId: 102, session: 'PM', program: PROGRAMS.PRIMARY }, // Nicole -> Emma (different staff than AM)
     
     // Secondary AM session
-    { staffId: 6, studentId: 201, session: 'AM', program: PROGRAMS.SECONDARY }, // Alex -> Adrian
-    { staffId: 7, studentId: 202, session: 'AM', program: PROGRAMS.SECONDARY }, // Maria -> Cesar
+    { staffId: 3, studentId: 201, session: 'AM', program: PROGRAMS.SECONDARY }, // Emily -> Adrian (Secondary staff)
+    { staffId: 5, studentId: 202, session: 'AM', program: PROGRAMS.SECONDARY }, // Jessica -> Cesar (Secondary staff)
   ];
   
   testAssignments.forEach((assignmentData, index) => {
@@ -169,8 +175,8 @@ export const createTestSchedule = (date = new Date()) => {
   });
   
   // Lock a couple assignments for testing
-  schedule.lockAssignment('test_1'); // Lock Sarah -> Alex
-  schedule.lockAssignment('test_6'); // Lock Alex -> Adrian
+  schedule.lockAssignment('test_1'); // Lock Sarah -> Alex (Primary AM)
+  schedule.lockAssignment('test_6'); // Lock Emily -> Adrian (Secondary AM)
   
   return schedule;
 };

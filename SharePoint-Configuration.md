@@ -81,8 +81,8 @@ $select=Title,Program,RatioAM,RatioPM,Team/Title,Team/EMail,Team/Id,IsActive&$ex
 - Teacher
 - Director
 
-### 2. Students List
-**List Name:** `Students`
+### 2. Clients List
+**List Name:** `Clients` (Note: App references this as 'Students' internally for consistency)
 
 #### Required Columns:
 | Column Name | Type | Required | Description |
@@ -199,7 +199,7 @@ If migrating from an existing system:
    - Remove MaxStudents column
    - Convert existing program data to Yes/No format
 
-2. **Update Students List:**
+2. **Update Clients List:**
    - Add RatioAM and RatioPM choice columns
    - Add Team People Picker column (multiple selections)
    - Remove ExcludedStaffPeople column

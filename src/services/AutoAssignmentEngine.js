@@ -167,6 +167,12 @@ export class AutoAssignmentEngine {
     // For 1:2 ratio, try to find a staff member who is already assigned
     // to another 1:2 student in the same session, or assign a new staff member
     
+    // Defensive check: ensure schedule has the required method
+    if (typeof schedule.getAssignmentsForSession !== 'function') {
+      console.error('Schedule object missing getAssignmentsForSession method', schedule);
+      return [];
+    }
+    
     const sessionAssignments = schedule.getAssignmentsForSession(session, program);
     
     // Look for existing 1:2 groups that can accommodate this student
@@ -232,11 +238,11 @@ export class AutoAssignmentEngine {
    */
   sortStaffForStudent(student, availableStaff) {
     return [...availableStaff].sort((a, b) => {
-      // Preferred staff first
-      const aPreferred = student.preferredStaff.includes(a.id);
-      const bPreferred = student.preferredStaff.includes(b.id);
-      if (aPreferred && !bPreferred) return -1;
-      if (!aPreferred && bPreferred) return 1;
+      // Team members first (staff assigned to this student's team)
+      const aIsTeamMember = student.teamIds.includes(a.id);
+      const bIsTeamMember = student.teamIds.includes(b.id);
+      if (aIsTeamMember && !bIsTeamMember) return -1;
+      if (!aIsTeamMember && bIsTeamMember) return 1;
 
       // Then by hierarchy (lower level = higher priority)
       const aLevel = a.getRoleLevel();
@@ -259,11 +265,10 @@ export class AutoAssignmentEngine {
       if (a.requiresMultipleStaff() && !b.requiresMultipleStaff()) return -1;
       if (!a.requiresMultipleStaff() && b.requiresMultipleStaff()) return 1;
 
-      // Then by preferred staff (students with specific needs first)
-      const aHasPreferences = a.preferredStaff.length > 0;
-      const bHasPreferences = b.preferredStaff.length > 0;
-      if (aHasPreferences && !bHasPreferences) return -1;
-      if (!aHasPreferences && bHasPreferences) return 1;
+      // Then by team size (students with smaller teams get priority to ensure coverage)
+      const aTeamSize = a.teamIds.length;
+      const bTeamSize = b.teamIds.length;
+      if (aTeamSize !== bTeamSize) return aTeamSize - bTeamSize;
 
       // Then alphabetically for consistency
       return a.name.localeCompare(b.name);
@@ -295,6 +300,12 @@ export class AutoAssignmentEngine {
    * @returns {boolean} True if student is already assigned
    */
   isStudentAssigned(studentId, session, program, schedule) {
+    // Defensive check: ensure schedule has the required method
+    if (typeof schedule.getAssignmentsForSession !== 'function') {
+      console.error('Schedule object missing getAssignmentsForSession method', schedule);
+      return false;
+    }
+    
     const sessionAssignments = schedule.getAssignmentsForSession(session, program);
     return sessionAssignments.some(assignment => assignment.studentId === studentId);
   }
@@ -312,10 +323,7 @@ export class AutoAssignmentEngine {
       return false;
     }
 
-    // Check if student excludes this staff member
-    if (student.excludedStaff.includes(staff.id)) {
-      return false;
-    }
+    // Note: excludedStaff validation removed - now using team-based assignments
 
     return true;
   }
@@ -411,7 +419,13 @@ export class AutoAssignmentEngine {
     ['AM', 'PM'].forEach(session => {
       [PROGRAMS.PRIMARY, PROGRAMS.SECONDARY].forEach(program => {
         const key = `${program}_${session}`;
-        stats.assignmentsBySession[key] = schedule.getAssignmentsForSession(session, program).length;
+        // Defensive check: ensure schedule has the required method
+        if (typeof schedule.getAssignmentsForSession === 'function') {
+          stats.assignmentsBySession[key] = schedule.getAssignmentsForSession(session, program).length;
+        } else {
+          stats.assignmentsBySession[key] = 0;
+          console.error('Schedule object missing getAssignmentsForSession method in stats collection');
+        }
       });
     });
 
