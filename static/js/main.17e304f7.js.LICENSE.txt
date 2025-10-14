@@ -1,3 +1,7 @@
+/*! @azure/msal-browser v4.25.0 2025-10-09 */
+
+/*! @azure/msal-common v15.13.0 2025-09-24 */
+
 /**
  * @license React
  * react-dom-client.production.js
