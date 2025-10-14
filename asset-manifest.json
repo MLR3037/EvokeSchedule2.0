@@ -1,12 +1,12 @@
 {
   "files": {
     "main.css": "/EvokeSchedule2.0/static/css/main.5fb104d7.css",
-    "main.js": "/EvokeSchedule2.0/static/js/main.17e304f7.js",
+    "main.js": "/EvokeSchedule2.0/static/js/main.a409ca5f.js",
     "static/js/206.2765b8c2.chunk.js": "/EvokeSchedule2.0/static/js/206.2765b8c2.chunk.js",
     "index.html": "/EvokeSchedule2.0/index.html"
   },
   "entrypoints": [
     "static/css/main.5fb104d7.css",
-    "static/js/main.17e304f7.js"
+    "static/js/main.a409ca5f.js"
   ]
 }
