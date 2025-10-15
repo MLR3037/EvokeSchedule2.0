@@ -16,90 +16,146 @@ export const TeamManagement = ({
 
   // Prepare data for clients by staff view
   const clientsByStaff = useMemo(() => {
+    console.log('🔍 TeamManagement: Building clientsByStaff mapping');
+    console.log('🔍 TeamManagement: Staff data:', staff);
+    console.log('🔍 TeamManagement: Students data:', students);
+    console.log('🔍 TeamManagement: Sample student team data:', students?.[0]?.team);
     const result = {};
     
     staff.filter(s => s.isActive).forEach(staffMember => {
+      console.log(`🔍 Processing staff: ${staffMember.name} (ID: ${staffMember.id})`);
+      
+      const assignedClients = students.filter(student => {
+        if (!student.isActive) return false;
+        
+        console.log(`  🔍 Checking student: ${student.name}`);
+        console.log(`    Team data:`, student.team);
+        
+        if (!student.team || student.team.length === 0) {
+          console.log(`    ⚠️ No team data for ${student.name}`);
+          return false;
+        }
+        
+        // Check if this staff member is in the student's team
+        const isInTeam = student.team.some(teamMember => {
+          console.log(`    🔍 Checking team member:`, teamMember);
+          
+          // Primary match: by email (most reliable)
+          const staffEmail = staffMember.email?.toLowerCase().trim();
+          const teamMemberEmail = teamMember.email?.toLowerCase().trim();
+          
+          if (staffEmail && teamMemberEmail && staffEmail === teamMemberEmail) {
+            console.log(`    ✅ EMAIL MATCH: ${staffMember.name} found in ${student.name}'s team`);
+            return true;
+          }
+          
+          // Secondary match: by ID
+          if (staffMember.id && teamMember.id && staffMember.id === teamMember.id) {
+            console.log(`    ✅ ID MATCH: ${staffMember.name} found in ${student.name}'s team`);
+            return true;
+          }
+          
+          // Tertiary match: by name (less reliable but might be needed)
+          const staffName = staffMember.name?.toLowerCase().trim();
+          const teamMemberName = teamMember.title?.toLowerCase().trim() || teamMember.name?.toLowerCase().trim();
+          
+          if (staffName && teamMemberName && staffName === teamMemberName) {
+            console.log(`    ✅ NAME MATCH: ${staffMember.name} found in ${student.name}'s team`);
+            return true;
+          }
+          
+          return false;
+        });
+        
+        if (isInTeam) {
+          console.log(`  ✅ ${student.name} assigned to ${staffMember.name}`);
+        }
+        
+        return isInTeam;
+      });
+      
       result[staffMember.id] = {
         staff: staffMember,
-        clients: students.filter(student => 
-          student.isActive && 
-          student.team.some(teamMember => {
-            // Match by name since the IDs are different systems
-            const staffName = staffMember.name?.toLowerCase().trim();
-            const teamMemberName = teamMember.title?.toLowerCase().trim();
-            
-            // Also try matching by email if available
-            const staffEmail = staffMember.email?.toLowerCase().trim();
-            const teamMemberEmail = teamMember.email?.toLowerCase().trim();
-            
-            // Exact name match
-            if (staffName && teamMemberName && staffName === teamMemberName) {
-              return true;
-            }
-            
-            // Email match
-            if (staffEmail && teamMemberEmail && staffEmail === teamMemberEmail) {
-              return true;
-            }
-            
-            // Partial name match (first name match)
-            if (staffName && teamMemberName) {
-              const staffFirstName = staffName.split(' ')[0];
-              const teamMemberFirstName = teamMemberName.split(' ')[0];
-              if (staffFirstName === teamMemberFirstName && staffFirstName.length > 2) {
-                return true;
-              }
-            }
-            
-            return false;
-          })
-        )
+        clients: assignedClients
       };
+      
+      console.log(`✅ ${staffMember.name} has ${assignedClients.length} clients:`, assignedClients.map(c => c.name));
     });
     
+    console.log('📊 Final clientsByStaff mapping:', result);
     return result;
   }, [staff, students]);
 
   // Prepare data for staff by client view
   const staffByClient = useMemo(() => {
+    console.log('🔍 TeamManagement: Building staffByClient mapping');
     const result = {};
     
     students.filter(s => s.isActive).forEach(student => {
+      console.log(`🔍 Processing student: ${student.name}`);
+      console.log(`  Team data:`, student.team);
+      
+      const teamMembers = student.team.map(teamMember => {
+        console.log(`  🔍 Processing team member:`, teamMember);
+        
+        // Find staff by email, ID, or name
+        const staffMember = staff.find(s => {
+          // Primary match: by email
+          const staffEmail = s.email?.toLowerCase().trim();
+          const teamMemberEmail = teamMember.email?.toLowerCase().trim();
+          
+          if (staffEmail && teamMemberEmail && staffEmail === teamMemberEmail) {
+            console.log(`    ✅ EMAIL MATCH: Found staff ${s.name} for team member`);
+            return true;
+          }
+          
+          // Secondary match: by ID
+          if (s.id && teamMember.id && s.id === teamMember.id) {
+            console.log(`    ✅ ID MATCH: Found staff ${s.name} for team member`);
+            return true;
+          }
+          
+          // Tertiary match: by name
+          const staffName = s.name?.toLowerCase().trim();
+          const teamMemberName = teamMember.title?.toLowerCase().trim() || teamMember.name?.toLowerCase().trim();
+          
+          if (staffName && teamMemberName && staffName === teamMemberName) {
+            console.log(`    ✅ NAME MATCH: Found staff ${s.name} for team member`);
+            return true;
+          }
+          
+          return false;
+        });
+        
+        // Return the team member info with People Picker name, but staff role
+        if (staffMember) {
+          return {
+            id: staffMember.id,
+            name: teamMember.title || teamMember.DisplayName || teamMember.LookupValue || staffMember.name, // Use People Picker name
+            role: staffMember.role,
+            email: staffMember.email
+          };
+        } else {
+          console.log(`    ⚠️ No staff match found for team member:`, teamMember);
+          // Return team member even if no staff match (they might be external)
+          return {
+            id: teamMember.id,
+            name: teamMember.title || teamMember.DisplayName || teamMember.LookupValue,
+            role: 'Unknown',
+            email: teamMember.email
+          };
+        }
+      }).filter(Boolean);
+      
       result[student.id] = {
         student: student,
-        teamMembers: student.team.map(teamMember => {
-          // Find staff by matching name or email instead of ID
-          return staff.find(s => {
-            const staffName = s.name?.toLowerCase().trim();
-            const teamMemberName = teamMember.title?.toLowerCase().trim();
-            const staffEmail = s.email?.toLowerCase().trim();
-            const teamMemberEmail = teamMember.email?.toLowerCase().trim();
-            
-            // Exact name match
-            if (staffName && teamMemberName && staffName === teamMemberName) {
-              return true;
-            }
-            
-            // Email match
-            if (staffEmail && teamMemberEmail && staffEmail === teamMemberEmail) {
-              return true;
-            }
-            
-            // Partial name match (first name match)
-            if (staffName && teamMemberName) {
-              const staffFirstName = staffName.split(' ')[0];
-              const teamMemberFirstName = teamMemberName.split(' ')[0];
-              if (staffFirstName === teamMemberFirstName && staffFirstName.length > 2) {
-                return true;
-              }
-            }
-            
-            return false;
-          });
-        }).filter(Boolean)
+        teamMembers: teamMembers
       };
+      
+      console.log(`✅ ${student.name} has ${teamMembers.length} team members:`, teamMembers.map(t => t.name));
     });
     
+    console.log('📊 Final staffByClient mapping:', result);
     return result;
   }, [staff, students]);
 

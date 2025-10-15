@@ -1,7 +1,368 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState } from 'react';
 import { Lock, Unlock, Users, Clock, AlertTriangle, CheckCircle } from 'lucide-react';
-import { PROGRAMS, SESSION_TIMES, RATIOS } from '../types/index.js';
-import { PeoplePicker, SinglePeoplePicker, StaffPeoplePicker } from './PeoplePicker.js';
+import { SESSION_TIMES, RATIOS } from '../types/index.js';
+
+/**
+ * Interactive Assignment Table - Pre-assignment with team dropdowns
+ */
+export const ScheduleTableView = ({ 
+  schedule, 
+  staff, 
+  students, 
+  onAssignmentLock, 
+  onAssignmentUnlock,
+  onAssignmentRemove,
+  onManualAssignment,
+  selectedDate 
+}) => {
+  console.log('🔍 ScheduleTableView rendering with:', { 
+    studentsCount: students.length, 
+    staffCount: staff.length,
+    assignmentsCount: schedule.assignments.length 
+  });
+  
+  const [preAssignments, setPreAssignments] = useState({});
+  const [lockedAssignments, setLockedAssignments] = useState(new Set());
+
+  // Get unique programs from students
+  const programs = [...new Set(students.filter(s => s.isActive).map(s => s.program))];
+
+  // Generate role color mapping
+  const getRoleColor = (role) => {
+    const roleColors = {
+      'RBT': 'bg-purple-100 text-purple-800',
+      'BS': 'bg-indigo-100 text-indigo-800', 
+      'BCBA': 'bg-blue-100 text-blue-800',
+      'EA': 'bg-green-100 text-green-800',
+      'MHA': 'bg-yellow-100 text-yellow-800',
+      'CC': 'bg-orange-100 text-orange-800',
+      'Teacher': 'bg-pink-100 text-pink-800',
+      'Director': 'bg-gray-100 text-gray-800'
+    };
+    return roleColors[role] || 'bg-gray-100 text-gray-800';
+  };
+
+  const getStudentTeam = (student) => {
+    let team = [];
+    
+    // Use ONLY People Picker data - no dependency on Staff list names
+    if (student.team && student.team.length > 0) {
+      team = student.team.map(teamMember => {
+        // Use the full name from People Picker data
+        const fullName = teamMember.title || teamMember.DisplayName || teamMember.LookupValue;
+        
+        if (!fullName) return null;
+        
+        // Find staff member by email to get role info (more reliable than name matching)
+        let staffRole = 'RBT'; // Default role
+        let staffEmail = teamMember.email;
+        
+        if (teamMember.email) {
+          const staffMember = staff.find(s => s.email && s.email.toLowerCase() === teamMember.email.toLowerCase());
+          if (staffMember) {
+            staffRole = staffMember.role;
+          }
+        }
+        
+        // If email match failed, try ID match as backup
+        if (staffRole === 'RBT' && teamMember.id) {
+          const staffMember = staff.find(s => s.id === teamMember.id);
+          if (staffMember) {
+            staffRole = staffMember.role;
+          }
+        }
+        
+        // Return team member using ONLY People Picker data
+        return {
+          id: teamMember.id,
+          name: fullName, // Use ONLY the full name from People Picker
+          role: staffRole, // Role from staff list match
+          email: staffEmail
+        };
+      }).filter(Boolean);
+    }
+    
+    return team;
+  };
+
+  const getCurrentAssignment = (student, session) => {
+    const assignment = schedule.assignments.find(a => 
+      a.studentId === student.id && 
+      a.session === session && 
+      a.program === student.program
+    );
+    
+    // DEBUG: Log assignment lookup details
+    if (schedule.assignments.length > 0) {
+      console.log(`🔍 ASSIGNMENT LOOKUP for ${student.name} ${session}:`);
+      console.log(`  Looking for: studentId=${student.id}, session=${session}, program=${student.program}`);
+      console.log(`  Found assignment:`, assignment);
+      console.log(`  All assignments:`, schedule.assignments);
+    }
+    
+    return assignment;
+  };
+
+  const getPreAssignmentKey = (studentId, session) => {
+    return `${studentId}_${session}`;
+  };
+
+  const handleStaffSelection = (studentId, session, staffId) => {
+    const key = getPreAssignmentKey(studentId, session);
+    setPreAssignments(prev => ({
+      ...prev,
+      [key]: staffId ? parseInt(staffId) : null
+    }));
+  };
+
+  const handleLockAssignment = (studentId, session) => {
+    const key = getPreAssignmentKey(studentId, session);
+    const staffId = preAssignments[key];
+    
+    if (staffId) {
+      // Create manual assignment
+      const student = students.find(s => s.id === studentId);
+      if (student && onManualAssignment) {
+        onManualAssignment({
+          staffId: staffId,
+          studentId: studentId,
+          session: session,
+          program: student.program
+        });
+      }
+      
+      // Add to locked assignments
+      setLockedAssignments(prev => new Set([...prev, key]));
+    }
+  };
+
+  const handleUnlockAssignment = (studentId, session) => {
+    const key = getPreAssignmentKey(studentId, session);
+    
+    // Remove from locked assignments
+    setLockedAssignments(prev => {
+      const newSet = new Set(prev);
+      newSet.delete(key);
+      return newSet;
+    });
+    
+    // Remove the actual assignment
+    const currentAssignment = getCurrentAssignment(students.find(s => s.id === studentId), session);
+    if (currentAssignment && onAssignmentRemove) {
+      onAssignmentRemove(currentAssignment.id);
+    }
+    
+    // Clear pre-assignment
+    setPreAssignments(prev => ({
+      ...prev,
+      [key]: null
+    }));
+  };
+
+  const isAssignmentLocked = (studentId, session) => {
+    const key = getPreAssignmentKey(studentId, session);
+    return lockedAssignments.has(key);
+  };
+
+  const formatStudentName = (student) => {
+    let displayName = student.name;
+    if (student.isPaired()) {
+      const pairedStudent = student.getPairedStudent(students);
+      if (pairedStudent) {
+        displayName += ` (paired: ${pairedStudent.name})`;
+      }
+    }
+    return displayName;
+  };
+
+  const getRatioDisplay = (student) => {
+    const ratioColors = {
+      [RATIOS.ONE_TO_ONE]: 'bg-blue-100 text-blue-800',
+      [RATIOS.TWO_TO_ONE]: 'bg-red-100 text-red-800', 
+      [RATIOS.ONE_TO_TWO]: 'bg-green-100 text-green-800'
+    };
+    
+    return (
+      <span className={`px-2 py-1 rounded text-xs font-medium ${ratioColors[student.ratio] || 'bg-gray-100 text-gray-800'}`}>
+        {student.ratio}
+      </span>
+    );
+  };
+
+  const renderStaffDropdown = (student, session) => {
+    const team = getStudentTeam(student);
+    const currentAssignment = getCurrentAssignment(student, session);
+    const key = getPreAssignmentKey(student.id, session);
+    const isLocked = isAssignmentLocked(student.id, session);
+    const selectedStaffId = preAssignments[key] || currentAssignment?.staffId || '';
+
+    // FILTER TEAM TO ONLY AVAILABLE MEMBERS
+    const availableTeamMembers = team.filter(teamMember => {
+      // Always include currently assigned staff (even if not available) to prevent dropdown issues
+      if (selectedStaffId && (teamMember.id === selectedStaffId || teamMember.id == selectedStaffId)) {
+        return true;
+      }
+      
+      // Check if staff is available for this session
+      const staffMember = staff.find(s => s.id === teamMember.id || s.id == teamMember.id);
+      if (!staffMember) return false;
+      
+      return schedule.isStaffAvailable(staffMember.id, session, student.program);
+    });
+
+    // ENHANCED DEBUG: Log detailed dropdown information
+    console.log(`🔍 DROPDOWN DEBUG for ${student.name} ${session}:`);
+    console.log(`  Total team members:`, team.length);
+    console.log(`  Available team members:`, availableTeamMembers.length);
+    console.log(`  Available team list:`, availableTeamMembers.map(t => `${t.name} (ID: ${t.id}, Role: ${t.role})`));
+    console.log(`  Current assignment:`, currentAssignment);
+    console.log(`  Selected staff ID:`, selectedStaffId);
+    
+    if (currentAssignment) {
+      console.log(`  Assignment staff ID: ${currentAssignment.staffId} (type: ${typeof currentAssignment.staffId})`);
+      const matchingTeamMember = availableTeamMembers.find(t => t.id === currentAssignment.staffId || t.id == currentAssignment.staffId);
+      console.log(`  Staff in available team?: ${!!matchingTeamMember}`);
+      if (!matchingTeamMember) {
+        console.log(`  ⚠️ ISSUE: Assigned staff ${currentAssignment.staffId} not available or not in team!`);
+      }
+    }
+
+    if (availableTeamMembers.length === 0) {
+      return <span className="text-gray-400 text-sm">No available team</span>;
+    }
+
+    return (
+      <div className="flex items-center gap-2">
+        <select
+          value={selectedStaffId}
+          onChange={(e) => handleStaffSelection(student.id, session, e.target.value)}
+          disabled={isLocked}
+          className={`text-sm border rounded px-2 py-1 ${
+            isLocked ? 'bg-gray-100 text-gray-600' : 'bg-white'
+          }`}
+        >
+          <option value="">Select staff...</option>
+          {availableTeamMembers.map(staffMember => (
+            <option key={staffMember.id} value={staffMember.id}>
+              {staffMember.name} ({staffMember.role})
+            </option>
+          ))}
+        </select>
+        
+        {selectedStaffId && !isLocked && (
+          <button
+            onClick={() => handleLockAssignment(student.id, session)}
+            className="p-1 text-green-600 hover:text-green-800"
+            title="Lock this assignment"
+          >
+            <Lock className="w-4 h-4" />
+          </button>
+        )}
+        
+        {isLocked && (
+          <button
+            onClick={() => handleUnlockAssignment(student.id, session)}
+            className="p-1 text-yellow-600 hover:text-yellow-800"
+            title="Unlock this assignment"
+          >
+            <Unlock className="w-4 h-4" />
+          </button>
+        )}
+      </div>
+    );
+  };
+
+  return (
+    <div className="space-y-6">
+      {programs.map(program => {
+        const programStudents = students.filter(s => s.program === program && s.isActive);
+        
+        return (
+          <div key={program} className="bg-white rounded-lg shadow-lg overflow-hidden">
+            <div className="bg-gradient-to-r from-blue-600 to-blue-700 text-white px-6 py-4">
+              <h3 className="text-lg font-bold">{program.toUpperCase()}</h3>
+              <p className="text-blue-100 text-sm">{programStudents.length} students</p>
+            </div>
+            
+            <div className="overflow-x-auto">
+              <table className="w-full">
+                <thead className="bg-gray-50">
+                  <tr>
+                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider border-r">
+                      Client
+                    </th>
+                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider border-r">
+                      AM Staff Assignment
+                    </th>
+                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider border-r">
+                      PM Staff Assignment
+                    </th>
+                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                      Full Team
+                    </th>
+                  </tr>
+                </thead>
+                <tbody className="bg-white divide-y divide-gray-200">
+                  {programStudents.map((student, index) => {
+                    const team = getStudentTeam(student);
+                    const isEvenRow = index % 2 === 0;
+                    
+                    return (
+                      <tr key={student.id} className={isEvenRow ? 'bg-white' : 'bg-gray-50'}>
+                        <td className="px-6 py-4 whitespace-nowrap border-r">
+                          <div className="flex items-center">
+                            <div>
+                              <div className="text-sm font-medium text-gray-900">
+                                {formatStudentName(student)}
+                              </div>
+                              <div className="flex items-center gap-2 mt-1">
+                                {getRatioDisplay(student)}
+                                {student.isPaired() && (
+                                  <span className="px-2 py-1 bg-purple-100 text-purple-800 rounded text-xs font-medium">
+                                    Paired
+                                  </span>
+                                )}
+                              </div>
+                            </div>
+                          </div>
+                        </td>
+                        
+                        <td className="px-6 py-4 whitespace-nowrap border-r">
+                          {renderStaffDropdown(student, 'AM')}
+                        </td>
+                        
+                        <td className="px-6 py-4 whitespace-nowrap border-r">
+                          {renderStaffDropdown(student, 'PM')}
+                        </td>
+                        
+                        <td className="px-6 py-4">
+                          <div className="flex flex-wrap gap-1">
+                            {team.length > 0 ? (
+                              team.map((teamMember, idx) => (
+                                <span 
+                                  key={idx}
+                                  className={`px-2 py-1 rounded text-xs font-medium ${getRoleColor(teamMember.role)}`}
+                                >
+                                  {teamMember.name}
+                                </span>
+                              ))
+                            ) : (
+                              <span className="text-gray-400 text-sm">No team assigned</span>
+                            )}
+                          </div>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
+};
 
 /**
  * Schedule Grid Component - Shows the main scheduling grid with sessions and assignments
@@ -226,6 +587,16 @@ const AssignmentCard = ({ assignment, onLock, onUnlock, onRemove }) => {
             Manual
           </span>
         )}
+        {assignment.assignedBy === 'auto' && (
+          <span className="px-2 py-1 rounded-full text-xs font-medium bg-green-100 text-green-800">
+            Auto
+          </span>
+        )}
+        {assignment.assignedBy === 'auto-paired' && (
+          <span className="px-2 py-1 rounded-full text-xs font-medium bg-purple-100 text-purple-800">
+            Paired
+          </span>
+        )}
       </div>
     </div>
   );
@@ -360,18 +731,73 @@ export const SessionSummary = ({ schedule, staff, students, session, program }) 
   const assignedStudents = new Set(assignments.map(a => a.studentId));
   const unassignedCount = programStudents.length - assignedStudents.size;
   
-  const staffUtilization = {};
+  // Calculate staff utilization by role
+  const staffByRole = {};
+  const assignedStaffIds = new Set(assignments.map(a => a.staffId));
+  
   assignments.forEach(assignment => {
     const staffMember = staff.find(s => s.id === assignment.staffId);
     if (staffMember) {
-      staffUtilization[staffMember.name] = (staffUtilization[staffMember.name] || 0) + 1;
+      const role = staffMember.role;
+      if (!staffByRole[role]) {
+        staffByRole[role] = new Set();
+      }
+      staffByRole[role].add(staffMember.id);
     }
+  });
+
+  // Convert Set to count for display
+  const staffRoleCounts = {};
+  Object.keys(staffByRole).forEach(role => {
+    staffRoleCounts[role] = staffByRole[role].size;
+  });
+
+  // Find unassigned students
+  const unassignedStudents = programStudents.filter(student => 
+    !assignedStudents.has(student.id)
+  );
+
+  // Find unassigned staff for this program and session
+  const availableStaff = staff.filter(staffMember => {
+    if (!staffMember.isActive) return false;
+    
+    // Check if staff works with this program
+    const worksWithProgram = program === 'Primary' 
+      ? staffMember.primaryProgram 
+      : staffMember.secondaryProgram;
+    
+    return worksWithProgram && !assignedStaffIds.has(staffMember.id);
+  });
+
+  // Group unassigned staff by role
+  const unassignedStaffByRole = {};
+  availableStaff.forEach(staffMember => {
+    const role = staffMember.role;
+    if (!unassignedStaffByRole[role]) {
+      unassignedStaffByRole[role] = [];
+    }
+    unassignedStaffByRole[role].push(staffMember);
   });
 
   const getCompletionColor = () => {
     if (unassignedCount === 0) return 'text-green-600';
     if (unassignedCount <= 2) return 'text-yellow-600';
     return 'text-red-600';
+  };
+
+  const getRoleColor = (role) => {
+    const colors = {
+      'RBT': 'bg-purple-100 text-purple-800',
+      'BS': 'bg-indigo-100 text-indigo-800',
+      'BCBA': 'bg-blue-100 text-blue-800',
+      'EA': 'bg-green-100 text-green-800',
+      'MHA': 'bg-yellow-100 text-yellow-800',
+      'CC': 'bg-orange-100 text-orange-800',
+      'Teacher': 'bg-pink-100 text-pink-800',
+      'Trainer': 'bg-gray-100 text-gray-800',
+      'Director': 'bg-red-100 text-red-800'
+    };
+    return colors[role] || 'bg-gray-100 text-gray-800';
   };
 
   return (
@@ -397,9 +823,70 @@ export const SessionSummary = ({ schedule, staff, students, session, program }) 
         </div>
         <div className="flex justify-between">
           <span>Staff Used:</span>
-          <span className="font-medium">{Object.keys(staffUtilization).length}</span>
+          <span className="font-medium">{assignedStaffIds.size}</span>
         </div>
       </div>
+
+      {/* Staff by Role */}
+      {Object.keys(staffRoleCounts).length > 0 && (
+        <div className="mt-3 border-t pt-3">
+          <div className="text-xs font-medium text-gray-600 mb-2">Staff by Role:</div>
+          <div className="space-y-1">
+            {Object.entries(staffRoleCounts)
+              .sort(([a], [b]) => a.localeCompare(b))
+              .map(([role, count]) => (
+                <div key={role} className="flex justify-between items-center">
+                  <span className={`px-2 py-0.5 rounded text-xs font-medium ${getRoleColor(role)}`}>
+                    {role}
+                  </span>
+                  <span className="text-xs font-semibold">{count}</span>
+                </div>
+              ))}
+          </div>
+        </div>
+      )}
+
+      {/* Unassigned Students */}
+      {unassignedStudents.length > 0 && (
+        <div className="mt-3 border-t pt-3">
+          <div className="text-xs font-medium text-gray-600 mb-2">Unassigned Students:</div>
+          <div className="space-y-1 max-h-20 overflow-y-auto">
+            {unassignedStudents.map(student => (
+              <div key={student.id} className="text-xs text-gray-700 flex justify-between">
+                <span>{student.name}</span>
+                <span className="text-gray-500">
+                  {session === 'AM' ? student.ratioAM : student.ratioPM}
+                </span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Unassigned Staff */}
+      {Object.keys(unassignedStaffByRole).length > 0 && (
+        <div className="mt-3 border-t pt-3">
+          <div className="text-xs font-medium text-gray-600 mb-2">Available Staff:</div>
+          <div className="space-y-1 max-h-20 overflow-y-auto">
+            {Object.entries(unassignedStaffByRole)
+              .sort(([a], [b]) => a.localeCompare(b))
+              .map(([role, staffList]) => (
+                <div key={role} className="space-y-0.5">
+                  <div className={`px-2 py-0.5 rounded text-xs font-medium inline-block ${getRoleColor(role)}`}>
+                    {role} ({staffList.length})
+                  </div>
+                  <div className="ml-2 space-y-0.5">
+                    {staffList.map(staffMember => (
+                      <div key={staffMember.id} className="text-xs text-gray-600">
+                        {staffMember.name}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              ))}
+          </div>
+        </div>
+      )}
 
       {unassignedCount === 0 ? (
         <div className="mt-3 flex items-center gap-2 text-green-600">

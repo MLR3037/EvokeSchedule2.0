@@ -100,12 +100,32 @@ export class Staff {
 
   /**
    * Check if staff member is eligible for 1:1 sessions
-   * Teachers, Trainers, and Directors should not do 1:1 sessions
+   * Teachers, Trainers, Directors, and BCBAs should not do 1:1 sessions
    * @returns {boolean} True if staff can do 1:1 sessions
    */
   canDo1To1Sessions() {
-    const restrictedRoles = ['Teacher', 'Trainer', 'Director'];
+    const restrictedRoles = ['Teacher', 'Trainer', 'Director', 'BCBA'];
     return !restrictedRoles.includes(this.role);
+  }
+
+  /**
+   * Check if staff member is eligible for direct client sessions (all ratios)
+   * Only RBTs and Behavior Specialists should do direct client work
+   * @returns {boolean} True if staff can do direct client sessions
+   */
+  canDoDirectSessions() {
+    const directServiceRoles = ['RBT', 'BS', 'Behavior Specialist', 'Senior RBT'];
+    return directServiceRoles.includes(this.role);
+  }
+
+  /**
+   * Check if staff member is a preferred direct service provider
+   * RBTs and BSs are preferred over EAs and other roles
+   * @returns {boolean} True if staff is preferred for direct service
+   */
+  isPreferredDirectService() {
+    const preferredRoles = ['RBT', 'BS', 'Behavior Specialist', 'Senior RBT'];
+    return preferredRoles.includes(this.role);
   }
 }
 
@@ -122,7 +142,8 @@ export class Student {
     ratioPM = RATIOS.ONE_TO_ONE, // Separate ratio for PM
     isActive = true,
     team = [], // Team members (People Picker array)
-    teamIds = [] // Array of staff IDs extracted from team
+    teamIds = [], // Array of staff IDs extracted from team
+    pairedWith = null // ID of paired student (for shared staff assignments)
   }) {
     this.id = id;
     this.name = name;
@@ -142,6 +163,7 @@ export class Student {
     this.isActive = isActive;
     this.team = team; // Array of team members (People Picker data)
     this.teamIds = teamIds.length > 0 ? teamIds : team.map(t => t.id).filter(Boolean); // Extract IDs from team if not provided
+    this.pairedWith = pairedWith; // ID of paired student for shared staff assignments
   }
 
   requiresMultipleStaff(session = 'AM') {
@@ -156,6 +178,28 @@ export class Student {
   isSmallGroup(session = 'AM') {
     const ratio = session === 'AM' ? this.ratioAM : this.ratioPM;
     return ratio === RATIOS.ONE_TO_TWO;
+  }
+
+  /**
+   * Check if this student is paired with another student
+   * @returns {boolean} True if student has a paired partner
+   */
+  isPaired() {
+    return this.pairedWith !== null && this.pairedWith !== undefined;
+  }
+
+  /**
+   * Get the paired student from a list of students
+   * @param {Student[]} students - Array of all students
+   * @returns {Student|null} The paired student or null if not found
+   */
+  getPairedStudent(students) {
+    if (!this.isPaired()) return null;
+    
+    // Try both string and number comparison in case of type mismatch
+    const found = students.find(s => s.id == this.pairedWith || s.id === this.pairedWith) || null;
+    
+    return found;
   }
 }
 
@@ -281,8 +325,7 @@ export class SchedulingRules {
       errors.push(`${staffMember.name} has already worked with this student today`);
     }
 
-    // Check student requirements
-    const studentRecord = student.find(s => s.id === assignment.studentId);
+    // Note: Additional student requirements validation can be added here
     // Note: excludedStaff validation removed - now using team-based assignments
 
     return errors;
@@ -355,10 +398,15 @@ export class SchedulingUtils {
       // Must not have worked with this student already today
       if (schedule.hasStaffWorkedWithStudentToday(staffMember.id, student.id)) return false;
       
+      // Check direct session eligibility - supervisory roles can't do direct sessions
+      if (!staffMember.canDoDirectSessions()) {
+        return false; // BCBA/Director/Trainer can't do direct client sessions
+      }
+      
       // Check 1:1 eligibility - if student needs 1:1, staff must be eligible
       const sessionRatio = session === 'AM' ? student.ratioAM : student.ratioPM;
       if (sessionRatio === RATIOS.ONE_TO_ONE && !staffMember.canDo1To1Sessions()) {
-        return false; // Teacher/Trainer/Director can't do 1:1 sessions
+        return false; // Teacher/Trainer/Director/BCBA can't do 1:1 sessions
       }
       
       // Must not be excluded by student

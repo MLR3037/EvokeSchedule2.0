@@ -12,9 +12,9 @@ import {
  */
 export class AutoAssignmentEngine {
   constructor() {
-    this.debugMode = true; // Enhanced debug mode
-    this.maxIterations = 50; // Ultimate iteration limit
-    this.maxChainDepth = 5; // How deep to search for swap chains
+    this.debugMode = true; // Always on for ultimate mode
+    this.maxIterations = 100; // Ultimate iteration limit
+    this.maxChainDepth = 10; // How deep to search for swap chains
   }
 
   /**
@@ -216,61 +216,41 @@ export class AutoAssignmentEngine {
       );
 
       // STRICT PRIORITIZATION: Prefer direct service staff (RBTs/BSs) over support staff (EAs)
-      // BUT ABSOLUTELY BLOCK TEACHERS FROM DIRECT SERVICE
-      const eligibleTeamStaff = teamStaff.filter(staffMember => {
-        const isTeacher = staffMember.role === 'Teacher' || staffMember.role === 'TEACHER';
-        const canDoDirect = staffMember.canDoDirectSessions();
-        
-        if (isTeacher) {
-          console.log(`🚫 BLOCKING TEACHER: ${staffMember.name} from direct service assignment!`);
-          return false;
-        }
-        
-        if (!canDoDirect) {
-          console.log(`🚫 BLOCKING NON-DIRECT: ${staffMember.name} cannot do direct sessions!`);
-          return false;
-        }
-        
-        return true;
-      });
-
-      const preferredTeamStaff = eligibleTeamStaff.filter(staffMember => staffMember.isPreferredDirectService());
-      const fallbackTeamStaff = eligibleTeamStaff.filter(staffMember => !staffMember.isPreferredDirectService());
+      const preferredTeamStaff = teamStaff.filter(staffMember => staffMember.isPreferredDirectService());
+      const fallbackTeamStaff = teamStaff.filter(staffMember => staffMember.canDoDirectSessions() && !staffMember.isPreferredDirectService());
       
       console.log(`🔍 STAFF PRIORITIZATION for ${student.name} ${session}:`);
       console.log(`  Total team staff: ${teamStaff.length}`);
-      console.log(`  Eligible (non-teacher, direct service): ${eligibleTeamStaff.length}`);
       console.log(`  Preferred (RBTs/BSs): ${preferredTeamStaff.length} - ${preferredTeamStaff.map(s => `${s.name}(${s.role})`).join(', ')}`);
       console.log(`  Fallback (EAs/etc): ${fallbackTeamStaff.length} - ${fallbackTeamStaff.map(s => `${s.name}(${s.role})`).join(', ')}`);
 
       // Use preferred staff first, only fallback if insufficient preferred staff
-      let finalTeamStaff;
       if (preferredTeamStaff.length >= staffCount) {
-        finalTeamStaff = preferredTeamStaff;
+        teamStaff = preferredTeamStaff;
         console.log(`✅ Using ONLY preferred staff for ${student.name}`);
       } else if (preferredTeamStaff.length > 0) {
         // Mix preferred + fallback only if we don't have enough preferred
-        finalTeamStaff = [...preferredTeamStaff, ...fallbackTeamStaff];
+        teamStaff = [...preferredTeamStaff, ...fallbackTeamStaff];
         console.log(`⚠️ Using preferred + fallback staff for ${student.name} (need ${staffCount}, have ${preferredTeamStaff.length} preferred)`);
       } else {
         // Only use fallback if no preferred staff available
-        finalTeamStaff = fallbackTeamStaff;
+        teamStaff = fallbackTeamStaff;
         console.log(`🚨 WARNING: Using ONLY fallback staff for ${student.name} (no preferred staff available)`);
       }
 
-      this.log(`  Available staff: ${availableStaff.length}, Eligible team staff: ${finalTeamStaff.length} (after filtering)`);
+      this.log(`  Available staff: ${availableStaff.length}, Team staff: ${teamStaff.length} (after prioritization)`);
       
       // ENHANCED DEBUG: Show detailed team data for this student
       console.log(`🔍 DETAILED TEAM DEBUG for ${student.name}:`);
       console.log(`  Student team array:`, student.team);
       console.log(`  Student teamIds array:`, student.teamIds);
       console.log(`  Available staff IDs:`, availableStaff.map(s => `${s.name} (ID: ${s.id})`));
-      console.log(`  Final team staff after filtering:`, finalTeamStaff.map(s => `${s.name} (ID: ${s.id}, Role: ${s.role})`));
+      console.log(`  Final team staff after filtering:`, teamStaff.map(s => `${s.name} (ID: ${s.id}, Role: ${s.role})`));
       
-      if (finalTeamStaff.length < staffCount) {
-        this.log(`Insufficient team staff available. Need ${staffCount}, have ${finalTeamStaff.length} team members`);
+      if (teamStaff.length < staffCount) {
+        this.log(`Insufficient team staff available. Need ${staffCount}, have ${teamStaff.length} team members`);
         this.log(`  Team IDs for ${student.name}:`, student.teamIds);
-        this.log(`  Available team staff:`, finalTeamStaff.map(s => `${s.name} (ID: ${s.id})`));
+        this.log(`  Available team staff:`, teamStaff.map(s => `${s.name} (ID: ${s.id})`));
         
         // ENHANCED DEBUG: Show why staff aren't matching
         console.log(`🔍 TEAM MATCHING DEBUG for ${student.name}:`);
@@ -281,17 +261,12 @@ export class AutoAssignmentEngine {
           const isInTeam = student.teamIds.includes(staffMember.id);
           const canDoDirect = staffMember.canDoDirectSessions();
           const isPreferred = staffMember.isPreferredDirectService();
-          const isTeacher = staffMember.role === 'Teacher' || staffMember.role === 'TEACHER';
           const isAvailable = true; // already filtered in availableStaff
           
           console.log(`  📋 Staff ${staffMember.name}:`);
           console.log(`    ID: ${staffMember.id}, Role: ${staffMember.role}`);
           console.log(`    In Team: ${isInTeam}, Can Do Direct: ${canDoDirect}, Is Preferred: ${isPreferred}`);
-          console.log(`    Is Teacher: ${isTeacher}, Available: ${isAvailable}`);
-          
-          if (isTeacher) {
-            console.log(`    🚫 TEACHER BLOCKED from direct service!`);
-          }
+          console.log(`    Available: ${isAvailable}`);
           
           // Special check for Logan
           if (student.name.toLowerCase().includes('logan') && staffMember.role === 'BS') {
@@ -308,54 +283,13 @@ export class AutoAssignmentEngine {
           console.log(`  Student teamIds:`, student.teamIds);
         }
         
-        // ULTIMATE FALLBACK: If we have ANY team members, use them regardless of role restrictions
-        const anyTeamMembers = availableStaff.filter(s => {
-          const isInTeam = student.teamIds.includes(s.id);
-          const isTeacher = s.role === 'Teacher' || s.role === 'TEACHER';
-          const canDoDirect = s.canDoDirectSessions();
-          
-          return isInTeam && !isTeacher && canDoDirect; // Still block teachers!
-        });
-        
-        if (anyTeamMembers.length > 0) {
-          console.log(`🚨 ULTIMATE FALLBACK: Using ANY available non-teacher team members for ${student.name}`);
-          console.log(`  Found ${anyTeamMembers.length} team members: ${anyTeamMembers.map(s => `${s.name}(${s.role})`).join(', ')}`);
-          
-          // Use the first available team member regardless of role (but not teachers!)
-          const assignment = new Assignment({
-            id: SchedulingUtils.generateAssignmentId(),
-            staffId: anyTeamMembers[0].id,
-            studentId: student.id,
-            session,
-            program,
-            date: schedule.date,
-            isLocked: false,
-            assignedBy: 'ultimate-fallback'
-          });
-          
-          // Validate the assignment
-          const errors = SchedulingRules.validateAssignment(assignment, schedule, staff, [student]);
-          if (errors.length === 0) {
-            console.log(`✅ ULTIMATE FALLBACK SUCCESS: Assigned ${anyTeamMembers[0].name}(${anyTeamMembers[0].role}) to ${student.name}`);
-            return [assignment];
-          } else {
-            console.log(`❌ ULTIMATE FALLBACK FAILED: Validation errors: ${errors.join(', ')}`);
-          }
-        }
-        
         return [];
       }
 
       // IMPROVED PM SHUFFLING: Add randomization for PM sessions to better distribute workload
-      const sortedStaff = this.sortStaffForStudentWithShuffling(student, finalTeamStaff, session);
+      const sortedStaff = this.sortStaffForStudentWithShuffling(student, teamStaff, session);
 
-      console.log(`📊 STAFF PRIORITIZATION for ${student.name}:`);
-      sortedStaff.slice(0, 3).forEach((staffMember, index) => {
-        console.log(`  ${index + 1}. ${staffMember.name} (${staffMember.role})`);
-      });
-
-      // CRITICAL FIX: Assign the EXACT number of staff needed for the ratio
-      console.log(`🎯 RATIO ENFORCEMENT: ${student.name} needs exactly ${staffCount} staff`);
+      // Assign the required number of staff
       for (let i = 0; i < staffCount && i < sortedStaff.length; i++) {
         const assignment = new Assignment({
           id: SchedulingUtils.generateAssignmentId(),
@@ -932,27 +866,24 @@ export class AutoAssignmentEngine {
    * @returns {Object} Reallocation results with swaps and new assignments
    */
   async performStaffReallocation(schedule, staff, students) {
-    console.log('\n� ========== ULTIMATE STAFF REALLOCATION ENGINE ==========');
-    console.log('📊 Configuration: Max Iterations=' + this.maxIterations + ', Max Chain Depth=' + this.maxChainDepth);
+    console.log('🔄 Starting multi-layered staff reallocation analysis...');
     
     const allSwaps = [];
     const allNewAssignments = [];
     const sessions = ['AM', 'PM'];
     const programs = [PROGRAMS.PRIMARY, PROGRAMS.SECONDARY];
 
-    // Ultimate iterative approach - keep going until no more solutions found
-    let iteration = 0;
-    let foundSwapsThisIteration = true;
+    // Multiple passes to handle cascading assignments
+    const maxPasses = 3;
+    let passNumber = 1;
 
-    while (iteration < this.maxIterations && foundSwapsThisIteration) {
-      iteration++;
-      foundSwapsThisIteration = false;
-      
-      console.log(`\n🔄 ========== ULTIMATE ITERATION ${iteration}/${this.maxIterations} ==========`);
+    while (passNumber <= maxPasses) {
+      console.log(`\n🔄 REALLOCATION PASS ${passNumber}/${maxPasses}`);
+      let foundSwapsThisPass = false;
 
       for (const program of programs) {
         for (const session of sessions) {
-          console.log(`\n🔍 Iteration ${iteration}: Analyzing ${program} ${session}...`);
+          console.log(`\n🔍 Pass ${passNumber}: Analyzing ${program} ${session}...`);
           
           // Find unassigned students who need help
           const unassignedStudents = students.filter(student => 
@@ -968,17 +899,17 @@ export class AutoAssignmentEngine {
 
           console.log(`  📋 Found ${unassignedStudents.length} unassigned students:`, unassignedStudents.map(s => s.name));
 
-          // Try different reallocation strategies for each unassigned student
+          // Try different reallocation strategies
           for (const unassignedStudent of unassignedStudents) {
-            console.log(`\n🎯 Iteration ${iteration}: Finding ULTIMATE solution for ${unassignedStudent.name}...`);
+            console.log(`\n🎯 Pass ${passNumber}: Finding solutions for ${unassignedStudent.name}...`);
             
             // Strategy 1: Direct assignment with available preferred staff
             const directAssignment = await this.attemptDirectAssignment(unassignedStudent, session, program, staff, schedule);
             if (directAssignment.success) {
               allNewAssignments.push(...directAssignment.assignments);
               directAssignment.assignments.forEach(assignment => schedule.addAssignment(assignment));
-              console.log(`  ✅ S1-DIRECT: Assigned ${directAssignment.description}`);
-              foundSwapsThisIteration = true;
+              console.log(`  ✅ DIRECT: Assigned ${directAssignment.description}`);
+              foundSwapsThisPass = true;
               continue;
             }
 
@@ -989,8 +920,8 @@ export class AutoAssignmentEngine {
               allNewAssignments.push(...simpleSwap.newAssignments);
               simpleSwap.newAssignments.forEach(assignment => schedule.addAssignment(assignment));
               schedule.removeAssignment(simpleSwap.removedAssignment.id);
-              console.log(`  ✅ S2-SIMPLE SWAP: ${simpleSwap.swap.description}`);
-              foundSwapsThisIteration = true;
+              console.log(`  ✅ SIMPLE SWAP: ${simpleSwap.swap.description}`);
+              foundSwapsThisPass = true;
               continue;
             }
 
@@ -1006,8 +937,8 @@ export class AutoAssignmentEngine {
                   schedule.removeAssignment(change.assignmentId);
                 }
               });
-              console.log(`  ✅ S3-CHAIN: ${chainReassignment.description}`);
-              foundSwapsThisIteration = true;
+              console.log(`  ✅ CHAIN: ${chainReassignment.description}`);
+              foundSwapsThisPass = true;
               continue;
             }
 
@@ -1023,56 +954,25 @@ export class AutoAssignmentEngine {
                   schedule.removeAssignment(change.assignmentId);
                 }
               });
-              console.log(`  ✅ S4-CROSS-SESSION: ${crossSessionMove.description}`);
-              foundSwapsThisIteration = true;
+              console.log(`  ✅ CROSS-SESSION: ${crossSessionMove.description}`);
+              foundSwapsThisPass = true;
               continue;
             }
 
-            // Strategy 5: Cross-program borrowing (from your Ultimate system)
-            const crossProgram = await this.attemptCrossProgramReallocation(unassignedStudent, session, program, staff, students, schedule);
-            if (crossProgram.success) {
-              allSwaps.push(...crossProgram.swaps);
-              allNewAssignments.push(...crossProgram.newAssignments);
-              crossProgram.changes.forEach(change => {
-                if (change.type === 'add') {
-                  schedule.addAssignment(change.assignment);
-                } else if (change.type === 'remove') {
-                  schedule.removeAssignment(change.assignmentId);
-                }
-              });
-              console.log(`  ✅ S5-CROSS-PROGRAM: ${crossProgram.description}`);
-              foundSwapsThisIteration = true;
-              continue;
-            }
-
-            console.log(`  ❌ No solution found for ${unassignedStudent.name} in iteration ${iteration}`);
+            console.log(`  ❌ No solution found for ${unassignedStudent.name} in pass ${passNumber}`);
           }
         }
       }
 
-      if (!foundSwapsThisIteration) {
-        console.log(`\n� No changes in iteration ${iteration}, stopping ultimate reallocation`);
+      if (!foundSwapsThisPass) {
+        console.log(`\n🔄 No changes in pass ${passNumber}, stopping reallocation`);
         break;
       }
+
+      passNumber++;
     }
 
-    // Ultimate final report
-    const finalReport = this.generateUltimateFinalReport(schedule, staff, students);
-    
-    console.log(`\n🎯 ========== ULTIMATE REALLOCATION COMPLETE ==========`);
-    console.log(`📊 Total Iterations: ${iteration}`);
-    console.log(`🔄 Total Swaps: ${allSwaps.length}`);
-    console.log(`📋 Total New Assignments: ${allNewAssignments.length}`);
-    console.log(`✅ Assigned Students: ${finalReport.assignedStudents}/${finalReport.totalStudents}`);
-    console.log(`⚠️ Unassigned Students: ${finalReport.unassignedStudents.length}`);
-    
-    if (finalReport.unassignedStudents.length > 0) {
-      console.log('📋 Still unassigned after ULTIMATE processing:');
-      finalReport.unassignedStudents.forEach(s => {
-        console.log(`  ❌ ${s.name} - ${s.missingSessions.join(', ')}`);
-      });
-    }
-
+    console.log(`\n🎯 Multi-layered reallocation complete: ${allSwaps.length} swaps executed across ${passNumber - 1} passes`);
     allSwaps.forEach(swap => console.log(`  ✅ ${swap.description}`));
 
     return { swaps: allSwaps, newAssignments: allNewAssignments };
@@ -1186,45 +1086,19 @@ export class AutoAssignmentEngine {
    * Strategy 1: Attempt direct assignment with available preferred staff
    */
   async attemptDirectAssignment(unassignedStudent, session, program, staff, schedule) {
-    console.log(`    🎯 Strategy 1: ULTIMATE Direct assignment for ${unassignedStudent.name}`);
+    console.log(`    🎯 Strategy 1: Direct assignment for ${unassignedStudent.name}`);
     
-    // ULTIMATE APPROACH: Try preferred staff first, then any team member
-    // BUT ABSOLUTELY BLOCK TEACHERS FROM DIRECT SERVICE
-    const allTeamStaff = staff.filter(staffMember => {
-      const isActive = staffMember.isActive;
-      const canWork = staffMember.canWorkProgram(program);
-      const isTeamMember = unassignedStudent.teamIds.includes(staffMember.id);
-      const isAvailable = schedule.isStaffAvailable(staffMember.id, session, program);
-      const hasWorkedToday = schedule.hasStaffWorkedWithStudentToday(staffMember.id, unassignedStudent.id);
-      const isTeacher = staffMember.role === 'Teacher' || staffMember.role === 'TEACHER';
-      const canDoDirect = staffMember.canDoDirectSessions();
-      
-      console.log(`      📋 Checking ${staffMember.name} (${staffMember.role}):`);
-      console.log(`        Active: ${isActive}, CanWork: ${canWork}, IsTeam: ${isTeamMember}`);
-      console.log(`        Available: ${isAvailable}, WorkedToday: ${hasWorkedToday}`);
-      console.log(`        IsTeacher: ${isTeacher}, CanDoDirect: ${canDoDirect}`);
-      
-      if (isTeacher) {
-        console.log(`        🚫 BLOCKED: Teacher cannot do direct service!`);
-        return false;
-      }
-      
-      if (!canDoDirect) {
-        console.log(`        🚫 BLOCKED: Cannot do direct sessions!`);
-        return false;
-      }
-      
-      return isActive && canWork && isTeamMember && isAvailable && !hasWorkedToday;
+    // Get available preferred staff who are on this student's team
+    const availableTeamStaff = staff.filter(staffMember => {
+      return staffMember.isActive &&
+             staffMember.canWorkProgram(program) &&
+             staffMember.isPreferredDirectService() &&
+             unassignedStudent.teamIds.includes(staffMember.id) &&
+             schedule.isStaffAvailable(staffMember.id, session, program);
     });
 
-    console.log(`      📊 Found ${allTeamStaff.length} available team members: ${allTeamStaff.map(s => `${s.name}(${s.role})`).join(', ')}`);
-
-    // Try preferred staff first (RBTs/BSs), then any team member
-    const preferredStaff = allTeamStaff.filter(s => s.isPreferredDirectService());
-    const staffToUse = preferredStaff.length > 0 ? preferredStaff : allTeamStaff;
-    
-    if (staffToUse.length > 0) {
-      const bestStaff = staffToUse[0];
+    if (availableTeamStaff.length > 0) {
+      const bestStaff = availableTeamStaff[0];
       const assignment = new Assignment({
         id: SchedulingUtils.generateAssignmentId(),
         staffId: bestStaff.id,
@@ -1233,17 +1107,10 @@ export class AutoAssignmentEngine {
         program: program,
         date: schedule.date,
         isLocked: false,
-        assignedBy: 'ultimate-direct'
+        assignedBy: 'auto-direct'
       });
 
-      // Validate the assignment
-      const errors = SchedulingRules.validateAssignment(assignment, schedule, staff, [unassignedStudent]);
-      if (errors.length > 0) {
-        console.log(`      ❌ Assignment validation failed: ${errors.join(', ')}`);
-        return { success: false };
-      }
-
-      console.log(`      ✅ ULTIMATE Direct assignment: ${bestStaff.name}(${bestStaff.role}) → ${unassignedStudent.name}`);
+      console.log(`      ✅ Direct assignment: ${bestStaff.name}(${bestStaff.role}) → ${unassignedStudent.name}`);
       return {
         success: true,
         assignments: [assignment],
@@ -1251,7 +1118,7 @@ export class AutoAssignmentEngine {
       };
     }
 
-    console.log(`      ❌ No available team staff for direct assignment (checked ${staff.filter(s => unassignedStudent.teamIds.includes(s.id)).length} team members)`);
+    console.log(`      ❌ No available team staff for direct assignment`);
     return { success: false };
   }
 
@@ -1419,124 +1286,6 @@ export class AutoAssignmentEngine {
 
     console.log(`      ❌ No cross-session reallocation opportunities found`);
     return { success: false };
-  }
-
-  /**
-   * Strategy 5: Cross-program borrowing (from Ultimate system)
-   * Move staff from other program if they can work both programs
-   */
-  async attemptCrossProgramReallocation(unassignedStudent, session, program, staff, students, schedule) {
-    console.log(`    🔄 Attempting cross-program reallocation for ${unassignedStudent.name}...`);
-    
-    const otherProgram = program === PROGRAMS.PRIMARY ? PROGRAMS.SECONDARY : PROGRAMS.PRIMARY;
-    const otherProgramAssignments = schedule.getAssignmentsForSession(session, otherProgram);
-    
-    // Find staff in other program who can also work this program and are on unassigned student's team
-    for (const otherAssignment of otherProgramAssignments) {
-      const otherStaff = staff.find(s => s.id === otherAssignment.staffId);
-      const otherStudent = students.find(s => s.id === otherAssignment.studentId);
-      
-      if (!otherStaff || !otherStudent) continue;
-      
-      // Can this staff work in the target program and with the unassigned student?
-      if (!otherStaff.canWorkProgram(program)) continue;
-      if (!unassignedStudent.teamIds.includes(otherStaff.id)) continue;
-      
-      console.log(`      🎯 Found potential cross-program move: ${otherStaff.name} from ${otherProgram} to ${program}`);
-      
-      // Find replacement for the other program
-      const replacementStaff = staff.filter(s => 
-        s.isActive && 
-        s.canWorkProgram(otherProgram) &&
-        otherStudent.teamIds.includes(s.id) &&
-        schedule.isStaffAvailable(s.id, session, otherProgram) &&
-        !schedule.hasStaffWorkedWithStudentToday(s.id, otherStudent.id)
-      );
-      
-      if (replacementStaff.length > 0) {
-        const replacement = replacementStaff[0];
-        
-        // Create new assignments
-        const replacementAssignment = new Assignment({
-          id: SchedulingUtils.generateAssignmentId(),
-          staffId: replacement.id,
-          studentId: otherStudent.id,
-          session: session,
-          program: otherProgram,
-          date: schedule.date,
-          isLocked: false,
-          assignedBy: 'cross-program-swap'
-        });
-        
-        const newAssignment = new Assignment({
-          id: SchedulingUtils.generateAssignmentId(),
-          staffId: otherStaff.id,
-          studentId: unassignedStudent.id,
-          session: session,
-          program: program,
-          date: schedule.date,
-          isLocked: false,
-          assignedBy: 'cross-program-swap'
-        });
-        
-        // Validate both assignments
-        const errors1 = SchedulingRules.validateAssignment(replacementAssignment, schedule, staff, [otherStudent]);
-        const errors2 = SchedulingRules.validateAssignment(newAssignment, schedule, staff, [unassignedStudent]);
-        
-        if (errors1.length === 0 && errors2.length === 0) {
-          return {
-            success: true,
-            swaps: [{
-              description: `Cross-program: ${otherStaff.name} moved from ${otherProgram} to ${program}, ${replacement.name} takes over in ${otherProgram}`
-            }],
-            newAssignments: [replacementAssignment, newAssignment],
-            changes: [
-              { type: 'remove', assignmentId: otherAssignment.id },
-              { type: 'add', assignment: replacementAssignment },
-              { type: 'add', assignment: newAssignment }
-            ],
-            description: `Cross-program swap: ${otherStaff.name} → ${unassignedStudent.name} (${program}), ${replacement.name} → ${otherStudent.name} (${otherProgram})`
-          };
-        }
-      }
-    }
-    
-    return { success: false, error: 'No valid cross-program move found' };
-  }
-
-  /**
-   * Generate ultimate final report showing all assignments and gaps
-   */
-  generateUltimateFinalReport(schedule, staff, students) {
-    const sessions = ['AM', 'PM'];
-    const programs = [PROGRAMS.PRIMARY, PROGRAMS.SECONDARY];
-    const unassigned = [];
-    let totalAssignments = 0;
-
-    students.forEach(student => {
-      const missingSessions = [];
-      sessions.forEach(session => {
-        if (student.program) { // Only check if student has a program
-          const isAssigned = this.isStudentAssigned(student.id, session, student.program, schedule);
-          if (isAssigned) {
-            totalAssignments++;
-          } else {
-            missingSessions.push(`${student.program} ${session}`);
-          }
-        }
-      });
-
-      if (missingSessions.length > 0) {
-        unassigned.push({ name: student.name, missingSessions });
-      }
-    });
-
-    return {
-      totalStudents: students.length,
-      assignedStudents: students.length - unassigned.length,
-      unassignedStudents: unassigned,
-      totalAssignments: totalAssignments
-    };
   }
 
   /**

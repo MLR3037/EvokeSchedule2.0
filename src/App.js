@@ -22,6 +22,7 @@ import { PeoplePickerService } from './services/PeoplePickerService.js';
 import { AutoAssignmentEngine } from './services/AutoAssignmentEngine.js';
 import { 
   ScheduleGrid, 
+  ScheduleTableView,
   SessionSummary 
 } from './components/SchedulingComponents.js';
 import { 
@@ -40,9 +41,9 @@ const ABAScheduler = () => {
   const [spConfig] = useState({
     siteUrl: 'https://evokebehavioralhealthcom.sharepoint.com/sites/Clinistrators',
     staffListName: 'Staff',
-    studentsListName: 'Clients', // Changed from 'Students' to match SharePoint list name
+    studentsListName: 'Clients',
     scheduleListName: 'ABASchedules',
-    // Azure AD Configuration
+    // Azure AD Configuration for external hosting
     clientId: 'c9f70b7e-8ffb-403d-af93-80b95b38a0bb',
     tenantId: 'a4adcc38-7b4e-485c-80f9-7d9ca4e83d64',
     redirectUri: window.location.hostname === 'localhost' 
@@ -90,6 +91,12 @@ const ABAScheduler = () => {
   // Initialize application
   const initializeApp = async () => {
     try {
+      console.log('🚀 Initializing application...');
+      
+      // First ensure MSAL is initialized before any authentication checks
+      await sharePointService.initializeMSAL();
+      console.log('✅ MSAL initialized successfully');
+      
       const isAuth = await sharePointService.checkAuthentication();
       setIsAuthenticated(isAuth);
       setAccessToken(sharePointService.accessToken);
@@ -100,10 +107,13 @@ const ABAScheduler = () => {
       }
       
       if (isAuth) {
+        console.log('✅ User authenticated, loading data...');
         await loadData();
+      } else {
+        console.log('⚠️ User not authenticated');
       }
     } catch (error) {
-      console.error('Error initializing app:', error);
+      console.error('❌ Error initializing app:', error);
       if (error.message.includes('session has expired') || error.message.includes('Authentication')) {
         // Handle authentication errors gracefully
         setIsAuthenticated(false);
@@ -172,14 +182,31 @@ const ABAScheduler = () => {
   // Authentication handlers
   const handleLogin = async () => {
     try {
-      await sharePointService.login();
+      setLoading(true);
+      const loginSuccessful = await sharePointService.login();
+      
+      if (loginSuccessful) {
+        setIsAuthenticated(true);
+        setAccessToken(sharePointService.accessToken);
+        
+        // Set access token for People Picker service
+        if (sharePointService.accessToken) {
+          peoplePickerService.setAccessToken(sharePointService.accessToken);
+        }
+        
+        // Load data after successful authentication
+        await loadData();
+      }
     } catch (error) {
       console.error('Login error:', error);
+      alert(`Login failed: ${error.message}`);
+    } finally {
+      setLoading(false);
     }
   };
 
   const handleLogout = () => {
-    sharePointService.forceLogout(); // Use force logout to clear everything
+    sharePointService.forceLogout();
     setIsAuthenticated(false);
     setAccessToken(null);
     setStaff([]);
@@ -215,14 +242,35 @@ const ABAScheduler = () => {
       
       if (result.assignments.length > 0) {
         console.log(`Auto-assignment created ${result.assignments.length} new assignments`);
-        // Force re-render by creating a new Schedule instance with the same data
+        
+        // FIXED: Combine existing assignments with new auto-assignments
+        const allAssignments = [...schedule.assignments, ...result.assignments];
+        
+        // Force re-render by creating a new Schedule instance with ALL assignments
         const newSchedule = new Schedule({
           date: schedule.date,
-          assignments: schedule.assignments,
+          assignments: allAssignments,
           lockedAssignments: schedule.lockedAssignments,
           isFinalized: schedule.isFinalized
         });
         setSchedule(newSchedule);
+        
+        console.log(`✅ Updated schedule with ${allAssignments.length} total assignments (${result.assignments.length} new)`);
+        
+        // DEBUG: Log the actual assignments to verify they're stored correctly
+        console.log('🔍 NEW ASSIGNMENTS DETAILS:');
+        result.assignments.forEach((assignment, index) => {
+          console.log(`  Assignment ${index + 1}:`);
+          console.log(`    ID: ${assignment.id}`);
+          console.log(`    Staff ID: ${assignment.staffId}`);
+          console.log(`    Student ID: ${assignment.studentId}`);
+          console.log(`    Session: ${assignment.session}`);
+          console.log(`    Program: ${assignment.program}`);
+          console.log('    ---');
+        });
+        
+        console.log('🔍 UPDATED SCHEDULE ASSIGNMENTS:');
+        console.log(`Total assignments in new schedule: ${newSchedule.assignments.length}`);
       }
       
       if (result.errors.length > 0) {
@@ -420,10 +468,20 @@ const ABAScheduler = () => {
           
           <button
             onClick={handleLogin}
-            className="w-full bg-blue-600 text-white py-3 px-4 rounded-lg hover:bg-blue-700 flex items-center justify-center gap-2"
+            disabled={loading}
+            className="w-full bg-blue-600 text-white py-3 px-4 rounded-lg hover:bg-blue-700 disabled:bg-blue-400 disabled:cursor-not-allowed flex items-center justify-center gap-2"
           >
-            <LogIn className="w-5 h-5" />
-            Sign in with Microsoft
+            {loading ? (
+              <>
+                <RefreshCw className="w-5 h-5 animate-spin" />
+                Signing in...
+              </>
+            ) : (
+              <>
+                <LogIn className="w-5 h-5" />
+                Sign in with Microsoft
+              </>
+            )}
           </button>
           
           <div className="mt-6 text-sm text-gray-500 text-center">
@@ -599,14 +657,15 @@ const ABAScheduler = () => {
                   />
                 </div>
                 
-                <ScheduleGrid
+                {/* Interactive Assignment Table */}
+                <ScheduleTableView
                   schedule={schedule}
                   staff={staff}
                   students={students}
                   onAssignmentLock={handleAssignmentLock}
                   onAssignmentUnlock={handleAssignmentUnlock}
-                  onManualAssignment={handleManualAssignment}
                   onAssignmentRemove={handleAssignmentRemove}
+                  onManualAssignment={handleManualAssignment}
                   selectedDate={currentDate}
                 />
               </div>

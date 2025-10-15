@@ -73,13 +73,13 @@ export const sampleStudents = [
   new Student({ id: 106, name: 'Isabella Garcia', program: PROGRAMS.PRIMARY, ratio: RATIOS.ONE_TO_TWO, isActive: true }), // Small group with Noah
   new Student({ id: 107, name: 'Mason Williams', program: PROGRAMS.PRIMARY, ratio: RATIOS.ONE_TO_ONE, isActive: true }),
   new Student({ id: 108, name: 'Olivia Brown', program: PROGRAMS.PRIMARY, ratio: RATIOS.TWO_TO_ONE, isActive: true }), // Requires 2 staff
-  new Student({ id: 109, name: 'Lucas Wilson', program: PROGRAMS.PRIMARY, ratio: RATIOS.ONE_TO_ONE, isActive: true }),
-  new Student({ id: 110, name: 'Ava Rodriguez', program: PROGRAMS.PRIMARY, ratio: RATIOS.ONE_TO_ONE, isActive: true }),
+  new Student({ id: 109, name: 'Lucas Wilson', program: PROGRAMS.PRIMARY, ratio: RATIOS.ONE_TO_ONE, isActive: true, pairedWith: 110 }), // Paired with Ava
+  new Student({ id: 110, name: 'Ava Rodriguez', program: PROGRAMS.PRIMARY, ratio: RATIOS.ONE_TO_ONE, isActive: true, pairedWith: 109 }), // Paired with Lucas
   new Student({ id: 111, name: 'Ethan Taylor', program: PROGRAMS.PRIMARY, ratio: RATIOS.ONE_TO_ONE, isActive: true }),
   new Student({ id: 112, name: 'Mia Anderson', program: PROGRAMS.PRIMARY, ratio: RATIOS.ONE_TO_TWO, isActive: true }), // Small group
   new Student({ id: 113, name: 'Jacob Miller', program: PROGRAMS.PRIMARY, ratio: RATIOS.ONE_TO_TWO, isActive: true }), // Small group with Mia
-  new Student({ id: 114, name: 'Charlotte Lee', program: PROGRAMS.PRIMARY, ratio: RATIOS.ONE_TO_ONE, isActive: true }),
-  new Student({ id: 115, name: 'Michael White', program: PROGRAMS.PRIMARY, ratio: RATIOS.ONE_TO_ONE, isActive: true }),
+  new Student({ id: 114, name: 'Charlotte Lee', program: PROGRAMS.PRIMARY, ratio: RATIOS.ONE_TO_ONE, isActive: true, pairedWith: 115 }), // Paired with Michael
+  new Student({ id: 115, name: 'Michael White', program: PROGRAMS.PRIMARY, ratio: RATIOS.ONE_TO_ONE, isActive: true, pairedWith: 114 }), // Paired with Charlotte
   new Student({ id: 116, name: 'Amelia Harris', program: PROGRAMS.PRIMARY, ratio: RATIOS.TWO_TO_ONE, isActive: true }), // Requires 2 staff
   new Student({ id: 117, name: 'Benjamin Clark', program: PROGRAMS.PRIMARY, ratio: RATIOS.ONE_TO_ONE, isActive: true }),
   new Student({ id: 118, name: 'Harper Lewis', program: PROGRAMS.PRIMARY, ratio: RATIOS.ONE_TO_ONE, isActive: true }),
@@ -97,8 +97,8 @@ export const sampleStudents = [
   new Student({ id: 130, name: 'Lily Mitchell', program: PROGRAMS.PRIMARY, ratio: RATIOS.ONE_TO_ONE, isActive: true }),
 
   // Secondary Program Students (20 students)
-  new Student({ id: 201, name: 'Adrian Torres', program: PROGRAMS.SECONDARY, ratio: RATIOS.ONE_TO_ONE, isActive: true }),
-  new Student({ id: 202, name: 'Cesar Flores', program: PROGRAMS.SECONDARY, ratio: RATIOS.ONE_TO_ONE, isActive: true }),
+  new Student({ id: 201, name: 'Adrian Torres', program: PROGRAMS.SECONDARY, ratio: RATIOS.ONE_TO_ONE, isActive: true, pairedWith: 202 }), // Paired with Cesar
+  new Student({ id: 202, name: 'Cesar Flores', program: PROGRAMS.SECONDARY, ratio: RATIOS.ONE_TO_ONE, isActive: true, pairedWith: 201 }), // Paired with Adrian
   new Student({ id: 203, name: 'Maya Patel', program: PROGRAMS.SECONDARY, ratio: RATIOS.TWO_TO_ONE, isActive: true }), // Requires 2 staff
   new Student({ id: 204, name: 'Diego Santos', program: PROGRAMS.SECONDARY, ratio: RATIOS.ONE_TO_ONE, isActive: true }),
   new Student({ id: 205, name: 'Zara Ahmed', program: PROGRAMS.SECONDARY, ratio: RATIOS.ONE_TO_TWO, isActive: true }), // Small group
