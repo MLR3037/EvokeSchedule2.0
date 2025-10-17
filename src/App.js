@@ -34,7 +34,9 @@ import {
   StudentForm 
 } from './components/DataManagementComponents.js';
 import TeamManagement from './components/TeamManagement.js';
+import AttendanceManagement from './components/AttendanceManagement.js';
 import { runTests } from './tests/SchedulingTestSuite.js';
+import ErrorBoundary from './components/ErrorBoundary.js';
 
 const ABAScheduler = () => {
   // SharePoint configuration
@@ -55,6 +57,7 @@ const ABAScheduler = () => {
   const [sharePointService] = useState(() => new SharePointService(spConfig));
   const [peoplePickerService] = useState(() => new PeoplePickerService(spConfig));
   const [autoAssignEngine] = useState(() => new AutoAssignmentEngine());
+
 
   // Authentication state
   const [isAuthenticated, setIsAuthenticated] = useState(false);
@@ -88,14 +91,12 @@ const ABAScheduler = () => {
     initializeApp();
   }, []);
 
+
   // Initialize application
   const initializeApp = async () => {
     try {
-      console.log('🚀 Initializing application...');
-      
       // First ensure MSAL is initialized before any authentication checks
       await sharePointService.initializeMSAL();
-      console.log('✅ MSAL initialized successfully');
       
       const isAuth = await sharePointService.checkAuthentication();
       setIsAuthenticated(isAuth);
@@ -107,18 +108,14 @@ const ABAScheduler = () => {
       }
       
       if (isAuth) {
-        console.log('✅ User authenticated, loading data...');
         await loadData();
-      } else {
-        console.log('⚠️ User not authenticated');
       }
     } catch (error) {
-      console.error('❌ Error initializing app:', error);
+      console.error('Error initializing app:', error);
       if (error.message.includes('session has expired') || error.message.includes('Authentication')) {
         // Handle authentication errors gracefully
         setIsAuthenticated(false);
         setAccessToken(null);
-        console.log('🔄 Authentication issue detected - user will be prompted to log in');
       }
     }
   };
@@ -127,21 +124,18 @@ const ABAScheduler = () => {
   const loadData = async () => {
     setLoading(true);
     try {
-      console.log('🔄 Starting data load...');
-      console.log('SharePoint config:', spConfig);
-      
       // Load staff, students, and schedule in parallel
       const [staffData, studentsData, scheduleData] = await Promise.all([
         sharePointService.loadStaff().catch(err => {
-          console.error('❌ Failed to load staff:', err);
+          console.error('Failed to load staff:', err);
           return [];
         }),
         sharePointService.loadStudents().catch(err => {
-          console.error('❌ Failed to load students:', err);
+          console.error('Failed to load students:', err);
           return [];
         }),
         sharePointService.loadSchedule(currentDate).catch(err => {
-          console.error('❌ Failed to load schedule:', err);
+          console.error('Failed to load schedule:', err);
           return { assignments: [], date: currentDate };
         })
       ]);
@@ -171,11 +165,64 @@ const ABAScheduler = () => {
     setCurrentDate(newDate);
     if (isAuthenticated) {
       try {
+        // Check if date actually changed (not just same day)
+        const oldDateStr = currentDate.toDateString();
+        const newDateStr = newDate.toDateString();
+        
+        if (oldDateStr !== newDateStr) {
+          console.log('📅 Date changed, clearing attendance for new day...');
+          await clearAllAttendance();
+        }
+        
         const scheduleData = await sharePointService.loadSchedule(newDate);
         setSchedule(scheduleData);
       } catch (error) {
         console.error('Error loading schedule for new date:', error);
       }
+    }
+  };
+
+  // Clear all attendance for a new day
+  const clearAllAttendance = async () => {
+    try {
+      // Clear attendance for all staff
+      const clearedStaff = staff.map(s => new Staff({
+        ...s,
+        absentAM: false,
+        absentPM: false,
+        absentFullDay: false
+      }));
+      
+      // Clear attendance for all students
+      const clearedStudents = students.map(s => new Student({
+        ...s,
+        absentAM: false,
+        absentPM: false,
+        absentFullDay: false
+      }));
+      
+      // Update local state immediately
+      setStaff(clearedStaff);
+      setStudents(clearedStudents);
+      
+      // Save to SharePoint in background
+      const savePromises = [
+        ...clearedStaff.map(s => 
+          sharePointService.saveStaff(s, true).catch(err => 
+            console.error(`Failed to clear attendance for staff ${s.name}:`, err)
+          )
+        ),
+        ...clearedStudents.map(s => 
+          sharePointService.saveStudent(s, true).catch(err => 
+            console.error(`Failed to clear attendance for student ${s.name}:`, err)
+          )
+        )
+      ];
+      
+      await Promise.all(savePromises);
+      console.log('✅ All attendance cleared for new day');
+    } catch (error) {
+      console.error('Error clearing attendance:', error);
     }
   };
 
@@ -216,7 +263,6 @@ const ABAScheduler = () => {
 
   // Clear authentication (useful for fixing 401 errors)
   const clearAuthentication = () => {
-    console.log('🔄 Clearing authentication cache...');
     localStorage.removeItem('sp_access_token');
     localStorage.removeItem('sp_token_expiry');
     sharePointService.accessToken = null;
@@ -235,15 +281,12 @@ const ABAScheduler = () => {
     }
 
     setAutoAssigning(true);
-    autoAssignEngine.setDebugMode(true);
     
     try {
       const result = await autoAssignEngine.autoAssignSchedule(schedule, staff, students);
       
       if (result.assignments.length > 0) {
-        console.log(`Auto-assignment created ${result.assignments.length} new assignments`);
-        
-        // FIXED: Combine existing assignments with new auto-assignments
+        // Combine existing assignments with new auto-assignments
         const allAssignments = [...schedule.assignments, ...result.assignments];
         
         // Force re-render by creating a new Schedule instance with ALL assignments
@@ -254,68 +297,92 @@ const ABAScheduler = () => {
           isFinalized: schedule.isFinalized
         });
         setSchedule(newSchedule);
-        
-        console.log(`✅ Updated schedule with ${allAssignments.length} total assignments (${result.assignments.length} new)`);
-        
-        // DEBUG: Log the actual assignments to verify they're stored correctly
-        console.log('🔍 NEW ASSIGNMENTS DETAILS:');
-        result.assignments.forEach((assignment, index) => {
-          console.log(`  Assignment ${index + 1}:`);
-          console.log(`    ID: ${assignment.id}`);
-          console.log(`    Staff ID: ${assignment.staffId}`);
-          console.log(`    Student ID: ${assignment.studentId}`);
-          console.log(`    Session: ${assignment.session}`);
-          console.log(`    Program: ${assignment.program}`);
-          console.log('    ---');
-        });
-        
-        console.log('🔍 UPDATED SCHEDULE ASSIGNMENTS:');
-        console.log(`Total assignments in new schedule: ${newSchedule.assignments.length}`);
       }
       
       if (result.errors.length > 0) {
         console.warn('Auto-assignment errors:', result.errors);
-        // Show errors to user
       }
     } catch (error) {
       console.error('Auto-assignment failed:', error);
+      alert('Auto-assignment failed. Please check the console for details.');
     } finally {
       setAutoAssigning(false);
     }
   };
 
-  // Assignment management
-  const handleAssignmentLock = (assignmentId) => {
-    schedule.lockAssignment(assignmentId);
-    setSchedule({ ...schedule });
-  };
+// Assignment management
+const handleAssignmentLock = (assignmentId) => {
+  schedule.lockAssignment(assignmentId);
+  
+  // Create new Schedule instance to trigger re-render
+  const newSchedule = new Schedule({
+    date: schedule.date,
+    assignments: [...schedule.assignments],
+    lockedAssignments: new Set(schedule.lockedAssignments),
+    isFinalized: schedule.isFinalized
+  });
+  
+  setSchedule(newSchedule);
+};
 
-  const handleAssignmentUnlock = (assignmentId) => {
-    schedule.unlockAssignment(assignmentId);
-    setSchedule({ ...schedule });
-  };
+const handleAssignmentUnlock = (assignmentId) => {
+  schedule.unlockAssignment(assignmentId);
+  
+  // Create new Schedule instance to trigger re-render
+  const newSchedule = new Schedule({
+    date: schedule.date,
+    assignments: [...schedule.assignments],
+    lockedAssignments: new Set(schedule.lockedAssignments),
+    isFinalized: schedule.isFinalized
+  });
+  
+  setSchedule(newSchedule);
+};
 
-  const handleManualAssignment = ({ staffId, studentId, session, program }) => {
-    const assignment = new Assignment({
-      id: SchedulingUtils.generateAssignmentId(),
-      staffId,
-      studentId,
-      session,
-      program,
-      date: currentDate,
-      isLocked: false,
-      assignedBy: 'manual'
-    });
+const handleManualAssignment = ({ staffId, studentId, session, program }) => {
+  const assignment = new Assignment({
+    id: SchedulingUtils.generateAssignmentId(),
+    staffId,
+    studentId,
+    session,
+    program,
+    date: currentDate,
+    isLocked: false,
+    assignedBy: 'manual'
+  });
 
-    schedule.addAssignment(assignment);
-    setSchedule({ ...schedule });
-  };
+  // Add assignment to schedule
+  schedule.addAssignment(assignment);
+  
+  // Force re-render with new Schedule instance
+  const newSchedule = new Schedule({
+    date: schedule.date,
+    assignments: [...schedule.assignments], // Create new array reference
+    lockedAssignments: new Set(schedule.lockedAssignments),
+    isFinalized: schedule.isFinalized
+  });
+  
+  setSchedule(newSchedule);
+};
 
-  const handleAssignmentRemove = (assignmentId) => {
-    schedule.removeAssignment(assignmentId);
-    schedule.unlockAssignment(assignmentId); // Also unlock if it was locked
-    setSchedule({ ...schedule });
-  };
+const handleAssignmentRemove = (assignmentId) => {
+  console.log('🗑️ Removing assignment:', assignmentId);
+  
+  schedule.removeAssignment(assignmentId);
+  schedule.unlockAssignment(assignmentId); // Also unlock if it was locked
+  
+  // Force re-render with new Schedule instance
+  const newSchedule = new Schedule({
+    date: schedule.date,
+    assignments: [...schedule.assignments], // Create new array reference
+    lockedAssignments: new Set(schedule.lockedAssignments),
+    isFinalized: schedule.isFinalized
+  });
+  
+  setSchedule(newSchedule);
+  
+  console.log('✅ Assignment removed. Total assignments:', newSchedule.assignments.length);
+};
 
   // Save schedule
   const handleSaveSchedule = async () => {
@@ -334,24 +401,35 @@ const ABAScheduler = () => {
 
   // Staff management
   const handleAddStaff = async (staffData) => {
+    setSaving(true);
     try {
       const newStaff = new Staff(staffData);
       await sharePointService.saveStaff(newStaff);
       await loadData(); // Reload data to get updated list
       setShowAddStaff(false);
+      alert('Staff member added successfully!');
     } catch (error) {
       console.error('Error adding staff:', error);
+      alert(`Failed to add staff: ${error.message}`);
+    } finally {
+      setSaving(false);
     }
   };
 
   const handleEditStaff = async (staffData) => {
+    setSaving(true);
     try {
       const updatedStaff = new Staff({ ...staffData, id: editingStaff.id });
       await sharePointService.saveStaff(updatedStaff, true);
       await loadData(); // Reload data
       setEditingStaff(null);
+      setShowAddStaff(false);
+      alert('Staff member updated successfully!');
     } catch (error) {
       console.error('Error updating staff:', error);
+      alert(`Failed to update staff: ${error.message}`);
+    } finally {
+      setSaving(false);
     }
   };
 
@@ -368,24 +446,35 @@ const ABAScheduler = () => {
 
   // Student management
   const handleAddStudent = async (studentData) => {
+    setSaving(true);
     try {
       const newStudent = new Student(studentData);
       await sharePointService.saveStudent(newStudent);
       await loadData();
       setShowAddStudent(false);
+      alert('Student added successfully!');
     } catch (error) {
       console.error('Error adding student:', error);
+      alert(`Failed to add student: ${error.message}`);
+    } finally {
+      setSaving(false);
     }
   };
 
   const handleEditStudent = async (studentData) => {
+    setSaving(true);
     try {
       const updatedStudent = new Student({ ...studentData, id: editingStudent.id });
       await sharePointService.saveStudent(updatedStudent, true);
       await loadData();
       setEditingStudent(null);
+      setShowAddStudent(false);
+      alert('Student updated successfully!');
     } catch (error) {
       console.error('Error updating student:', error);
+      alert(`Failed to update student: ${error.message}`);
+    } finally {
+      setSaving(false);
     }
   };
 
@@ -397,6 +486,87 @@ const ABAScheduler = () => {
       } catch (error) {
         console.error('Error deleting student:', error);
       }
+    }
+  };
+
+  // Attendance management
+  const handleUpdateStaffAttendance = async (staffId, attendanceData) => {
+    try {
+      const staffMember = staff.find(s => s.id === staffId);
+      if (!staffMember) {
+        console.error('Staff member not found:', staffId);
+        return;
+      }
+
+      // Update local state immediately for responsive UI
+      const updatedStaff = staff.map(s => {
+        if (s.id === staffId) {
+          return new Staff({
+            ...s,
+            absentAM: attendanceData.absentAM,
+            absentPM: attendanceData.absentPM,
+            absentFullDay: attendanceData.absentFullDay
+          });
+        }
+        return s;
+      });
+      setStaff(updatedStaff);
+
+      // Save to SharePoint in background
+      const updatedStaffMember = new Staff({
+        ...staffMember,
+        absentAM: attendanceData.absentAM,
+        absentPM: attendanceData.absentPM,
+        absentFullDay: attendanceData.absentFullDay
+      });
+      await sharePointService.saveStaff(updatedStaffMember, true);
+      
+      console.log('✅ Staff attendance updated:', staffMember.name, attendanceData);
+    } catch (error) {
+      console.error('Error updating staff attendance:', error);
+      // Don't reload on error - keep local state
+      // User can manually refresh if needed
+      console.warn('⚠️ Attendance updated locally but not saved to SharePoint');
+    }
+  };
+
+  const handleUpdateStudentAttendance = async (studentId, attendanceData) => {
+    try {
+      const student = students.find(s => s.id === studentId);
+      if (!student) {
+        console.error('Student not found:', studentId);
+        return;
+      }
+
+      // Update local state immediately for responsive UI
+      const updatedStudents = students.map(s => {
+        if (s.id === studentId) {
+          return new Student({
+            ...s,
+            absentAM: attendanceData.absentAM,
+            absentPM: attendanceData.absentPM,
+            absentFullDay: attendanceData.absentFullDay
+          });
+        }
+        return s;
+      });
+      setStudents(updatedStudents);
+
+      // Save to SharePoint in background
+      const updatedStudent = new Student({
+        ...student,
+        absentAM: attendanceData.absentAM,
+        absentPM: attendanceData.absentPM,
+        absentFullDay: attendanceData.absentFullDay
+      });
+      await sharePointService.saveStudent(updatedStudent, true);
+      
+      console.log('✅ Student attendance updated:', student.name, attendanceData);
+    } catch (error) {
+      console.error('Error updating student attendance:', error);
+      // Don't reload on error - keep local state
+      // User can manually refresh if needed
+      console.warn('⚠️ Attendance updated locally but not saved to SharePoint');
     }
   };
 
@@ -588,6 +758,7 @@ const ABAScheduler = () => {
               { id: 'staff', label: 'Staff', icon: Users },
               { id: 'students', label: 'Students', icon: Users },
               { id: 'teams', label: 'Teams', icon: Users },
+              { id: 'attendance', label: 'Attendance', icon: Calendar },
               { id: 'validation', label: 'Validation', icon: BarChart3 },
               { id: 'rules', label: 'Rules', icon: Settings },
               { id: 'tests', label: 'Tests', icon: Play }
@@ -859,6 +1030,18 @@ const ABAScheduler = () => {
               />
             )}
 
+            {/* Attendance Tab */}
+            {activeTab === 'attendance' && (
+              <AttendanceManagement
+                staff={staff}
+                students={students}
+                currentDate={currentDate}
+                onUpdateStaffAttendance={handleUpdateStaffAttendance}
+                onUpdateStudentAttendance={handleUpdateStudentAttendance}
+                onResetAllAttendance={clearAllAttendance}
+              />
+            )}
+
             {/* Validation Tab */}
             {activeTab === 'validation' && (
               <ValidationPanel
@@ -1025,4 +1208,11 @@ const ABAScheduler = () => {
   );
 };
 
-export default ABAScheduler;
+// Wrap with Error Boundary
+const ABASchedulerWithErrorBoundary = () => (
+  <ErrorBoundary>
+    <ABAScheduler />
+  </ErrorBoundary>
+);
+
+export default ABASchedulerWithErrorBoundary;

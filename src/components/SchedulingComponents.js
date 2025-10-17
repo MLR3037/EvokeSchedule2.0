@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Lock, Unlock, Users, Clock, AlertTriangle, CheckCircle } from 'lucide-react';
 import { SESSION_TIMES, RATIOS } from '../types/index.js';
 
@@ -23,6 +23,34 @@ export const ScheduleTableView = ({
   
   const [preAssignments, setPreAssignments] = useState({});
   const [lockedAssignments, setLockedAssignments] = useState(new Set());
+
+  // Sync component state when schedule changes
+  useEffect(() => {
+    console.log('🔄 Schedule changed, syncing state...');
+    console.log('  Total assignments:', schedule.assignments.length);
+    
+    // Sync locked assignments based on actual schedule
+    const newLockedAssignments = new Set();
+    
+    schedule.assignments.forEach(assignment => {
+      const key = getPreAssignmentKey(assignment.studentId, assignment.session);
+      newLockedAssignments.add(key);
+    });
+    
+    setLockedAssignments(newLockedAssignments);
+    
+    // Clear pre-assignments for students that now have real assignments
+    setPreAssignments(prev => {
+      const newPre = { ...prev };
+      schedule.assignments.forEach(assignment => {
+        const key = getPreAssignmentKey(assignment.studentId, assignment.session);
+        if (newPre[key]) {
+          delete newPre[key];
+        }
+      });
+      return newPre;
+    });
+  }, [schedule.assignments.length]);
 
   // Get unique programs from students
   const programs = [...new Set(students.filter(s => s.isActive).map(s => s.program))];
@@ -92,14 +120,6 @@ export const ScheduleTableView = ({
       a.program === student.program
     );
     
-    // DEBUG: Log assignment lookup details
-    if (schedule.assignments.length > 0) {
-      console.log(`🔍 ASSIGNMENT LOOKUP for ${student.name} ${session}:`);
-      console.log(`  Looking for: studentId=${student.id}, session=${session}, program=${student.program}`);
-      console.log(`  Found assignment:`, assignment);
-      console.log(`  All assignments:`, schedule.assignments);
-    }
-    
     return assignment;
   };
 
@@ -113,31 +133,73 @@ export const ScheduleTableView = ({
       ...prev,
       [key]: staffId ? parseInt(staffId) : null
     }));
+    
+    console.log(`📝 Staff selected: Student ${studentId}, Session ${session}, Staff ${staffId}`);
   };
 
   const handleLockAssignment = (studentId, session) => {
     const key = getPreAssignmentKey(studentId, session);
     const staffId = preAssignments[key];
     
+    console.log(`🔒 Locking assignment: Student ${studentId}, Session ${session}, Staff ${staffId}`);
+    
     if (staffId) {
       // Create manual assignment
       const student = students.find(s => s.id === studentId);
       if (student && onManualAssignment) {
+        console.log(`📤 Calling onManualAssignment with:`, {
+          staffId: staffId,
+          studentId: studentId,
+          session: session,
+          program: student.program
+        });
+        
         onManualAssignment({
           staffId: staffId,
           studentId: studentId,
           session: session,
           program: student.program
         });
+        
+        // Add to locked assignments
+        setLockedAssignments(prev => new Set([...prev, key]));
+        
+        // Clear pre-assignment since it's now a real assignment
+        setPreAssignments(prev => {
+          const newPre = { ...prev };
+          delete newPre[key];
+          return newPre;
+        });
+        
+        console.log(`✅ Assignment locked successfully`);
       }
-      
-      // Add to locked assignments
-      setLockedAssignments(prev => new Set([...prev, key]));
+    } else {
+      console.warn(`⚠️ No staff selected for ${studentId} ${session}`);
     }
   };
 
   const handleUnlockAssignment = (studentId, session) => {
     const key = getPreAssignmentKey(studentId, session);
+    
+    console.log(`🔓 Unlocking assignment: Student ${studentId}, Session ${session}`);
+    
+    // Find the current assignment
+    const student = students.find(s => s.id === studentId);
+    const currentAssignment = getCurrentAssignment(student, session);
+    
+    if (currentAssignment) {
+      console.log(`🗑️ Removing assignment ID: ${currentAssignment.id}`);
+      
+      // Remove the actual assignment
+      if (onAssignmentRemove) {
+        onAssignmentRemove(currentAssignment.id);
+      }
+      
+      // Also unlock via parent handler if available
+      if (onAssignmentUnlock) {
+        onAssignmentUnlock(currentAssignment.id);
+      }
+    }
     
     // Remove from locked assignments
     setLockedAssignments(prev => {
@@ -146,17 +208,13 @@ export const ScheduleTableView = ({
       return newSet;
     });
     
-    // Remove the actual assignment
-    const currentAssignment = getCurrentAssignment(students.find(s => s.id === studentId), session);
-    if (currentAssignment && onAssignmentRemove) {
-      onAssignmentRemove(currentAssignment.id);
-    }
-    
     // Clear pre-assignment
     setPreAssignments(prev => ({
       ...prev,
       [key]: null
     }));
+    
+    console.log(`✅ Assignment unlocked successfully`);
   };
 
   const isAssignmentLocked = (studentId, session) => {
@@ -190,16 +248,38 @@ export const ScheduleTableView = ({
   };
 
   const renderStaffDropdown = (student, session) => {
+    // Check if student is absent for this session
+    if (!student.isAvailableForSession(session)) {
+      return (
+        <div className="flex items-center gap-2">
+          <div className="text-sm px-3 py-2 bg-gray-100 text-gray-400 rounded border border-gray-200 italic">
+            ABSENT
+          </div>
+          <span className="px-2 py-1 bg-red-100 text-red-600 rounded text-xs font-medium">
+            {student.absentFullDay ? 'Full Day' : session === 'AM' ? 'Absent AM' : 'Absent PM'}
+          </span>
+        </div>
+      );
+    }
+
     const team = getStudentTeam(student);
     const currentAssignment = getCurrentAssignment(student, session);
     const key = getPreAssignmentKey(student.id, session);
     const isLocked = isAssignmentLocked(student.id, session);
-    const selectedStaffId = preAssignments[key] || currentAssignment?.staffId || '';
+    
+    // CRITICAL FIX: If there's a current assignment, use that staff ID
+    // Otherwise, use the pre-assignment state
+    const selectedStaffId = currentAssignment?.staffId || preAssignments[key] || '';
+
+    console.log(`🔍 DROPDOWN RENDER for ${student.name} ${session}:`);
+    console.log(`  Current assignment:`, currentAssignment);
+    console.log(`  Selected staff ID:`, selectedStaffId);
+    console.log(`  Assignment exists:`, !!currentAssignment);
 
     // FILTER TEAM TO ONLY AVAILABLE MEMBERS
     const availableTeamMembers = team.filter(teamMember => {
-      // Always include currently assigned staff (even if not available) to prevent dropdown issues
-      if (selectedStaffId && (teamMember.id === selectedStaffId || teamMember.id == selectedStaffId)) {
+      // Always include currently assigned staff
+      if (currentAssignment && (teamMember.id === currentAssignment.staffId || teamMember.id == currentAssignment.staffId)) {
         return true;
       }
       
@@ -210,22 +290,7 @@ export const ScheduleTableView = ({
       return schedule.isStaffAvailable(staffMember.id, session, student.program);
     });
 
-    // ENHANCED DEBUG: Log detailed dropdown information
-    console.log(`🔍 DROPDOWN DEBUG for ${student.name} ${session}:`);
-    console.log(`  Total team members:`, team.length);
     console.log(`  Available team members:`, availableTeamMembers.length);
-    console.log(`  Available team list:`, availableTeamMembers.map(t => `${t.name} (ID: ${t.id}, Role: ${t.role})`));
-    console.log(`  Current assignment:`, currentAssignment);
-    console.log(`  Selected staff ID:`, selectedStaffId);
-    
-    if (currentAssignment) {
-      console.log(`  Assignment staff ID: ${currentAssignment.staffId} (type: ${typeof currentAssignment.staffId})`);
-      const matchingTeamMember = availableTeamMembers.find(t => t.id === currentAssignment.staffId || t.id == currentAssignment.staffId);
-      console.log(`  Staff in available team?: ${!!matchingTeamMember}`);
-      if (!matchingTeamMember) {
-        console.log(`  ⚠️ ISSUE: Assigned staff ${currentAssignment.staffId} not available or not in team!`);
-      }
-    }
 
     if (availableTeamMembers.length === 0) {
       return <span className="text-gray-400 text-sm">No available team</span>;
@@ -236,9 +301,9 @@ export const ScheduleTableView = ({
         <select
           value={selectedStaffId}
           onChange={(e) => handleStaffSelection(student.id, session, e.target.value)}
-          disabled={isLocked}
+          disabled={isLocked || !!currentAssignment} // Disable if locked OR already assigned
           className={`text-sm border rounded px-2 py-1 ${
-            isLocked ? 'bg-gray-100 text-gray-600' : 'bg-white'
+            isLocked || currentAssignment ? 'bg-gray-100 text-gray-600' : 'bg-white'
           }`}
         >
           <option value="">Select staff...</option>
@@ -249,7 +314,8 @@ export const ScheduleTableView = ({
           ))}
         </select>
         
-        {selectedStaffId && !isLocked && (
+        {/* Show lock button only if staff is selected but not yet assigned */}
+        {selectedStaffId && !currentAssignment && !isLocked && (
           <button
             onClick={() => handleLockAssignment(student.id, session)}
             className="p-1 text-green-600 hover:text-green-800"
@@ -259,11 +325,12 @@ export const ScheduleTableView = ({
           </button>
         )}
         
-        {isLocked && (
+        {/* Show unlock button if there's a current assignment */}
+        {currentAssignment && (
           <button
             onClick={() => handleUnlockAssignment(student.id, session)}
-            className="p-1 text-yellow-600 hover:text-yellow-800"
-            title="Unlock this assignment"
+            className="p-1 text-red-600 hover:text-red-800"
+            title="Remove this assignment"
           >
             <Unlock className="w-4 h-4" />
           </button>
@@ -728,8 +795,15 @@ const ManualAssignmentModal = ({
 export const SessionSummary = ({ schedule, staff, students, session, program }) => {
   const assignments = schedule.getAssignmentsForSession(session, program);
   const programStudents = students.filter(s => s.program === program && s.isActive);
+  
+  // Calculate absent staff and students for this session
+  const absentStaff = staff.filter(s => s.isActive && !s.isAvailableForSession(session));
+  const absentStudents = students.filter(s => s.isActive && s.program === program && !s.isAvailableForSession(session));
+  
+  // Filter out absent students when counting - only count present students
+  const presentProgramStudents = programStudents.filter(s => s.isAvailableForSession(session));
   const assignedStudents = new Set(assignments.map(a => a.studentId));
-  const unassignedCount = programStudents.length - assignedStudents.size;
+  const unassignedCount = presentProgramStudents.length - assignedStudents.size;
   
   // Calculate staff utilization by role
   const staffByRole = {};
@@ -752,14 +826,17 @@ export const SessionSummary = ({ schedule, staff, students, session, program }) 
     staffRoleCounts[role] = staffByRole[role].size;
   });
 
-  // Find unassigned students
+  // Find unassigned students (exclude absent students)
   const unassignedStudents = programStudents.filter(student => 
-    !assignedStudents.has(student.id)
+    !assignedStudents.has(student.id) && student.isAvailableForSession(session)
   );
 
   // Find unassigned staff for this program and session
   const availableStaff = staff.filter(staffMember => {
     if (!staffMember.isActive) return false;
+    
+    // Check if staff is available for this session (not absent)
+    if (!staffMember.isAvailableForSession(session)) return false;
     
     // Check if staff works with this program
     const worksWithProgram = program === 'Primary' 
@@ -842,6 +919,49 @@ export const SessionSummary = ({ schedule, staff, students, session, program }) 
                   <span className="text-xs font-semibold">{count}</span>
                 </div>
               ))}
+          </div>
+        </div>
+      )}
+
+      {/* Absent Staff */}
+      {absentStaff.length > 0 && (
+        <div className="mt-3 border-t pt-3">
+          <div className="text-xs font-medium text-red-600 mb-2">
+            Absent Staff ({absentStaff.length}):
+          </div>
+          <div className="space-y-1 max-h-20 overflow-y-auto">
+            {absentStaff.map(staffMember => (
+              <div key={staffMember.id} className="text-xs flex items-center gap-2">
+                <span className={`px-2 py-0.5 rounded ${getRoleColor(staffMember.role)}`}>
+                  {staffMember.role}
+                </span>
+                <span className="text-gray-700">{staffMember.name}</span>
+                <span className="text-red-600 text-[10px]">
+                  {staffMember.absentFullDay ? '(Full Day)' : 
+                   session === 'AM' ? '(AM)' : '(PM)'}
+                </span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Absent Students */}
+      {absentStudents.length > 0 && (
+        <div className="mt-3 border-t pt-3">
+          <div className="text-xs font-medium text-red-600 mb-2">
+            Absent Clients ({absentStudents.length}):
+          </div>
+          <div className="space-y-1 max-h-20 overflow-y-auto">
+            {absentStudents.map(student => (
+              <div key={student.id} className="text-xs text-gray-700 flex items-center gap-2">
+                <span>{student.name}</span>
+                <span className="text-red-600 text-[10px]">
+                  {student.absentFullDay ? '(Full Day)' : 
+                   session === 'AM' ? '(AM)' : '(PM)'}
+                </span>
+              </div>
+            ))}
           </div>
         </div>
       )}

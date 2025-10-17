@@ -111,23 +111,30 @@ export const PeoplePicker = ({
       {/* Selected Users Display */}
       {selectedUsers.length > 0 && (
         <div className="mb-2 flex flex-wrap gap-2">
-          {selectedUsers.map(user => (
-            <div
-              key={user.id}
-              className="inline-flex items-center gap-2 px-3 py-1 bg-blue-100 text-blue-800 rounded-full text-sm"
-            >
-              <Users className="w-3 h-3" />
-              <span>{user.title}</span>
-              {!disabled && (
-                <button
-                  onClick={() => handleUserRemove(user.id)}
-                  className="hover:bg-blue-200 rounded-full p-0.5"
-                >
-                  <X className="w-3 h-3" />
-                </button>
-              )}
-            </div>
-          ))}
+          {selectedUsers.map(user => {
+            // Safely extract user title/name
+            const userName = typeof user.title === 'string' 
+              ? user.title 
+              : (typeof user.name === 'string' ? user.name : 'Unknown User');
+            
+            return (
+              <div
+                key={user.id || Math.random()}
+                className="inline-flex items-center gap-2 px-3 py-1 bg-blue-100 text-blue-800 rounded-full text-sm"
+              >
+                <Users className="w-3 h-3" />
+                <span>{userName}</span>
+                {!disabled && (
+                  <button
+                    onClick={() => handleUserRemove(user.id)}
+                    className="hover:bg-blue-200 rounded-full p-0.5"
+                  >
+                    <X className="w-3 h-3" />
+                  </button>
+                )}
+              </div>
+            );
+          })}
         </div>
       )}
 
@@ -170,27 +177,40 @@ export const PeoplePicker = ({
               </div>
             )}
 
-            {!isSearching && availableResults.map(user => (
-              <button
-                key={user.id}
-                onClick={() => handleUserSelect(user)}
-                className="w-full px-4 py-3 text-left hover:bg-gray-50 focus:bg-gray-50 focus:outline-none border-b border-gray-100 last:border-b-0"
-              >
-                <div className="flex items-center gap-3">
-                  <div className="w-8 h-8 bg-blue-500 rounded-full flex items-center justify-center text-white text-sm font-medium">
-                    {user.title.charAt(0).toUpperCase()}
-                  </div>
-                  <div className="flex-1 min-w-0">
-                    <div className="font-medium text-gray-900 truncate">
-                      {user.title}
+            {!isSearching && availableResults.map(user => {
+              // Safely extract user data
+              const userName = typeof user.title === 'string' 
+                ? user.title 
+                : (typeof user.name === 'string' ? user.name : 'Unknown');
+              const userEmail = typeof user.email === 'string' 
+                ? user.email 
+                : '';
+              const userInitial = userName.charAt(0).toUpperCase();
+              
+              return (
+                <button
+                  key={user.id || Math.random()}
+                  onClick={() => handleUserSelect(user)}
+                  className="w-full px-4 py-3 text-left hover:bg-gray-50 focus:bg-gray-50 focus:outline-none border-b border-gray-100 last:border-b-0"
+                >
+                  <div className="flex items-center gap-3">
+                    <div className="w-8 h-8 bg-blue-500 rounded-full flex items-center justify-center text-white text-sm font-medium">
+                      {userInitial}
                     </div>
-                    <div className="text-sm text-gray-500 truncate">
-                      {user.email}
+                    <div className="flex-1 min-w-0">
+                      <div className="font-medium text-gray-900 truncate">
+                        {userName}
+                      </div>
+                      {userEmail && (
+                        <div className="text-sm text-gray-500 truncate">
+                          {userEmail}
+                        </div>
+                      )}
                     </div>
                   </div>
-                </div>
-              </button>
-            ))}
+                </button>
+              );
+            })}
 
             {maxSelections && selectedUsers.length >= maxSelections && (
               <div className="px-4 py-3 text-amber-600 text-sm bg-amber-50 border-t">

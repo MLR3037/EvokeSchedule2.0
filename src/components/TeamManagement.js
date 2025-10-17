@@ -132,7 +132,7 @@ export const TeamManagement = ({
           return {
             id: staffMember.id,
             name: teamMember.title || teamMember.DisplayName || teamMember.LookupValue || staffMember.name, // Use People Picker name
-            role: staffMember.role,
+            role: staffMember.role?.name || staffMember.role, // Handle both object and string
             email: staffMember.email
           };
         } else {
@@ -275,13 +275,13 @@ export const TeamManagement = ({
                     <div className="flex justify-between items-start mb-3">
                       <div className="flex items-center gap-3">
                         <div className="w-10 h-10 bg-indigo-500 rounded-full flex items-center justify-center text-white font-medium">
-                          {item.staff.name.charAt(0)}
+                          {typeof item.staff.name === 'string' ? item.staff.name.charAt(0) : (item.staff.name?.toString?.().charAt(0) || '?')}
                         </div>
                         <div>
-                          <h3 className="font-semibold text-gray-900">{item.staff.name}</h3>
+                          <h3 className="font-semibold text-gray-900">{typeof item.staff.name === 'string' ? item.staff.name : (item.staff.name?.toString?.() || JSON.stringify(item.staff.name))}</h3>
                           <div className="flex items-center gap-2">
-                            <span className={`px-2 py-1 rounded-full text-xs font-medium ${getStaffRoleColor(item.staff.role)}`}>
-                              {item.staff.role}
+                            <span className={`px-2 py-1 rounded-full text-xs font-medium ${getStaffRoleColor(typeof item.staff.role === 'object' ? item.staff.role.name : item.staff.role)}`}>
+                              {typeof item.staff.role === 'object' ? item.staff.role.name : (typeof item.staff.role === 'string' ? item.staff.role : JSON.stringify(item.staff.role))}
                             </span>
                             <div className="flex gap-1">
                               {item.staff.primaryProgram && (
@@ -327,13 +327,13 @@ export const TeamManagement = ({
                         <div className="flex flex-wrap gap-2">
                           {item.clients.map(client => (
                             <div key={client.id} className="flex items-center gap-2 bg-gray-100 rounded-full px-3 py-1">
-                              <span className="text-sm">{client.name}</span>
+                              <span className="text-sm">{typeof client.name === 'string' ? client.name : (client.name?.toString?.() || JSON.stringify(client.name))}</span>
                               <div className="flex gap-1">
                                 <span className="text-xs bg-blue-200 text-blue-700 px-1 rounded">
-                                  AM: {client.ratioAM}
+                                  AM: {typeof client.ratioAM === 'string' ? client.ratioAM : (client.ratioAM?.toString?.() || JSON.stringify(client.ratioAM))}
                                 </span>
                                 <span className="text-xs bg-green-200 text-green-700 px-1 rounded">
-                                  PM: {client.ratioPM}
+                                  PM: {typeof client.ratioPM === 'string' ? client.ratioPM : (client.ratioPM?.toString?.() || JSON.stringify(client.ratioPM))}
                                 </span>
                               </div>
                             </div>
@@ -348,10 +348,10 @@ export const TeamManagement = ({
                     <div className="flex justify-between items-start mb-3">
                       <div className="flex items-center gap-3">
                         <div className="w-10 h-10 bg-green-500 rounded-full flex items-center justify-center text-white font-medium">
-                          {item.student.name.charAt(0)}
+                          {typeof item.student.name === 'string' ? item.student.name.charAt(0) : (item.student.name?.toString?.().charAt(0) || '?')}
                         </div>
                         <div>
-                          <h3 className="font-semibold text-gray-900">{item.student.name}</h3>
+                          <h3 className="font-semibold text-gray-900">{typeof item.student.name === 'string' ? item.student.name : (item.student.name?.toString?.() || JSON.stringify(item.student.name))}</h3>
                           <div className="flex items-center gap-2">
                             <span className="px-2 py-1 bg-gray-100 text-gray-700 rounded text-xs">
                               {item.student.program}
@@ -382,14 +382,14 @@ export const TeamManagement = ({
 
                       {item.teamMembers.length > 0 ? (
                         <div className="flex flex-wrap gap-2">
-                          {item.teamMembers.map(staffMember => (
-                            <div key={staffMember.id} className="flex items-center gap-2 bg-indigo-100 rounded-full px-3 py-1">
-                              <span className="text-sm">{staffMember.name}</span>
-                              <span className={`text-xs px-2 py-0.5 rounded ${getStaffRoleColor(staffMember.role)}`}>
-                                {staffMember.role}
-                              </span>
-                            </div>
-                          ))}
+                              {item.teamMembers.map(staffMember => (
+                                <div key={staffMember.id} className="flex items-center gap-2 bg-indigo-100 rounded-full px-3 py-1">
+                                  <span className="text-sm">{typeof staffMember.name === 'string' ? staffMember.name : (staffMember.name?.toString?.() || JSON.stringify(staffMember.name))}</span>
+                                  <span className={`text-xs px-2 py-0.5 rounded ${getStaffRoleColor(typeof staffMember.role === 'object' ? staffMember.role.name : (typeof staffMember.role === 'string' ? staffMember.role : JSON.stringify(staffMember.role)))}`}>
+                                    {typeof staffMember.role === 'object' ? staffMember.role.name : (typeof staffMember.role === 'string' ? staffMember.role : JSON.stringify(staffMember.role))}
+                                  </span>
+                                </div>
+                              ))}
                         </div>
                       ) : (
                         <p className="text-sm text-gray-500 italic">No team members assigned</p>

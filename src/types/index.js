@@ -54,7 +54,10 @@ export class Staff {
     staffPerson = null,
     primaryProgram = false, // Can be boolean or program string
     secondaryProgram = false, // Can be boolean or program string
-    isActive = true
+    isActive = true,
+    absentAM = false, // Absent for AM session
+    absentPM = false, // Absent for PM session
+    absentFullDay = false // Absent for full day (both sessions)
   }) {
     this.id = id;
     this.name = name;
@@ -83,6 +86,11 @@ export class Staff {
     }
     
     this.isActive = isActive;
+    
+    // Attendance tracking
+    this.absentFullDay = absentFullDay;
+    this.absentAM = absentFullDay ? true : absentAM; // If full day absent, AM is also absent
+    this.absentPM = absentFullDay ? true : absentPM; // If full day absent, PM is also absent
   }
 
   getRoleLevel() {
@@ -119,6 +127,31 @@ export class Staff {
   }
 
   /**
+   * Check if staff member is available for a specific session
+   * @param {string} session - 'AM' or 'PM'
+   * @returns {boolean} True if staff is available (not absent)
+   */
+  isAvailableForSession(session) {
+    if (!this.isActive) return false;
+    if (this.absentFullDay) return false;
+    if (session === 'AM') return !this.absentAM;
+    if (session === 'PM') return !this.absentPM;
+    return true;
+  }
+
+  /**
+   * Get attendance status string
+   * @returns {string} 'Present', 'Absent AM', 'Absent PM', or 'Absent Full Day'
+   */
+  getAttendanceStatus() {
+    if (this.absentFullDay) return 'Absent Full Day';
+    if (this.absentAM && this.absentPM) return 'Absent Full Day';
+    if (this.absentAM) return 'Absent AM';
+    if (this.absentPM) return 'Absent PM';
+    return 'Present';
+  }
+
+  /**
    * Check if staff member is a preferred direct service provider
    * RBTs and BSs are preferred over EAs and other roles
    * @returns {boolean} True if staff is preferred for direct service
@@ -143,7 +176,10 @@ export class Student {
     isActive = true,
     team = [], // Team members (People Picker array)
     teamIds = [], // Array of staff IDs extracted from team
-    pairedWith = null // ID of paired student (for shared staff assignments)
+    pairedWith = null, // ID of paired student (for shared staff assignments)
+    absentAM = false, // Absent for AM session
+    absentPM = false, // Absent for PM session
+    absentFullDay = false // Absent for full day (both sessions)
   }) {
     this.id = id;
     this.name = name;
@@ -164,6 +200,11 @@ export class Student {
     this.team = team; // Array of team members (People Picker data)
     this.teamIds = teamIds.length > 0 ? teamIds : team.map(t => t.id).filter(Boolean); // Extract IDs from team if not provided
     this.pairedWith = pairedWith; // ID of paired student for shared staff assignments
+    
+    // Attendance tracking
+    this.absentFullDay = absentFullDay;
+    this.absentAM = absentFullDay ? true : absentAM; // If full day absent, AM is also absent
+    this.absentPM = absentFullDay ? true : absentPM; // If full day absent, PM is also absent
   }
 
   requiresMultipleStaff(session = 'AM') {
@@ -178,6 +219,31 @@ export class Student {
   isSmallGroup(session = 'AM') {
     const ratio = session === 'AM' ? this.ratioAM : this.ratioPM;
     return ratio === RATIOS.ONE_TO_TWO;
+  }
+
+  /**
+   * Check if student is available for a specific session
+   * @param {string} session - 'AM' or 'PM'
+   * @returns {boolean} True if student is available (not absent)
+   */
+  isAvailableForSession(session) {
+    if (!this.isActive) return false;
+    if (this.absentFullDay) return false;
+    if (session === 'AM') return !this.absentAM;
+    if (session === 'PM') return !this.absentPM;
+    return true;
+  }
+
+  /**
+   * Get attendance status string
+   * @returns {string} 'Present', 'Absent AM', 'Absent PM', or 'Absent Full Day'
+   */
+  getAttendanceStatus() {
+    if (this.absentFullDay) return 'Absent Full Day';
+    if (this.absentAM && this.absentPM) return 'Absent Full Day';
+    if (this.absentAM) return 'Absent AM';
+    if (this.absentPM) return 'Absent PM';
+    return 'Present';
   }
 
   /**

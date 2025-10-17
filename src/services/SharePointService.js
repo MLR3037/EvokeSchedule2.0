@@ -287,7 +287,7 @@ export class SharePointService {
       
       // Staff list uses Person/Group field, so we need to expand it
       const url = `${this.config.siteUrl}/_api/web/lists/getbytitle('${this.config.staffListName}')/items?` +
-        `$select=Id,StaffPerson/Id,StaffPerson/Title,StaffPerson/EMail,Role,PrimaryProgram,SecondaryProgram,IsActive&` +
+        `$select=Id,StaffPerson/Id,StaffPerson/Title,StaffPerson/EMail,Role,PrimaryProgram,SecondaryProgram,IsActive,AbsentAM,AbsentPM,AbsentFullDay&` +
         `$expand=StaffPerson&` +
         `$top=5000`;
 
@@ -324,7 +324,10 @@ export class SharePointService {
           email: staffEmail,
           primaryProgram: item.PrimaryProgram === true,
           secondaryProgram: item.SecondaryProgram === true,
-          isActive: item.IsActive !== false
+          isActive: item.IsActive !== false,
+          absentAM: item.AbsentAM === true,
+          absentPM: item.AbsentPM === true,
+          absentFullDay: item.AbsentFullDay === true
         });
 
         console.log(`✅ Loaded staff: ${staff.name} (${staff.role}) - Primary: ${staff.primaryProgram}, Secondary: ${staff.secondaryProgram}`);
@@ -349,7 +352,7 @@ export class SharePointService {
       // For multi-person picker fields, we need to expand them directly
       // Team is a multi-person picker field that references the Staff list
       const url = `${this.config.siteUrl}/_api/web/lists/getbytitle('${this.config.studentsListName}')/items?` +
-        `$select=Id,Title,Program,RatioAM,RatioPM,IsActive,PairedWith,Team/Id,Team/Title,Team/EMail&` +
+        `$select=Id,Title,Program,RatioAM,RatioPM,IsActive,PairedWith,Team/Id,Team/Title,Team/EMail,AbsentAM,AbsentPM,AbsentFullDay&` +
         `$expand=Team&` +
         `$top=5000`;
 
@@ -433,7 +436,10 @@ export class SharePointService {
         isActive: item.IsActive !== false,
         team: team,
         teamIds: teamIds,
-        pairedWith: item.PairedWith || null
+        pairedWith: item.PairedWith || null,
+        absentAM: item.AbsentAM === true,
+        absentPM: item.AbsentPM === true,
+        absentFullDay: item.AbsentFullDay === true
       });
 
       if (team.length > 0) {
@@ -493,7 +499,10 @@ export class SharePointService {
         Email: staff.email,
         PrimaryProgram: staff.primaryProgram,
         SecondaryProgram: staff.secondaryProgram,
-        IsActive: staff.isActive
+        IsActive: staff.isActive,
+        AbsentAM: staff.absentAM || false,
+        AbsentPM: staff.absentPM || false,
+        AbsentFullDay: staff.absentFullDay || false
       };
 
       const response = await this.makeRequest(url, {
@@ -526,13 +535,22 @@ export class SharePointService {
         ? `${this.config.siteUrl}/_api/web/lists/getbytitle('${this.config.studentsListName}')/items(${student.id})`
         : `${this.config.siteUrl}/_api/web/lists/getbytitle('${this.config.studentsListName}')/items`;
 
+      // Prepare team field for SharePoint People Picker
+      const teamResults = student.team && student.team.length > 0
+        ? student.team.map(person => person.id || person.userId).filter(id => id)
+        : [];
+
       const body = {
         __metadata: { type: 'SP.Data.ClientsListItem' },
         Title: student.name,
         Program: student.program,
         RatioAM: student.ratioAM,
         RatioPM: student.ratioPM,
-        IsActive: student.isActive
+        IsActive: student.isActive,
+        TeamId: { results: teamResults }, // People Picker field
+        AbsentAM: student.absentAM || false,
+        AbsentPM: student.absentPM || false,
+        AbsentFullDay: student.absentFullDay || false
       };
 
       const response = await this.makeRequest(url, {
