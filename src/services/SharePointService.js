@@ -21,6 +21,9 @@ export class SharePointService {
     
     console.log('🔧 SharePointService final config:', this.config);
     
+    // Set up direct property access for commonly used config values
+    this.siteUrl = this.config.siteUrl;
+    
     // MSAL Configuration
     this.msalConfig = {
       auth: {
