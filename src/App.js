@@ -394,8 +394,8 @@ const handleAssignmentRemove = (assignmentId) => {
         console.log('✅ Schedule saved successfully to SharePoint');
         alert('Schedule saved successfully! Historical data is now available for rule checking.');
       } else {
-        console.log('ℹ️ Schedule save skipped - SharePoint lists not set up yet');
-        alert('Schedule history features are not yet set up. The app works normally, but to enable schedule saving and historical tracking, you need to create SharePoint lists first. See SCHEDULE_HISTORY_SETUP.md for instructions.');
+        console.log('ℹ️ Schedule save failed - check browser console for details');
+        alert('Failed to save schedule. Please check the browser console (F12 → Console) for detailed error information. This might be due to missing SharePoint lists, permissions, or column naming issues.');
       }
     } catch (error) {
       console.error('Error saving schedule:', error);

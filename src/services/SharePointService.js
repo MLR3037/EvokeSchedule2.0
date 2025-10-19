@@ -580,6 +580,7 @@ export class SharePointService {
       console.log('💾 Saving schedule to SharePoint...', schedule.date);
 
       // Check if ABASchedules list exists
+      console.log('🔍 Checking for ABASchedules list...');
       const listsResponse = await fetch(
         `${this.siteUrl}/_api/web/lists/getbytitle('ABASchedules')`,
         {
@@ -591,11 +592,42 @@ export class SharePointService {
         }
       );
 
+      console.log('📋 List check response status:', listsResponse.status);
+
       if (!listsResponse.ok) {
-        console.warn('📋 ABASchedules list not found. Schedule history features are disabled.');
+        if (listsResponse.status === 404) {
+          console.warn('📋 ABASchedules list not found (404). Schedule history features are disabled.');
+        } else {
+          console.error('📋 Error checking for ABASchedules list:', listsResponse.status, listsResponse.statusText);
+          const errorText = await listsResponse.text();
+          console.error('📋 Error details:', errorText);
+        }
         console.log('ℹ️ To enable schedule history, create SharePoint lists using SCHEDULE_HISTORY_SETUP.md');
         return false;
       }
+
+      console.log('✅ ABASchedules list found!');
+
+      // Also check if ABAAssignments list exists
+      console.log('🔍 Checking for ABAAssignments list...');
+      const assignmentsListResponse = await fetch(
+        `${this.siteUrl}/_api/web/lists/getbytitle('ABAAssignments')`,
+        {
+          method: 'GET',
+          headers: {
+            'Authorization': `Bearer ${this.accessToken}`,
+            'Accept': 'application/json;odata=verbose'
+          }
+        }
+      );
+
+      if (!assignmentsListResponse.ok) {
+        console.error('❌ ABAAssignments list not found:', assignmentsListResponse.status);
+        console.log('ℹ️ Both ABASchedules and ABAAssignments lists are required');
+        return false;
+      }
+
+      console.log('✅ Both SharePoint lists found, proceeding with save...');
 
       // Prepare schedule metadata
       const scheduleData = {
@@ -688,6 +720,8 @@ export class SharePointService {
         IsLocked: assignment.isLocked || false
       };
 
+      console.log('💾 Saving assignment to ABAAssignments list:', assignmentData);
+
       const response = await fetch(
         `${this.siteUrl}/_api/web/lists/getbytitle('ABAAssignments')/items`,
         {
@@ -704,15 +738,16 @@ export class SharePointService {
 
       if (!response.ok) {
         const errorText = await response.text();
-        console.error('Failed to save assignment:', errorText);
-        return { success: false, assignment };
+        console.error('❌ Failed to save assignment to ABAAssignments list:', response.status, errorText);
+        return { success: false, assignment, error: errorText };
       }
 
       const result = await response.json();
+      console.log('✅ Assignment saved successfully, ID:', result.d.ID);
       return { success: true, id: result.d.ID, assignment };
     } catch (error) {
-      console.error('Error saving assignment:', error);
-      return { success: false, assignment };
+      console.error('❌ Error saving assignment:', error);
+      return { success: false, assignment, error: error.message };
     }
   }
 
