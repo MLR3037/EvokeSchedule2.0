@@ -572,7 +572,63 @@ export class SharePointService {
 
   async saveSchedule(schedule) {
     try {
-      console.log('💾 Schedule saving temporarily disabled');
+      if (!this.isAuthenticated()) {
+        console.error('Cannot save schedule - not authenticated');
+        return false;
+      }
+
+      console.log('💾 Saving schedule to SharePoint...', schedule.date);
+
+      // Prepare schedule metadata
+      const scheduleData = {
+        ScheduleDate: schedule.date,
+        IsFinalized: schedule.isFinalized,
+        TotalAssignments: schedule.assignments.length,
+        CreatedDate: new Date().toISOString(),
+        CreatedBy: this.currentUser?.displayName || 'Unknown',
+        AssignmentsSummary: this.generateAssignmentsSummary(schedule.assignments)
+      };
+
+      // Save schedule record to ABASchedules list
+      const scheduleResponse = await fetch(
+        `${this.siteUrl}/_api/web/lists/getbytitle('ABASchedules')/items`,
+        {
+          method: 'POST',
+          headers: {
+            'Authorization': `Bearer ${this.accessToken}`,
+            'Accept': 'application/json;odata=verbose',
+            'Content-Type': 'application/json;odata=verbose',
+            'X-RequestDigest': await this.getRequestDigest()
+          },
+          body: JSON.stringify(scheduleData)
+        }
+      );
+
+      if (!scheduleResponse.ok) {
+        const errorText = await scheduleResponse.text();
+        console.error('Failed to save schedule metadata:', errorText);
+        return false;
+      }
+
+      const scheduleResult = await scheduleResponse.json();
+      const scheduleId = scheduleResult.d.ID;
+      console.log('✅ Schedule metadata saved with ID:', scheduleId);
+
+      // Save individual assignments to ABAAssignments list
+      const assignmentPromises = schedule.assignments.map(assignment => 
+        this.saveAssignmentToHistory(assignment, scheduleId)
+      );
+
+      const assignmentResults = await Promise.allSettled(assignmentPromises);
+      const successfulAssignments = assignmentResults.filter(result => result.status === 'fulfilled');
+      const failedAssignments = assignmentResults.filter(result => result.status === 'rejected');
+
+      console.log(`✅ Saved ${successfulAssignments.length} assignments, ${failedAssignments.length} failed`);
+
+      if (failedAssignments.length > 0) {
+        console.warn('Some assignments failed to save:', failedAssignments);
+      }
+
       return true;
     } catch (error) {
       console.error('Error saving schedule:', error);
@@ -580,13 +636,148 @@ export class SharePointService {
     }
   }
 
-  async saveAssignment(assignment) {
+  generateAssignmentsSummary(assignments) {
+    const summary = {
+      totalAssignments: assignments.length,
+      byProgram: {},
+      bySession: {},
+      staffCount: new Set(assignments.map(a => a.staffId)).size,
+      studentCount: new Set(assignments.map(a => a.studentId)).size
+    };
+
+    assignments.forEach(assignment => {
+      // Count by program
+      summary.byProgram[assignment.program] = (summary.byProgram[assignment.program] || 0) + 1;
+      
+      // Count by session
+      summary.bySession[assignment.session] = (summary.bySession[assignment.session] || 0) + 1;
+    });
+
+    return JSON.stringify(summary);
+  }
+
+  async saveAssignmentToHistory(assignment, scheduleId) {
     try {
-      console.log('💾 Assignment saving temporarily disabled');
-      return { success: true, id: assignment.id };
+      const assignmentData = {
+        ScheduleID: scheduleId,
+        ScheduleDate: assignment.date || new Date().toISOString().split('T')[0],
+        StaffID: assignment.staffId,
+        StudentID: assignment.studentId,
+        Session: assignment.session,
+        Program: assignment.program,
+        AssignmentType: assignment.type || 'Standard',
+        CreatedDate: new Date().toISOString(),
+        IsLocked: assignment.isLocked || false
+      };
+
+      const response = await fetch(
+        `${this.siteUrl}/_api/web/lists/getbytitle('ABAAssignments')/items`,
+        {
+          method: 'POST',
+          headers: {
+            'Authorization': `Bearer ${this.accessToken}`,
+            'Accept': 'application/json;odata=verbose',
+            'Content-Type': 'application/json;odata=verbose',
+            'X-RequestDigest': await this.getRequestDigest()
+          },
+          body: JSON.stringify(assignmentData)
+        }
+      );
+
+      if (!response.ok) {
+        const errorText = await response.text();
+        console.error('Failed to save assignment:', errorText);
+        return { success: false, assignment };
+      }
+
+      const result = await response.json();
+      return { success: true, id: result.d.ID, assignment };
     } catch (error) {
       console.error('Error saving assignment:', error);
-      return { success: false };
+      return { success: false, assignment };
+    }
+  }
+
+  // Method to load schedule history for rule checking
+  async getScheduleHistory(staffId, studentId, days = 7) {
+    try {
+      if (!this.isAuthenticated()) {
+        console.error('Cannot load schedule history - not authenticated');
+        return [];
+      }
+
+      const endDate = new Date();
+      const startDate = new Date(endDate);
+      startDate.setDate(startDate.getDate() - days);
+
+      const filter = `StaffID eq ${staffId} and StudentID eq ${studentId} and ScheduleDate ge '${startDate.toISOString().split('T')[0]}' and ScheduleDate le '${endDate.toISOString().split('T')[0]}'`;
+      
+      const response = await fetch(
+        `${this.siteUrl}/_api/web/lists/getbytitle('ABAAssignments')/items?$filter=${encodeURIComponent(filter)}&$orderby=ScheduleDate desc`,
+        {
+          method: 'GET',
+          headers: {
+            'Authorization': `Bearer ${this.accessToken}`,
+            'Accept': 'application/json;odata=verbose'
+          }
+        }
+      );
+
+      if (!response.ok) {
+        console.error('Failed to load schedule history');
+        return [];
+      }
+
+      const data = await response.json();
+      return data.d.results.map(item => ({
+        date: item.ScheduleDate,
+        staffId: item.StaffID,
+        studentId: item.StudentID,
+        session: item.Session,
+        program: item.Program
+      }));
+    } catch (error) {
+      console.error('Error loading schedule history:', error);
+      return [];
+    }
+  }
+
+  // Method to check consecutive days rule
+  async checkConsecutiveDaysRule(staffId, studentId, maxDays = 3) {
+    try {
+      const history = await this.getScheduleHistory(staffId, studentId, maxDays + 2);
+      
+      if (history.length === 0) return { allowed: true, consecutiveDays: 0 };
+
+      // Sort by date and check for consecutive days
+      const sortedHistory = history.sort((a, b) => new Date(a.date) - new Date(b.date));
+      
+      let consecutiveDays = 0;
+      let currentStreak = 0;
+      const today = new Date().toISOString().split('T')[0];
+      
+      for (let i = sortedHistory.length - 1; i >= 0; i--) {
+        const historyDate = sortedHistory[i].date;
+        const expectedDate = new Date();
+        expectedDate.setDate(expectedDate.getDate() - (consecutiveDays + 1));
+        
+        if (historyDate === expectedDate.toISOString().split('T')[0]) {
+          consecutiveDays++;
+        } else {
+          break;
+        }
+      }
+
+      return {
+        allowed: consecutiveDays < maxDays,
+        consecutiveDays,
+        message: consecutiveDays >= maxDays ? 
+          `${staffId} has worked with ${studentId} for ${consecutiveDays} consecutive days. Consider assigning different staff.` : 
+          null
+      };
+    } catch (error) {
+      console.error('Error checking consecutive days rule:', error);
+      return { allowed: true, consecutiveDays: 0, error: error.message };
     }
   }
 }

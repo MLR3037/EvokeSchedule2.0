@@ -388,12 +388,25 @@ const handleAssignmentRemove = (assignmentId) => {
   const handleSaveSchedule = async () => {
     setSaving(true);
     try {
-      await sharePointService.saveSchedule(schedule);
-      console.log('Schedule saved successfully');
-      // Show success message to user
+      // Ensure schedule has the current date
+      const scheduleToSave = {
+        ...schedule,
+        date: currentDate.toISOString().split('T')[0]
+      };
+
+      const success = await sharePointService.saveSchedule(scheduleToSave);
+      
+      if (success) {
+        console.log('✅ Schedule saved successfully to SharePoint');
+        // TODO: Show success toast notification
+        alert('Schedule saved successfully! Historical data is now available for rule checking.');
+      } else {
+        console.error('❌ Failed to save schedule');
+        alert('Failed to save schedule. Please check your connection and try again.');
+      }
     } catch (error) {
       console.error('Error saving schedule:', error);
-      // Show error message to user
+      alert('Error saving schedule: ' + error.message);
     } finally {
       setSaving(false);
     }
@@ -597,34 +610,6 @@ const handleAssignmentRemove = (assignmentId) => {
     }
   };
 
-  // Debug function to check authentication and data loading
-  const handleDebugCheck = async () => {
-    console.log('🔍 Debug Check Starting...');
-    console.log('Current authentication status:', isAuthenticated);
-    console.log('Access token exists:', !!accessToken);
-    console.log('SharePoint config:', spConfig);
-    console.log('Current staff count:', staff.length);
-    console.log('Current students count:', students.length);
-    
-    try {
-      console.log('🔄 Testing authentication...');
-      const authStatus = await sharePointService.checkAuthentication();
-      console.log('Auth check result:', authStatus);
-      
-      if (authStatus) {
-        console.log('🔄 Authentication successful, listing all SharePoint lists...');
-        await sharePointService.debugListAllLists();
-        
-        console.log('🔄 Attempting to load data...');
-        await loadData();
-      } else {
-        console.log('❌ Not authenticated. Please sign in first.');
-      }
-    } catch (error) {
-      console.error('💥 Debug check failed:', error);
-    }
-  };
-
   // Render login screen if not authenticated
   if (!isAuthenticated) {
     return (
@@ -716,13 +701,6 @@ const handleAssignmentRemove = (assignmentId) => {
                 >
                   <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
                   Refresh
-                </button>
-                
-                <button
-                  onClick={handleDebugCheck}
-                  className="bg-yellow-600 text-white px-4 py-2 rounded hover:bg-yellow-700 flex items-center gap-2"
-                >
-                  🔍 Debug
                 </button>
                 
                 <button
