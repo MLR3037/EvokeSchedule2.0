@@ -579,6 +579,24 @@ export class SharePointService {
 
       console.log('💾 Saving schedule to SharePoint...', schedule.date);
 
+      // Check if ABASchedules list exists
+      const listsResponse = await fetch(
+        `${this.siteUrl}/_api/web/lists/getbytitle('ABASchedules')`,
+        {
+          method: 'GET',
+          headers: {
+            'Authorization': `Bearer ${this.accessToken}`,
+            'Accept': 'application/json;odata=verbose'
+          }
+        }
+      );
+
+      if (!listsResponse.ok) {
+        console.warn('📋 ABASchedules list not found. Schedule history features are disabled.');
+        console.log('ℹ️ To enable schedule history, create SharePoint lists using SCHEDULE_HISTORY_SETUP.md');
+        return false;
+      }
+
       // Prepare schedule metadata
       const scheduleData = {
         ScheduleDate: schedule.date,

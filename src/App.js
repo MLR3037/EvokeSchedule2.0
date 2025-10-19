@@ -274,12 +274,6 @@ const ABAScheduler = () => {
 
   // Auto-assignment
   const handleAutoAssign = async () => {
-    if (!validationResults?.isValid) {
-      if (!window.confirm('There are validation errors. Do you want to proceed with auto-assignment anyway?')) {
-        return;
-      }
-    }
-
     setAutoAssigning(true);
     
     try {
@@ -398,11 +392,10 @@ const handleAssignmentRemove = (assignmentId) => {
       
       if (success) {
         console.log('✅ Schedule saved successfully to SharePoint');
-        // TODO: Show success toast notification
         alert('Schedule saved successfully! Historical data is now available for rule checking.');
       } else {
-        console.error('❌ Failed to save schedule');
-        alert('Failed to save schedule. Please check your connection and try again.');
+        console.log('ℹ️ Schedule save skipped - SharePoint lists not set up yet');
+        alert('Schedule history features are not yet set up. The app works normally, but to enable schedule saving and historical tracking, you need to create SharePoint lists first. See SCHEDULE_HISTORY_SETUP.md for instructions.');
       }
     } catch (error) {
       console.error('Error saving schedule:', error);
