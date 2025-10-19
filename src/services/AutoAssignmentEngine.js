@@ -284,7 +284,7 @@ export class AutoAssignmentEngine {
   async findAndSwapUnderutilizedStaff(targetStudent, targetSession, targetProgram, staff, students, schedule) {
     console.log(`    🔍 ULTRA-AGGRESSIVE: Looking for swap chains for ${targetStudent.name}...`);
 
-    const requiredStaffCount = this.getRequiredStaffCount(targetStudent);
+    const requiredStaffCount = this.getRequiredStaffCount(targetStudent, targetSession);
 
     // Get ALL of target student's team members (even if busy)
     const teamStaff = staff.filter(s =>
@@ -740,7 +740,7 @@ export class AutoAssignmentEngine {
           !this.isStudentAssigned(student.id, session, program, schedule)
         );
 
-        const prioritizedStudents = this.prioritizeStudents(programStudents);
+        const prioritizedStudents = this.prioritizeStudents(programStudents, session);
 
         for (const student of prioritizedStudents) {
           try {
@@ -824,11 +824,11 @@ export class AutoAssignmentEngine {
    */
   async assignStudent(student, session, program, staff, schedule) {
     const assignments = [];
-    const staffCount = this.getRequiredStaffCount(student);
+    const staffCount = this.getRequiredStaffCount(student, session);
 
     console.log(`\n🎯 Assigning ${student.name} for ${program} ${session} (needs ${staffCount} staff)`);
 
-    if (student.isSmallGroup()) {
+    if (student.isSmallGroup(session)) {
       return this.assignSmallGroupStudent(student, session, program, staff, schedule);
     }
 
@@ -955,7 +955,7 @@ export class AutoAssignmentEngine {
     // Look for existing 1:2 groups that can accommodate this student
     for (const assignment of sessionAssignments) {
       const assignedStudent = this.findStudentById(assignment.studentId);
-      if (assignedStudent && assignedStudent.isSmallGroup()) {
+      if (assignedStudent && assignedStudent.isSmallGroup(session)) {
         // Check if this staff member can take another student
         const staffAssignmentsInSession = sessionAssignments.filter(
           a => a.staffId === assignment.staffId
@@ -1112,13 +1112,14 @@ export class AutoAssignmentEngine {
   /**
    * Prioritize students for assignment (2:1 ratio first, etc.)
    * @param {Student[]} students - Students to prioritize
+   * @param {string} session - 'AM' or 'PM' session to check ratios for
    * @returns {Student[]} Sorted students array
    */
-  prioritizeStudents(students) {
+  prioritizeStudents(students, session = 'AM') {
     return [...students].sort((a, b) => {
-      // 2:1 ratio students first (they need more staff)
-      if (a.requiresMultipleStaff() && !b.requiresMultipleStaff()) return -1;
-      if (!a.requiresMultipleStaff() && b.requiresMultipleStaff()) return 1;
+      // 2:1 ratio students first (they need more staff) - session-specific
+      if (a.requiresMultipleStaff(session) && !b.requiresMultipleStaff(session)) return -1;
+      if (!a.requiresMultipleStaff(session) && b.requiresMultipleStaff(session)) return 1;
 
       // Then by team size (students with smaller teams get priority to ensure coverage)
       const aTeamSize = a.teamIds.length;
@@ -1131,12 +1132,14 @@ export class AutoAssignmentEngine {
   }
 
   /**
-   * Get the number of staff required for a student based on their ratio
+   * Get the number of staff required for a student based on their ratio for a specific session
    * @param {Student} student - Student to check
+   * @param {string} session - 'AM' or 'PM'
    * @returns {number} Number of staff needed
    */
-  getRequiredStaffCount(student) {
-    switch (student.ratio) {
+  getRequiredStaffCount(student, session = 'AM') {
+    const ratio = session === 'AM' ? student.ratioAM : student.ratioPM;
+    switch (ratio) {
       case RATIOS.TWO_TO_ONE:
         return 2;
       case RATIOS.ONE_TO_ONE:
@@ -1315,8 +1318,8 @@ export class AutoAssignmentEngine {
     }
 
     // Get the combined staff requirements for both students
-    const student1StaffCount = this.getRequiredStaffCount(student1);
-    const student2StaffCount = this.getRequiredStaffCount(student2);
+    const student1StaffCount = this.getRequiredStaffCount(student1, session);
+    const student2StaffCount = this.getRequiredStaffCount(student2, session);
     const totalStaffNeeded = student1StaffCount + student2StaffCount;
 
     this.log(`Paired students need ${student1StaffCount} + ${student2StaffCount} = ${totalStaffNeeded} staff total`);
@@ -1342,7 +1345,7 @@ export class AutoAssignmentEngine {
     let staffIndex = 0;
 
     // Check if both students have 1:2 ratio (small group)
-    if (student1.isSmallGroup() && student2.isSmallGroup()) {
+    if (student1.isSmallGroup(session) && student2.isSmallGroup(session)) {
       // Both students are 1:2 ratio - they should share the same staff member
       this.log(`Both students are 1:2 ratio - assigning same staff to both`);
       
