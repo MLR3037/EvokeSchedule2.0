@@ -640,55 +640,69 @@ export class SharePointService {
 
       console.log('💾 Saving schedule to SharePoint...', schedule.date);
 
-      // Check if ABASchedules list exists
-      console.log('🔍 Checking for ABASchedules list...');
-      const listsResponse = await this.retryFetch(
-        `${this.siteUrl}/_api/web/lists/getbytitle('ABASchedules')`,
-        {
-          method: 'GET',
-          headers: {
-            'Authorization': `Bearer ${this.accessToken}`,
-            'Accept': 'application/json;odata=verbose'
+      // Enhanced debugging - First list all available lists
+      console.log('🔍 Debugging: Listing all available SharePoint lists...');
+      try {
+        const allListsResponse = await this.retryFetch(
+          `${this.siteUrl}/_api/web/lists`,
+          {
+            method: 'GET',
+            headers: {
+              'Authorization': `Bearer ${this.accessToken}`,
+              'Accept': 'application/json;odata=verbose'
+            }
           }
-        }
-      );
+        );
 
-      console.log('📋 List check response status:', listsResponse.status);
-
-      if (!listsResponse.ok) {
-        if (listsResponse.status === 404) {
-          console.warn('📋 ABASchedules list not found (404). Schedule history features are disabled.');
+        if (allListsResponse.ok) {
+          const allListsData = await allListsResponse.json();
+          console.log('📋 Available lists on site:');
+          allListsData.d.results.forEach(list => {
+            console.log(`  - ${list.Title} (Internal: ${list.EntityTypeName})`);
+          });
+          
+          // Check if our lists exist in the available lists
+          const abaSchedulesList = allListsData.d.results.find(list => 
+            list.Title === 'ABASchedules' || list.EntityTypeName === 'ABASchedules'
+          );
+          const abaAssignmentsList = allListsData.d.results.find(list => 
+            list.Title === 'ABAAssignments' || list.EntityTypeName === 'ABAAssignments'
+          );
+          
+          console.log('� ABASchedules found in list:', !!abaSchedulesList);
+          console.log('🔍 ABAAssignments found in list:', !!abaAssignmentsList);
+          
+          if (abaSchedulesList) {
+            console.log('✅ ABASchedules list details:', {
+              Title: abaSchedulesList.Title,
+              EntityTypeName: abaSchedulesList.EntityTypeName,
+              Id: abaSchedulesList.Id
+            });
+          }
+          
+          if (abaAssignmentsList) {
+            console.log('✅ ABAAssignments list details:', {
+              Title: abaAssignmentsList.Title,
+              EntityTypeName: abaAssignmentsList.EntityTypeName,
+              Id: abaAssignmentsList.Id
+            });
+          }
+          
+          // If both lists exist, continue with save operation
+          if (abaSchedulesList && abaAssignmentsList) {
+            console.log('✅ Both required lists found! Proceeding with schedule save...');
+          } else {
+            console.log('❌ Required lists not found. Cannot save schedule history.');
+            return false;
+          }
         } else {
-          console.error('📋 Error checking for ABASchedules list:', listsResponse.status, listsResponse.statusText);
-          const errorText = await listsResponse.text();
-          console.error('📋 Error details:', errorText);
+          console.error('❌ Failed to retrieve lists:', allListsResponse.status);
+          return false;
         }
-        console.log('ℹ️ To enable schedule history, create SharePoint lists using SCHEDULE_HISTORY_SETUP.md');
+      } catch (error) {
+        console.error('❌ Error retrieving lists:', error);
         return false;
       }
-
-      console.log('✅ ABASchedules list found!');
-
-      // Also check if ABAAssignments list exists
-      console.log('🔍 Checking for ABAAssignments list...');
-      const assignmentsListResponse = await this.retryFetch(
-        `${this.siteUrl}/_api/web/lists/getbytitle('ABAAssignments')`,
-        {
-          method: 'GET',
-          headers: {
-            'Authorization': `Bearer ${this.accessToken}`,
-            'Accept': 'application/json;odata=verbose'
-          }
-        }
-      );
-
-      if (!assignmentsListResponse.ok) {
-        console.error('❌ ABAAssignments list not found:', assignmentsListResponse.status);
-        console.log('ℹ️ Both ABASchedules and ABAAssignments lists are required');
-        return false;
-      }
-
-      console.log('✅ Both SharePoint lists found, proceeding with save...');
 
       // Prepare schedule metadata
       const scheduleData = {
