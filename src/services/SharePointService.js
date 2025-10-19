@@ -43,6 +43,10 @@ export class SharePointService {
       prompt: 'select_account'
     };
     
+    // Enhanced error handling
+    this.maxRetries = 3;
+    this.retryDelay = 1000; // 1 second
+    
     console.log('🔧 SharePointService initialized:', {
       siteUrl: this.config.siteUrl,
       clientId: this.config.clientId,
@@ -202,6 +206,53 @@ export class SharePointService {
       this.msalInstance.logoutRedirect({
         account: accounts[0]
       });
+    }
+  }
+
+  /**
+   * Check if user is currently authenticated
+   */
+  isAuthenticated() {
+    return !!(this.accessToken && this.tokenExpiry && Date.now() < this.tokenExpiry);
+  }
+
+  /**
+   * Retry SharePoint API calls with exponential backoff
+   */
+  async retryFetch(url, options, retries = this.maxRetries) {
+    for (let attempt = 0; attempt <= retries; attempt++) {
+      try {
+        console.log(`🔄 API call attempt ${attempt + 1}/${retries + 1}: ${url}`);
+        
+        const response = await fetch(url, options);
+        
+        // If successful or client error (4xx), don't retry
+        if (response.ok || (response.status >= 400 && response.status < 500)) {
+          return response;
+        }
+        
+        // Server error (5xx), retry if attempts remaining
+        if (attempt < retries) {
+          const delay = this.retryDelay * Math.pow(2, attempt);
+          console.log(`⏳ Retrying in ${delay}ms due to server error: ${response.status}`);
+          await new Promise(resolve => setTimeout(resolve, delay));
+          continue;
+        }
+        
+        return response;
+      } catch (error) {
+        console.error(`❌ API call attempt ${attempt + 1} failed:`, error.message);
+        
+        // If it's a network error and we have retries left
+        if (attempt < retries && (error.name === 'TypeError' || error.message.includes('fetch'))) {
+          const delay = this.retryDelay * Math.pow(2, attempt);
+          console.log(`⏳ Retrying in ${delay}ms due to network error`);
+          await new Promise(resolve => setTimeout(resolve, delay));
+          continue;
+        }
+        
+        throw error;
+      }
     }
   }
 
@@ -572,16 +623,26 @@ export class SharePointService {
 
   async saveSchedule(schedule) {
     try {
+      console.log('🔐 Checking authentication status...');
+      
       if (!this.isAuthenticated()) {
-        console.error('Cannot save schedule - not authenticated');
-        return false;
+        console.error('❌ Cannot save schedule - not authenticated');
+        console.log('🔄 Attempting to re-authenticate...');
+        
+        // Try to re-authenticate
+        const authResult = await this.checkAuthentication();
+        if (!authResult) {
+          console.error('❌ Re-authentication failed');
+          throw new Error('Authentication required - please sign in again');
+        }
+        console.log('✅ Re-authentication successful');
       }
 
       console.log('💾 Saving schedule to SharePoint...', schedule.date);
 
       // Check if ABASchedules list exists
       console.log('🔍 Checking for ABASchedules list...');
-      const listsResponse = await fetch(
+      const listsResponse = await this.retryFetch(
         `${this.siteUrl}/_api/web/lists/getbytitle('ABASchedules')`,
         {
           method: 'GET',
@@ -610,7 +671,7 @@ export class SharePointService {
 
       // Also check if ABAAssignments list exists
       console.log('🔍 Checking for ABAAssignments list...');
-      const assignmentsListResponse = await fetch(
+      const assignmentsListResponse = await this.retryFetch(
         `${this.siteUrl}/_api/web/lists/getbytitle('ABAAssignments')`,
         {
           method: 'GET',

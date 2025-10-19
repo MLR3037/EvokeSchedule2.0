@@ -398,8 +398,21 @@ const handleAssignmentRemove = (assignmentId) => {
         alert('Failed to save schedule. Please check the browser console (F12 → Console) for detailed error information. This might be due to missing SharePoint lists, permissions, or column naming issues.');
       }
     } catch (error) {
-      console.error('Error saving schedule:', error);
-      alert('Error saving schedule: ' + error.message);
+      console.error('❌ Error saving schedule:', error);
+      
+      let errorMessage = 'An error occurred while saving the schedule.';
+      
+      if (error.message.includes('Authentication required')) {
+        errorMessage = 'Authentication expired. Please refresh the page and sign in again.';
+      } else if (error.message.includes('fetch')) {
+        errorMessage = 'Network connection error. Please check your internet connection and try again.';
+      } else if (error.message.includes('TypeError')) {
+        errorMessage = 'Configuration error. Please check the browser console (F12 → Console) for technical details.';
+      } else {
+        errorMessage = `Error: ${error.message}`;
+      }
+      
+      alert(errorMessage + '\n\nFor technical details, check the browser console (F12 → Console).');
     } finally {
       setSaving(false);
     }
