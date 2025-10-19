@@ -714,15 +714,19 @@ export class SharePointService {
         return false;
       }
 
-      // Prepare schedule metadata
+      // Prepare schedule metadata with proper SharePoint REST API format
       const scheduleData = {
+        __metadata: { type: 'SP.Data.ABASchedulesListItem' },
+        Title: `Schedule_${schedule.date}`,
         ScheduleDate: schedule.date,
-        IsFinalized: schedule.isFinalized,
+        IsFinalized: schedule.isFinalized || false,
         TotalAssignments: schedule.assignments.length,
         CreatedDate: new Date().toISOString(),
-        CreatedBy: this.currentUser?.displayName || 'Unknown',
+        CreatedBy: this.currentUser?.displayName || 'System',
         AssignmentsSummary: this.generateAssignmentsSummary(schedule.assignments)
       };
+      
+      console.log('💾 Prepared schedule data for SharePoint:', scheduleData);
 
       // Save schedule record to ABASchedules list
       const scheduleResponse = await fetch(
@@ -794,6 +798,8 @@ export class SharePointService {
   async saveAssignmentToHistory(assignment, scheduleId) {
     try {
       const assignmentData = {
+        __metadata: { type: 'SP.Data.ABAAssignmentsListItem' },
+        Title: `Assignment_${assignment.staffId}_${assignment.studentId}_${assignment.session}`,
         ScheduleID: scheduleId,
         ScheduleDate: assignment.date || new Date().toISOString().split('T')[0],
         StaffID: assignment.staffId,
