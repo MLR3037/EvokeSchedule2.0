@@ -123,22 +123,22 @@ export const ScheduleTableView = ({
     return assignment;
   };
 
-  const getPreAssignmentKey = (studentId, session) => {
-    return `${studentId}_${session}`;
+  const getPreAssignmentKey = (studentId, session, staffIndex = 0) => {
+    return `${studentId}_${session}_${staffIndex}`;
   };
 
-  const handleStaffSelection = (studentId, session, staffId) => {
-    const key = getPreAssignmentKey(studentId, session);
+  const handleStaffSelection = (studentId, session, staffId, staffIndex = 0) => {
+    const key = getPreAssignmentKey(studentId, session, staffIndex);
     setPreAssignments(prev => ({
       ...prev,
       [key]: staffId ? parseInt(staffId) : null
     }));
     
-    console.log(`📝 Staff selected: Student ${studentId}, Session ${session}, Staff ${staffId}`);
+    console.log(`📝 Staff selected: Student ${studentId}, Session ${session}, Staff ${staffId}, Index ${staffIndex}`);
   };
 
-  const handleLockAssignment = (studentId, session) => {
-    const key = getPreAssignmentKey(studentId, session);
+  const handleLockAssignment = (studentId, session, staffIndex = 0) => {
+    const key = getPreAssignmentKey(studentId, session, staffIndex);
     const staffId = preAssignments[key];
     
     console.log(`🔒 Locking assignment: Student ${studentId}, Session ${session}, Staff ${staffId}`);
@@ -178,17 +178,18 @@ export const ScheduleTableView = ({
     }
   };
 
-  const handleUnlockAssignment = (studentId, session) => {
-    const key = getPreAssignmentKey(studentId, session);
+  const handleUnlockAssignment = (studentId, session, staffIndex = 0) => {
+    const key = getPreAssignmentKey(studentId, session, staffIndex);
     
-    console.log(`🔓 Unlocking assignment: Student ${studentId}, Session ${session}`);
+    console.log(`🔓 Unlocking assignment: Student ${studentId}, Session ${session}, Index ${staffIndex}`);
     
-    // Find the current assignment
+    // Find the specific assignment by staff index
     const student = students.find(s => s.id === studentId);
-    const currentAssignment = getCurrentAssignment(student, session);
+    const studentAssignments = getStudentAssignments(student, session);
+    const currentAssignment = studentAssignments[staffIndex];
     
     if (currentAssignment) {
-      console.log(`🗑️ Removing assignment ID: ${currentAssignment.id}`);
+      console.log(`🗑️ Removing assignment ID: ${currentAssignment.id} (Index ${staffIndex})`);
       
       // Remove the actual assignment
       if (onAssignmentRemove) {
@@ -247,6 +248,29 @@ export const ScheduleTableView = ({
     );
   };
 
+  // Helper function to get the required staff count for a student in a session
+  const getRequiredStaffCount = (student, session) => {
+    const ratio = session === 'AM' ? student.ratioAM : student.ratioPM;
+    switch (ratio) {
+      case RATIOS.TWO_TO_ONE:
+        return 2;
+      case RATIOS.ONE_TO_ONE:
+      case RATIOS.ONE_TO_TWO:
+      default:
+        return 1;
+    }
+  };
+
+  // Helper function to get all assignments for a student in a session
+  const getStudentAssignments = (student, session) => {
+    if (!schedule || !schedule.assignments) return [];
+    return schedule.assignments.filter(assignment => 
+      assignment.studentId === student.id && 
+      assignment.session === session && 
+      assignment.program === student.program
+    );
+  };
+
   const renderStaffDropdown = (student, session) => {
     // Check if student is absent for this session
     if (!student.isAvailableForSession(session)) {
@@ -263,23 +287,20 @@ export const ScheduleTableView = ({
     }
 
     const team = getStudentTeam(student);
-    const currentAssignment = getCurrentAssignment(student, session);
-    const key = getPreAssignmentKey(student.id, session);
-    const isLocked = isAssignmentLocked(student.id, session);
+    const requiredStaffCount = getRequiredStaffCount(student, session);
+    const currentAssignments = getStudentAssignments(student, session);
     
-    // CRITICAL FIX: If there's a current assignment, use that staff ID
-    // Otherwise, use the pre-assignment state
-    const selectedStaffId = currentAssignment?.staffId || preAssignments[key] || '';
-
     console.log(`🔍 DROPDOWN RENDER for ${student.name} ${session}:`);
-    console.log(`  Current assignment:`, currentAssignment);
-    console.log(`  Selected staff ID:`, selectedStaffId);
-    console.log(`  Assignment exists:`, !!currentAssignment);
+    console.log(`  Required staff:`, requiredStaffCount);
+    console.log(`  Current assignments:`, currentAssignments.length);
 
     // FILTER TEAM TO ONLY AVAILABLE MEMBERS
     const availableTeamMembers = team.filter(teamMember => {
       // Always include currently assigned staff
-      if (currentAssignment && (teamMember.id === currentAssignment.staffId || teamMember.id == currentAssignment.staffId)) {
+      const isCurrentlyAssigned = currentAssignments.some(assignment => 
+        assignment.staffId === teamMember.id || assignment.staffId == teamMember.id
+      );
+      if (isCurrentlyAssigned) {
         return true;
       }
       
@@ -290,50 +311,72 @@ export const ScheduleTableView = ({
       return schedule.isStaffAvailable(staffMember.id, session, student.program);
     });
 
-    console.log(`  Available team members:`, availableTeamMembers.length);
-
     if (availableTeamMembers.length === 0) {
       return <span className="text-gray-400 text-sm">No available team</span>;
     }
 
+    // Render multiple dropdowns for 2:1 students
+    const dropdowns = [];
+    for (let staffIndex = 0; staffIndex < requiredStaffCount; staffIndex++) {
+      const currentAssignment = currentAssignments[staffIndex];
+      const key = `${student.id}_${session}_${staffIndex}`;
+      const isLocked = isAssignmentLocked(student.id, session);
+      
+      // Get the selected staff ID for this dropdown
+      const selectedStaffId = currentAssignment?.staffId || preAssignments[key] || '';
+
+      // Filter out staff already assigned to other dropdowns for this student/session
+      const assignedStaffIds = currentAssignments
+        .filter((_, idx) => idx !== staffIndex)
+        .map(a => a.staffId);
+      
+      const availableForThisDropdown = availableTeamMembers.filter(member => 
+        !assignedStaffIds.includes(member.id) || member.id === selectedStaffId
+      );
+
+      dropdowns.push(
+        <div key={key} className="flex items-center gap-2 mb-1">
+          <select
+            value={selectedStaffId}
+            onChange={(e) => handleStaffSelection(student.id, session, e.target.value, staffIndex)}
+            disabled={isLocked || !!currentAssignment}
+            className={`text-sm border rounded px-2 py-1 min-w-[160px] ${
+              isLocked || currentAssignment ? 'bg-gray-100 text-gray-600' : 'bg-white'
+            }`}
+          >
+            <option value="">Select staff...</option>
+            {availableForThisDropdown.map(staffMember => (
+              <option key={staffMember.id} value={staffMember.id}>
+                {staffMember.name} ({staffMember.role})
+              </option>
+            ))}
+          </select>
+          
+          {requiredStaffCount > 1 && (
+            <span className="text-xs text-gray-500">#{staffIndex + 1}</span>
+          )}
+          
+          {/* Show unlock button if there's a current assignment */}
+          {currentAssignment && (
+            <button
+              onClick={() => handleUnlockAssignment(student.id, session, staffIndex)}
+              className="p-1 text-red-600 hover:text-red-800"
+              title="Remove this assignment"
+            >
+              <Unlock className="w-4 h-4" />
+            </button>
+          )}
+        </div>
+      );
+    }
+
     return (
-      <div className="flex items-center gap-2">
-        <select
-          value={selectedStaffId}
-          onChange={(e) => handleStaffSelection(student.id, session, e.target.value)}
-          disabled={isLocked || !!currentAssignment} // Disable if locked OR already assigned
-          className={`text-sm border rounded px-2 py-1 ${
-            isLocked || currentAssignment ? 'bg-gray-100 text-gray-600' : 'bg-white'
-          }`}
-        >
-          <option value="">Select staff...</option>
-          {availableTeamMembers.map(staffMember => (
-            <option key={staffMember.id} value={staffMember.id}>
-              {staffMember.name} ({staffMember.role})
-            </option>
-          ))}
-        </select>
-        
-        {/* Show lock button only if staff is selected but not yet assigned */}
-        {selectedStaffId && !currentAssignment && !isLocked && (
-          <button
-            onClick={() => handleLockAssignment(student.id, session)}
-            className="p-1 text-green-600 hover:text-green-800"
-            title="Lock this assignment"
-          >
-            <Lock className="w-4 h-4" />
-          </button>
-        )}
-        
-        {/* Show unlock button if there's a current assignment */}
-        {currentAssignment && (
-          <button
-            onClick={() => handleUnlockAssignment(student.id, session)}
-            className="p-1 text-red-600 hover:text-red-800"
-            title="Remove this assignment"
-          >
-            <Unlock className="w-4 h-4" />
-          </button>
+      <div className="space-y-1">
+        {dropdowns}
+        {requiredStaffCount > 1 && (
+          <div className="text-xs text-gray-500 mt-1">
+            Requires {requiredStaffCount} staff
+          </div>
         )}
       </div>
     );
