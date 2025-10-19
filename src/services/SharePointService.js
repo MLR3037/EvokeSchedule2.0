@@ -7,15 +7,19 @@ import { PublicClientApplication } from '@azure/msal-browser';
  */
 export class SharePointService {
   constructor(config) {
+    console.log('🔧 SharePointService constructor received config:', config);
+    
     this.config = {
-      siteUrl: config.siteUrl || 'https://evokebehavioralhealthcom.sharepoint.com/sites/Clinistrators',
-      staffListName: config.staffListName || 'Staff',
-      studentsListName: config.studentsListName || 'Clients',
-      scheduleListName: config.scheduleListName || 'ABASchedules',
-      clientId: config.clientId,
-      tenantId: config.tenantId,
-      redirectUri: config.redirectUri
+      siteUrl: config?.siteUrl || 'https://evokebehavioralhealthcom.sharepoint.com/sites/Clinistrators',
+      staffListName: config?.staffListName || 'Staff',
+      studentsListName: config?.studentsListName || 'Clients',
+      scheduleListName: config?.scheduleListName || 'ABASchedules',
+      clientId: config?.clientId,
+      tenantId: config?.tenantId,
+      redirectUri: config?.redirectUri
     };
+    
+    console.log('🔧 SharePointService final config:', this.config);
     
     // MSAL Configuration
     this.msalConfig = {
@@ -642,6 +646,9 @@ export class SharePointService {
 
       // Enhanced debugging - First list all available lists
       console.log('🔍 Debugging: Listing all available SharePoint lists...');
+      console.log('🌐 Site URL:', this.siteUrl);
+      console.log('🔗 Full API URL:', `${this.siteUrl}/_api/web/lists`);
+      
       try {
         const allListsResponse = await this.retryFetch(
           `${this.siteUrl}/_api/web/lists`,
