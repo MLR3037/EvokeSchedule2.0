@@ -215,7 +215,9 @@ export class AutoAssignmentEngine {
           const replacementAssignment = new Assignment({
             id: SchedulingUtils.generateAssignmentId(),
             staffId: unassignedStaffMember.id,
+            staffName: unassignedStaffMember.name,
             studentId: currentStudent.id,
+            studentName: currentStudent.name,
             session: targetSession,
             program: targetProgram,
             date: schedule.date,
@@ -226,7 +228,9 @@ export class AutoAssignmentEngine {
           const newAssignment = new Assignment({
             id: SchedulingUtils.generateAssignmentId(),
             staffId: busyTeamMember.id,
+            staffName: busyTeamMember.name,
             studentId: targetStudent.id,
+            studentName: targetStudent.name,
             session: targetSession,
             program: targetProgram,
             date: schedule.date,
@@ -311,7 +315,9 @@ export class AutoAssignmentEngine {
         const assignment = new Assignment({
           id: SchedulingUtils.generateAssignmentId(),
           staffId: teamMember.id,
+          staffName: teamMember.name,
           studentId: targetStudent.id,
+          studentName: targetStudent.name,
           session: targetSession,
           program: targetProgram,
           date: schedule.date,
@@ -506,7 +512,9 @@ export class AutoAssignmentEngine {
     const replacementAssignment = new Assignment({
       id: SchedulingUtils.generateAssignmentId(),
       staffId: replacementStaff.id,
+      staffName: replacementStaff.name,
       studentId: currentStudent.id,
+      studentName: currentStudent.name,
       session: currentAssignment.session,
       program: currentAssignment.program,
       date: schedule.date,
@@ -518,7 +526,9 @@ export class AutoAssignmentEngine {
     const finalAssignment = new Assignment({
       id: SchedulingUtils.generateAssignmentId(),
       staffId: targetStaff.id,
+      staffName: targetStaff.name,
       studentId: finalStudent.id,
+      studentName: finalStudent.name,
       session: finalSession,
       program: finalProgram,
       date: schedule.date,
@@ -908,7 +918,9 @@ export class AutoAssignmentEngine {
       const assignment = new Assignment({
         id: SchedulingUtils.generateAssignmentId(),
         staffId: sortedStaff[i].id,
+        staffName: sortedStaff[i].name,
         studentId: student.id,
+        studentName: student.name,
         session,
         program,
         date: schedule.date,
@@ -967,7 +979,9 @@ export class AutoAssignmentEngine {
             const newAssignment = new Assignment({
               id: SchedulingUtils.generateAssignmentId(),
               staffId: assignment.staffId,
+              staffName: staffMember.name,
               studentId: student.id,
+              studentName: student.name,
               session,
               program,
               date: schedule.date,
@@ -1003,7 +1017,9 @@ export class AutoAssignmentEngine {
       const assignment = new Assignment({
         id: SchedulingUtils.generateAssignmentId(),
         staffId: sortedStaff[0].id,
+        staffName: sortedStaff[0].name,
         studentId: student.id,
+        studentName: student.name,
         session,
         program,
         date: schedule.date,
@@ -1360,7 +1376,9 @@ export class AutoAssignmentEngine {
       const assignment1 = new Assignment({
         id: SchedulingUtils.generateAssignmentId(),
         staffId: sharedStaffMember.id,
+        staffName: sharedStaffMember.name,
         studentId: student1.id,
+        studentName: student1.name,
         session,
         program,
         date: schedule.date,
@@ -1372,7 +1390,9 @@ export class AutoAssignmentEngine {
       const assignment2 = new Assignment({
         id: SchedulingUtils.generateAssignmentId(),
         staffId: sharedStaffMember.id,
+        staffName: sharedStaffMember.name,
         studentId: student2.id,
+        studentName: student2.name,
         session,
         program,
         date: schedule.date,
@@ -1411,7 +1431,9 @@ export class AutoAssignmentEngine {
           const assignment1 = new Assignment({
             id: SchedulingUtils.generateAssignmentId(),
             staffId: staffMember.id,
+            staffName: staffMember.name,
             studentId: student1.id,
+            studentName: student1.name,
             session,
             program,
             date: schedule.date,
@@ -1437,7 +1459,9 @@ export class AutoAssignmentEngine {
           const assignment2 = new Assignment({
             id: SchedulingUtils.generateAssignmentId(),
             staffId: staffMember.id,
+            staffName: staffMember.name,
             studentId: student2.id,
+            studentName: student2.name,
             session,
             program,
             date: schedule.date,
@@ -1495,7 +1519,9 @@ export class AutoAssignmentEngine {
     const replacementAssignment = new Assignment({
       id: SchedulingUtils.generateAssignmentId(),
       staffId: replacementStaff.id,
+      staffName: replacementStaff.name,
       studentId: assignedStudent.id,
+      studentName: assignedStudent.name,
       session: originalAssignment.session,
       program: originalAssignment.program,
       date: schedule.date,
@@ -1516,7 +1542,9 @@ export class AutoAssignmentEngine {
     const newAssignment = new Assignment({
       id: SchedulingUtils.generateAssignmentId(),
       staffId: currentStaff.id,
+      staffName: currentStaff.name,
       studentId: unassignedStudent.id,
+      studentName: unassignedStudent.name,
       session: originalAssignment.session,
       program: originalAssignment.program,
       date: schedule.date,
@@ -1543,12 +1571,15 @@ export class AutoAssignmentEngine {
     try {
       // Find the student who is currently assigned
       const assignedStudentId = originalAssignment.studentId;
+      const assignedStudentName = originalAssignment.studentName || '';
       
       // Create replacement assignment
       const replacementAssignment = new Assignment({
         id: SchedulingUtils.generateAssignmentId(),
         staffId: replacementStaff.id,
+        staffName: replacementStaff.name,
         studentId: assignedStudentId,
+        studentName: assignedStudentName,
         session: session,
         program: program,
         date: schedule.date,
@@ -1560,7 +1591,9 @@ export class AutoAssignmentEngine {
       const newAssignment = new Assignment({
         id: SchedulingUtils.generateAssignmentId(),
         staffId: currentStaff.id,
+        staffName: currentStaff.name,
         studentId: unassignedStudent.id,
+        studentName: unassignedStudent.name,
         session: session,
         program: program,
         date: schedule.date,

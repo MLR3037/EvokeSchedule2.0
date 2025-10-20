@@ -47,6 +47,7 @@ export const RATIOS = {
 export class Staff {
   constructor({
     id,
+    listItemId = null, // SharePoint list item ID for updates
     name,
     role,
     email = '',
@@ -60,6 +61,7 @@ export class Staff {
     absentFullDay = false // Absent for full day (both sessions)
   }) {
     this.id = id;
+    this.listItemId = listItemId; // For SharePoint updates
     this.name = name;
     this.role = role;
     this.email = email;
@@ -276,7 +278,9 @@ export class Assignment {
   constructor({
     id,
     staffId,
+    staffName = '',
     studentId,
+    studentName = '',
     session, // 'AM' or 'PM'
     program, // 'Primary' or 'Secondary'
     date,
@@ -285,7 +289,9 @@ export class Assignment {
   }) {
     this.id = id;
     this.staffId = staffId;
+    this.staffName = staffName;
     this.studentId = studentId;
+    this.studentName = studentName;
     this.session = session;
     this.program = program;
     this.date = date;
@@ -454,6 +460,9 @@ export class SchedulingUtils {
     return staff.filter(staffMember => {
       // Must be active
       if (!staffMember.isActive) return false;
+      
+      // Must not be absent for this session
+      if (!staffMember.isAvailableForSession(session)) return false;
       
       // Must be able to work this program
       if (!staffMember.canWorkProgram(program)) return false;

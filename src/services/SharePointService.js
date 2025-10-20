@@ -13,7 +13,7 @@ export class SharePointService {
       siteUrl: config?.siteUrl || 'https://evokebehavioralhealthcom.sharepoint.com/sites/Clinistrators',
       staffListName: config?.staffListName || 'Staff',
       studentsListName: config?.studentsListName || 'Clients',
-      scheduleListName: config?.scheduleListName || 'ABASchedules',
+      scheduleListName: config?.scheduleListName || 'ScheduleHistory',
       clientId: config?.clientId,
       tenantId: config?.tenantId,
       redirectUri: config?.redirectUri
@@ -377,6 +377,7 @@ export class SharePointService {
         
         const staff = new Staff({
           id: staffPerson ? staffPerson.Id : item.Id, // Use StaffPerson.Id for consistency with team data
+          listItemId: item.Id, // List item ID for updating this record
           name: staffName,
           role: item.Role || 'RBT',
           email: staffEmail,
@@ -546,15 +547,18 @@ export class SharePointService {
         headers['If-Match'] = '*';
       }
 
+      // Use listItemId for updates, fallback to id for backward compatibility
+      const itemId = staff.listItemId || staff.id;
+
       const url = isUpdate 
-        ? `${this.config.siteUrl}/_api/web/lists/getbytitle('${this.config.staffListName}')/items(${staff.id})`
+        ? `${this.config.siteUrl}/_api/web/lists/getbytitle('${this.config.staffListName}')/items(${itemId})`
         : `${this.config.siteUrl}/_api/web/lists/getbytitle('${this.config.staffListName}')/items`;
 
       const body = {
         __metadata: { type: 'SP.Data.StaffListItem' },
-        Title: staff.name,
+        // Only update editable fields - StaffPerson is a Person/Group field that can't be modified this way
+        // Title and Email are read-only as they come from StaffPerson
         Role: staff.role,
-        Email: staff.email,
         PrimaryProgram: staff.primaryProgram,
         SecondaryProgram: staff.secondaryProgram,
         IsActive: staff.isActive,
@@ -672,34 +676,32 @@ export class SharePointService {
           });
           
           // Check if our lists exist in the available lists
-          const abaSchedulesList = allListsData.d.results.find(list => 
-            list.Title === 'ABASchedules' || list.EntityTypeName === 'ABASchedules'
+          const scheduleHistoryList = allListsData.d.results.find(list => 
+            list.Title === 'ScheduleHistory' || list.EntityTypeName === 'ScheduleHistory'
           );
-          const abaAssignmentsList = allListsData.d.results.find(list => 
-            list.Title === 'ABAAssignments' || list.EntityTypeName === 'ABAAssignments'
+          const dailyAssignmentsList = allListsData.d.results.find(list => 
+            list.Title === 'DailyAssignments' || list.EntityTypeName === 'DailyAssignments'
           );
-          
-          console.log('� ABASchedules found in list:', !!abaSchedulesList);
-          console.log('🔍 ABAAssignments found in list:', !!abaAssignmentsList);
-          
-          if (abaSchedulesList) {
-            console.log('✅ ABASchedules list details:', {
-              Title: abaSchedulesList.Title,
-              EntityTypeName: abaSchedulesList.EntityTypeName,
-              Id: abaSchedulesList.Id
+
+          console.log('� ScheduleHistory found in list:', !!scheduleHistoryList);
+          console.log('🔍 DailyAssignments found in list:', !!dailyAssignmentsList);
+
+          if (scheduleHistoryList) {
+            console.log('✅ ScheduleHistory list details:', {
+              Title: scheduleHistoryList.Title,
+              EntityTypeName: scheduleHistoryList.EntityTypeName,
+              Id: scheduleHistoryList.Id
             });
           }
-          
-          if (abaAssignmentsList) {
-            console.log('✅ ABAAssignments list details:', {
-              Title: abaAssignmentsList.Title,
-              EntityTypeName: abaAssignmentsList.EntityTypeName,
-              Id: abaAssignmentsList.Id
+
+          if (dailyAssignmentsList) {
+            console.log('✅ DailyAssignments list details:', {
+              Title: dailyAssignmentsList.Title,
+              EntityTypeName: dailyAssignmentsList.EntityTypeName,
+              Id: dailyAssignmentsList.Id
             });
-          }
-          
-          // If both lists exist, continue with save operation
-          if (abaSchedulesList && abaAssignmentsList) {
+          }          // If both lists exist, continue with save operation
+          if (scheduleHistoryList && dailyAssignmentsList) {
             console.log('✅ Both required lists found! Proceeding with schedule save...');
           } else {
             console.log('❌ Required lists not found. Cannot save schedule history.');
@@ -728,9 +730,9 @@ export class SharePointService {
       
       console.log('💾 Prepared schedule data for SharePoint:', scheduleData);
 
-      // Save schedule record to ABASchedules list
+      // Save schedule record to ScheduleHistory list
       const scheduleResponse = await fetch(
-        `${this.siteUrl}/_api/web/lists/getbytitle('ABASchedules')/items`,
+        `${this.siteUrl}/_api/web/lists/getbytitle('ScheduleHistory')/items`,
         {
           method: 'POST',
           headers: {
@@ -803,7 +805,9 @@ export class SharePointService {
         ScheduleID: scheduleId,
         ScheduleDate: assignment.date || new Date().toISOString().split('T')[0],
         StaffID: assignment.staffId,
+        StaffName: assignment.staffName || '',
         StudentID: assignment.studentId,
+        StudentName: assignment.studentName || '',
         Session: assignment.session,
         Program: assignment.program,
         AssignmentType: assignment.type || 'Standard',
@@ -811,10 +815,10 @@ export class SharePointService {
         IsLocked: assignment.isLocked || false
       };
 
-      console.log('💾 Saving assignment to ABAAssignments list:', assignmentData);
+      console.log('💾 Saving assignment to DailyAssignments list:', assignmentData);
 
       const response = await fetch(
-        `${this.siteUrl}/_api/web/lists/getbytitle('ABAAssignments')/items`,
+        `${this.siteUrl}/_api/web/lists/getbytitle('DailyAssignments')/items`,
         {
           method: 'POST',
           headers: {
@@ -922,6 +926,162 @@ export class SharePointService {
     } catch (error) {
       console.error('Error checking consecutive days rule:', error);
       return { allowed: true, consecutiveDays: 0, error: error.message };
+    }
+  }
+
+  /**
+   * Save daily attendance records to history list
+   * This preserves attendance data before clearing it for the next day
+   */
+  async saveAttendanceHistory(staff, students, date) {
+    try {
+      if (!this.isAuthenticated()) {
+        console.error('Cannot save attendance history - not authenticated');
+        return false;
+      }
+
+      const dateStr = typeof date === 'string' ? date : date.toISOString().split('T')[0];
+      console.log(`💾 Saving attendance history for ${dateStr}...`);
+
+      const attendanceRecords = [];
+
+      // Create records for absent staff
+      staff.forEach(staffMember => {
+        if (staffMember.absentAM || staffMember.absentPM || staffMember.absentFullDay) {
+          attendanceRecords.push({
+            __metadata: { type: 'SP.Data.DailyAttendanceListItem' },
+            Title: `${staffMember.name}_${dateStr}`,
+            AttendanceDate: dateStr,
+            PersonType: 'Staff',
+            PersonID: staffMember.id,
+            PersonName: staffMember.name,
+            AbsentAM: staffMember.absentAM || false,
+            AbsentPM: staffMember.absentPM || false,
+            AbsentFullDay: staffMember.absentFullDay || false,
+            CreatedDate: new Date().toISOString()
+          });
+        }
+      });
+
+      // Create records for absent students
+      students.forEach(student => {
+        if (student.absentAM || student.absentPM || student.absentFullDay) {
+          attendanceRecords.push({
+            __metadata: { type: 'SP.Data.DailyAttendanceListItem' },
+            Title: `${student.name}_${dateStr}`,
+            AttendanceDate: dateStr,
+            PersonType: 'Student',
+            PersonID: student.id,
+            PersonName: student.name,
+            AbsentAM: student.absentAM || false,
+            AbsentPM: student.absentPM || false,
+            AbsentFullDay: student.absentFullDay || false,
+            CreatedDate: new Date().toISOString()
+          });
+        }
+      });
+
+      if (attendanceRecords.length === 0) {
+        console.log('✅ No absences to save for this date');
+        return true;
+      }
+
+      console.log(`📝 Saving ${attendanceRecords.length} attendance records...`);
+
+      // Get request digest once
+      const digest = await this.getRequestDigest();
+
+      // Save all records
+      const savePromises = attendanceRecords.map(record =>
+        fetch(
+          `${this.siteUrl}/_api/web/lists/getbytitle('DailyAttendance')/items`,
+          {
+            method: 'POST',
+            headers: {
+              'Authorization': `Bearer ${this.accessToken}`,
+              'Accept': 'application/json;odata=verbose',
+              'Content-Type': 'application/json;odata=verbose',
+              'X-RequestDigest': digest
+            },
+            body: JSON.stringify(record)
+          }
+        ).then(response => {
+          if (!response.ok) {
+            console.error(`Failed to save attendance record for ${record.PersonName}`);
+            return { success: false };
+          }
+          return { success: true };
+        }).catch(error => {
+          console.error(`Error saving attendance for ${record.PersonName}:`, error);
+          return { success: false };
+        })
+      );
+
+      const results = await Promise.all(savePromises);
+      const successCount = results.filter(r => r.success).length;
+      
+      console.log(`✅ Saved ${successCount}/${attendanceRecords.length} attendance records`);
+      return successCount === attendanceRecords.length;
+    } catch (error) {
+      console.error('Error saving attendance history:', error);
+      return false;
+    }
+  }
+
+  /**
+   * Clear attendance flags for all staff and students in SharePoint
+   * Should be called after saving attendance history
+   */
+  async clearAllAttendanceInSharePoint(staff, students) {
+    try {
+      if (!this.isAuthenticated()) {
+        console.error('Cannot clear attendance - not authenticated');
+        return false;
+      }
+
+      console.log('🧹 Clearing attendance flags in SharePoint...');
+
+      const clearPromises = [
+        // Clear staff attendance
+        ...staff.map(async (staffMember) => {
+          if (staffMember.absentAM || staffMember.absentPM || staffMember.absentFullDay) {
+            const clearedStaff = new Staff({
+              ...staffMember,
+              absentAM: false,
+              absentPM: false,
+              absentFullDay: false
+            });
+            return this.saveStaff(clearedStaff, true).catch(err => {
+              console.error(`Failed to clear attendance for staff ${staffMember.name}:`, err);
+              return { success: false };
+            });
+          }
+          return { success: true };
+        }),
+        // Clear student attendance
+        ...students.map(async (student) => {
+          if (student.absentAM || student.absentPM || student.absentFullDay) {
+            const clearedStudent = new Student({
+              ...student,
+              absentAM: false,
+              absentPM: false,
+              absentFullDay: false
+            });
+            return this.saveStudent(clearedStudent, true).catch(err => {
+              console.error(`Failed to clear attendance for student ${student.name}:`, err);
+              return { success: false };
+            });
+          }
+          return { success: true };
+        })
+      ];
+
+      await Promise.all(clearPromises);
+      console.log('✅ Attendance cleared in SharePoint');
+      return true;
+    } catch (error) {
+      console.error('Error clearing attendance in SharePoint:', error);
+      return false;
     }
   }
 }

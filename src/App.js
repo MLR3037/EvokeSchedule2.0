@@ -44,7 +44,7 @@ const ABAScheduler = () => {
     siteUrl: 'https://evokebehavioralhealthcom.sharepoint.com/sites/Clinistrators',
     staffListName: 'Staff',
     studentsListName: 'Clients',
-    scheduleListName: 'ABASchedules',
+    scheduleListName: 'ScheduleHistory',
     // Azure AD Configuration for external hosting
     clientId: 'c9f70b7e-8ffb-403d-af93-80b95b38a0bb',
     tenantId: 'a4adcc38-7b4e-485c-80f9-7d9ca4e83d64',
@@ -162,7 +162,6 @@ const ABAScheduler = () => {
 
   // Handle date change
   const handleDateChange = async (newDate) => {
-    setCurrentDate(newDate);
     if (isAuthenticated) {
       try {
         // Check if date actually changed (not just same day)
@@ -170,15 +169,40 @@ const ABAScheduler = () => {
         const newDateStr = newDate.toDateString();
         
         if (oldDateStr !== newDateStr) {
-          console.log('📅 Date changed, clearing attendance for new day...');
-          await clearAllAttendance();
+          console.log('📅 Date changed from', oldDateStr, 'to', newDateStr);
+          
+          // Save current day's attendance to history before changing date
+          console.log('💾 Saving attendance history for', oldDateStr);
+          await sharePointService.saveAttendanceHistory(staff, students, currentDate);
+          
+          // Clear attendance in SharePoint Staff/Students lists
+          console.log('🧹 Clearing attendance in SharePoint...');
+          await sharePointService.clearAllAttendanceInSharePoint(staff, students);
+          
+          // Reload staff and students from SharePoint to get fresh data with cleared attendance
+          console.log('🔄 Reloading staff and students...');
+          const [staffData, studentsData] = await Promise.all([
+            sharePointService.loadStaff(),
+            sharePointService.loadStudents()
+          ]);
+          
+          setStaff(staffData);
+          setStudents(studentsData);
+          console.log('✅ Staff and student data reloaded with cleared attendance');
         }
         
+        // Update the date state
+        setCurrentDate(newDate);
+        
+        // Load schedule for new date
         const scheduleData = await sharePointService.loadSchedule(newDate);
         setSchedule(scheduleData);
       } catch (error) {
         console.error('Error loading schedule for new date:', error);
       }
+    } else {
+      // Just update the date if not authenticated
+      setCurrentDate(newDate);
     }
   };
 
@@ -334,10 +358,16 @@ const handleAssignmentUnlock = (assignmentId) => {
 };
 
 const handleManualAssignment = ({ staffId, studentId, session, program }) => {
+  // Get staff and student names
+  const staffMember = staff.find(s => s.id === staffId);
+  const student = students.find(s => s.id === studentId);
+  
   const assignment = new Assignment({
     id: SchedulingUtils.generateAssignmentId(),
     staffId,
+    staffName: staffMember ? staffMember.name : '',
     studentId,
+    studentName: student ? student.name : '',
     session,
     program,
     date: currentDate,

@@ -385,7 +385,9 @@ export const ScheduleTableView = ({
   return (
     <div className="space-y-6">
       {programs.map(program => {
-        const programStudents = students.filter(s => s.program === program && s.isActive);
+        const programStudents = students
+          .filter(s => s.program === program && s.isActive)
+          .sort((a, b) => a.name.localeCompare(b.name));
         
         return (
           <div key={program} className="bg-white rounded-lg shadow-lg overflow-hidden">
@@ -499,7 +501,9 @@ export const ScheduleGrid = ({
   };
 
   const getStudentsForProgram = (program) => {
-    return students.filter(s => s.program === program && s.isActive);
+    return students
+      .filter(s => s.program === program && s.isActive)
+      .sort((a, b) => a.name.localeCompare(b.name));
   };
 
   const getAssignmentDisplay = (assignment) => {
@@ -735,11 +739,13 @@ const ManualAssignmentModal = ({
     schedule.isStaffAvailable(s.id, session, program)
   );
 
-  const availableStudents = students.filter(s => 
-    s.isActive && 
-    s.program === program &&
-    !schedule.getAssignmentsForSession(session, program).some(a => a.studentId === s.id)
-  );
+  const availableStudents = students
+    .filter(s => 
+      s.isActive && 
+      s.program === program &&
+      !schedule.getAssignmentsForSession(session, program).some(a => a.studentId === s.id)
+    )
+    .sort((a, b) => a.name.localeCompare(b.name));
 
   const handleAssign = () => {
     if (!selectedStaff || !selectedStudent) {
@@ -837,7 +843,9 @@ const ManualAssignmentModal = ({
  */
 export const SessionSummary = ({ schedule, staff, students, session, program }) => {
   const assignments = schedule.getAssignmentsForSession(session, program);
-  const programStudents = students.filter(s => s.program === program && s.isActive);
+  const programStudents = students
+    .filter(s => s.program === program && s.isActive)
+    .sort((a, b) => a.name.localeCompare(b.name));
   
   // Calculate absent staff and students for this session
   const absentStaff = staff.filter(s => s.isActive && !s.isAvailableForSession(session));
