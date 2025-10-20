@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
-import { Lock, Unlock, Users, Clock, AlertTriangle, CheckCircle } from 'lucide-react';
-import { SESSION_TIMES, RATIOS } from '../types/index.js';
+import { Lock, Unlock, Users, Clock, AlertTriangle, CheckCircle, GraduationCap, Star } from 'lucide-react';
+import { SESSION_TIMES, RATIOS, TRAINING_STATUS } from '../types/index.js';
 
 /**
  * Interactive Assignment Table - Pre-assignment with team dropdowns
@@ -339,9 +339,9 @@ export const ScheduleTableView = ({
           <select
             value={selectedStaffId}
             onChange={(e) => handleStaffSelection(student.id, session, e.target.value, staffIndex)}
-            disabled={isLocked || !!currentAssignment}
+            disabled={!!currentAssignment}
             className={`text-sm border rounded px-2 py-1 min-w-[160px] ${
-              isLocked || currentAssignment ? 'bg-gray-100 text-gray-600' : 'bg-white'
+              currentAssignment ? 'bg-gray-100 text-gray-600' : 'bg-white'
             }`}
           >
             <option value="">Select staff...</option>
@@ -356,11 +356,22 @@ export const ScheduleTableView = ({
             <span className="text-xs text-gray-500">#{staffIndex + 1}</span>
           )}
           
+          {/* Show lock button if staff is selected but not yet assigned */}
+          {!currentAssignment && selectedStaffId && (
+            <button
+              onClick={() => handleLockAssignment(student.id, session, staffIndex)}
+              className="p-1 text-green-600 hover:text-green-800 hover:bg-green-50 rounded"
+              title="Lock in this assignment"
+            >
+              <Lock className="w-4 h-4" />
+            </button>
+          )}
+          
           {/* Show unlock button if there's a current assignment */}
           {currentAssignment && (
             <button
               onClick={() => handleUnlockAssignment(student.id, session, staffIndex)}
-              className="p-1 text-red-600 hover:text-red-800"
+              className="p-1 text-red-600 hover:text-red-800 hover:bg-red-50 rounded"
               title="Remove this assignment"
             >
               <Unlock className="w-4 h-4" />
@@ -450,14 +461,27 @@ export const ScheduleTableView = ({
                         <td className="px-6 py-4">
                           <div className="flex flex-wrap gap-1">
                             {team.length > 0 ? (
-                              team.map((teamMember, idx) => (
-                                <span 
-                                  key={idx}
-                                  className={`px-2 py-1 rounded text-xs font-medium ${getRoleColor(teamMember.role)}`}
-                                >
-                                  {teamMember.name}
-                                </span>
-                              ))
+                              team.map((teamMember, idx) => {
+                                const trainingStatus = student.getStaffTrainingStatus ? student.getStaffTrainingStatus(teamMember.id) : TRAINING_STATUS.SOLO;
+                                return (
+                                  <div key={idx} className="flex items-center gap-1">
+                                    {trainingStatus === TRAINING_STATUS.TRAINER && (
+                                      <Star className="w-3.5 h-3.5 text-yellow-500 fill-yellow-500 flex-shrink-0" title="Trainer" />
+                                    )}
+                                    {trainingStatus === TRAINING_STATUS.OVERLAP_STAFF && (
+                                      <GraduationCap className="w-3.5 h-3.5 text-red-600 flex-shrink-0" title="Needs Staff Overlap" />
+                                    )}
+                                    {trainingStatus === TRAINING_STATUS.OVERLAP_BCBA && (
+                                      <GraduationCap className="w-3.5 h-3.5 text-yellow-600 flex-shrink-0" title="Needs BCBA Overlap" />
+                                    )}
+                                    <span 
+                                      className={`px-2 py-1 rounded text-xs font-medium ${getRoleColor(teamMember.role)}`}
+                                    >
+                                      {teamMember.name}
+                                    </span>
+                                  </div>
+                                );
+                              })
                             ) : (
                               <span className="text-gray-400 text-sm">No team assigned</span>
                             )}

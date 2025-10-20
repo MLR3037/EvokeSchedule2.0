@@ -411,7 +411,7 @@ export class SharePointService {
       // For multi-person picker fields, we need to expand them directly
       // Team is a multi-person picker field that references the Staff list
       const url = `${this.config.siteUrl}/_api/web/lists/getbytitle('${this.config.studentsListName}')/items?` +
-        `$select=Id,Title,Program,RatioAM,RatioPM,IsActive,PairedWith,Team/Id,Team/Title,Team/EMail,AbsentAM,AbsentPM,AbsentFullDay&` +
+        `$select=Id,Title,Program,RatioAM,RatioPM,IsActive,PairedWith,Team/Id,Team/Title,Team/EMail,AbsentAM,AbsentPM,AbsentFullDay,TeamTrainingStatus&` +
         `$expand=Team&` +
         `$top=5000`;
 
@@ -498,7 +498,8 @@ export class SharePointService {
         pairedWith: item.PairedWith || null,
         absentAM: item.AbsentAM === true,
         absentPM: item.AbsentPM === true,
-        absentFullDay: item.AbsentFullDay === true
+        absentFullDay: item.AbsentFullDay === true,
+        teamTrainingStatus: item.TeamTrainingStatus ? JSON.parse(item.TeamTrainingStatus) : {}
       });
 
       if (team.length > 0) {
@@ -612,7 +613,8 @@ export class SharePointService {
         TeamId: { results: teamResults }, // People Picker field
         AbsentAM: student.absentAM || false,
         AbsentPM: student.absentPM || false,
-        AbsentFullDay: student.absentFullDay || false
+        AbsentFullDay: student.absentFullDay || false,
+        TeamTrainingStatus: student.teamTrainingStatus ? JSON.stringify(student.teamTrainingStatus) : '{}'
       };
 
       const response = await this.makeRequest(url, {

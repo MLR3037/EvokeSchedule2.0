@@ -164,6 +164,15 @@ export class Staff {
   }
 }
 
+// Training status constants
+export const TRAINING_STATUS = {
+  CERTIFIED: 'certified', // Fully trained, can work solo
+  OVERLAP_BCBA: 'overlap-bcba', // Needs BCBA overlaps
+  OVERLAP_STAFF: 'overlap-staff', // Needs staff overlaps
+  TRAINER: 'trainer', // Designated trainer for this student
+  SOLO: 'solo' // Default - working independently (legacy/no training needed)
+};
+
 /**
  * Student/Kid data structure
  */
@@ -181,7 +190,8 @@ export class Student {
     pairedWith = null, // ID of paired student (for shared staff assignments)
     absentAM = false, // Absent for AM session
     absentPM = false, // Absent for PM session
-    absentFullDay = false // Absent for full day (both sessions)
+    absentFullDay = false, // Absent for full day (both sessions)
+    teamTrainingStatus = {} // Training status for each team member: { staffId: 'certified' | 'overlap-bcba' | 'overlap-staff' }
   }) {
     this.id = id;
     this.name = name;
@@ -207,6 +217,9 @@ export class Student {
     this.absentFullDay = absentFullDay;
     this.absentAM = absentFullDay ? true : absentAM; // If full day absent, AM is also absent
     this.absentPM = absentFullDay ? true : absentPM; // If full day absent, PM is also absent
+    
+    // Training status tracking: { staffId: status }
+    this.teamTrainingStatus = teamTrainingStatus || {};
   }
 
   requiresMultipleStaff(session = 'AM') {
@@ -268,6 +281,34 @@ export class Student {
     const found = students.find(s => s.id == this.pairedWith || s.id === this.pairedWith) || null;
     
     return found;
+  }
+
+  /**
+   * Get training status for a specific staff member
+   * @param {number|string} staffId - Staff member ID
+   * @returns {string} Training status ('certified', 'overlap-bcba', 'overlap-staff', or 'solo')
+   */
+  getStaffTrainingStatus(staffId) {
+    return this.teamTrainingStatus[staffId] || TRAINING_STATUS.SOLO;
+  }
+
+  /**
+   * Update training status for a staff member
+   * @param {number|string} staffId - Staff member ID
+   * @param {string} status - New training status
+   */
+  setStaffTrainingStatus(staffId, status) {
+    this.teamTrainingStatus[staffId] = status;
+  }
+
+  /**
+   * Check if a staff member is fully certified for this student
+   * @param {number|string} staffId - Staff member ID
+   * @returns {boolean} True if staff is certified
+   */
+  isStaffCertified(staffId) {
+    const status = this.getStaffTrainingStatus(staffId);
+    return status === TRAINING_STATUS.CERTIFIED || status === TRAINING_STATUS.SOLO;
   }
 }
 

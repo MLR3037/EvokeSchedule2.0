@@ -12,7 +12,8 @@ import {
   Play,
   Settings,
   BarChart3,
-  Clock
+  Clock,
+  GraduationCap
 } from 'lucide-react';
 
 // Import our new components and services
@@ -35,6 +36,7 @@ import {
 } from './components/DataManagementComponents.js';
 import TeamManagement from './components/TeamManagement.js';
 import AttendanceManagement from './components/AttendanceManagement.js';
+import TrainingManagement from './components/TrainingManagement.js';
 import { runTests } from './tests/SchedulingTestSuite.js';
 import ErrorBoundary from './components/ErrorBoundary.js';
 
@@ -619,6 +621,38 @@ const handleAssignmentRemove = (assignmentId) => {
     }
   };
 
+  // Training management
+  const handleUpdateStudentTrainingStatus = async (studentId, staffId, newStatus) => {
+    try {
+      const student = students.find(s => s.id === studentId);
+      if (!student) {
+        console.error('Student not found:', studentId);
+        return;
+      }
+
+      // Update local state immediately
+      const updatedStudents = students.map(s => {
+        if (s.id === studentId) {
+          const updatedStudent = new Student({ ...s });
+          updatedStudent.setStaffTrainingStatus(staffId, newStatus);
+          return updatedStudent;
+        }
+        return s;
+      });
+      setStudents(updatedStudents);
+
+      // Save to SharePoint in background
+      const updatedStudent = new Student({ ...student });
+      updatedStudent.setStaffTrainingStatus(staffId, newStatus);
+      await sharePointService.saveStudent(updatedStudent, true);
+      
+      console.log('✅ Training status updated:', student.name, staffId, newStatus);
+    } catch (error) {
+      console.error('Error updating training status:', error);
+      console.warn('⚠️ Training status updated locally but not saved to SharePoint');
+    }
+  };
+
   // Validation change handler
   const handleValidationChange = (results) => {
     setValidationResults(results);
@@ -773,6 +807,7 @@ const handleAssignmentRemove = (assignmentId) => {
               { id: 'students', label: 'Students', icon: Users },
               { id: 'teams', label: 'Teams', icon: Users },
               { id: 'attendance', label: 'Attendance', icon: Calendar },
+              { id: 'training', label: 'Training', icon: GraduationCap },
               { id: 'validation', label: 'Validation', icon: BarChart3 },
               { id: 'rules', label: 'Rules', icon: Settings },
               { id: 'tests', label: 'Tests', icon: Play }
@@ -1045,6 +1080,7 @@ const handleAssignmentRemove = (assignmentId) => {
             )}
 
             {/* Attendance Tab */}
+            {/* Attendance Tab */}
             {activeTab === 'attendance' && (
               <AttendanceManagement
                 staff={staff}
@@ -1053,6 +1089,15 @@ const handleAssignmentRemove = (assignmentId) => {
                 onUpdateStaffAttendance={handleUpdateStaffAttendance}
                 onUpdateStudentAttendance={handleUpdateStudentAttendance}
                 onResetAllAttendance={clearAllAttendance}
+              />
+            )}
+
+            {/* Training Tab */}
+            {activeTab === 'training' && (
+              <TrainingManagement
+                staff={staff}
+                students={students}
+                onUpdateStudentTrainingStatus={handleUpdateStudentTrainingStatus}
               />
             )}
 
