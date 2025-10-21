@@ -528,13 +528,14 @@ export class SharePointService {
       return new Schedule({ 
         date, 
         assignments: [], 
+        traineeAssignments: [],
         lockedAssignments: new Set(),
         isFinalized: false 
       });
       
     } catch (error) {
       console.error('Error in loadSchedule:', error);
-      return new Schedule({ date });
+      return new Schedule({ date, traineeAssignments: [] });
     }
   }
 
@@ -727,7 +728,8 @@ export class SharePointService {
         TotalAssignments: schedule.assignments.length,
         CreatedDate: new Date().toISOString(),
         CreatedBy: this.currentUser?.displayName || 'System',
-        AssignmentsSummary: this.generateAssignmentsSummary(schedule.assignments)
+        AssignmentsSummary: this.generateAssignmentsSummary(schedule.assignments),
+        TraineeAssignments: schedule.traineeAssignments ? JSON.stringify(schedule.traineeAssignments) : '[]'
       };
       
       console.log('💾 Prepared schedule data for SharePoint:', scheduleData);

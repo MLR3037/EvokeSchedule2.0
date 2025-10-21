@@ -23,6 +23,7 @@ export const ScheduleTableView = ({
   
   const [preAssignments, setPreAssignments] = useState({});
   const [lockedAssignments, setLockedAssignments] = useState(new Set());
+  const [traineeAssignments, setTraineeAssignments] = useState({});
 
   // Sync component state when schedule changes
   useEffect(() => {
@@ -304,9 +305,25 @@ export const ScheduleTableView = ({
         return true;
       }
       
+      // EXCLUDE staff who are in training for THIS student (overlap-staff or overlap-bcba)
+      // They should only appear in the trainee dropdown, not the regular staff dropdown
+      const trainingStatus = student.getStaffTrainingStatus ? student.getStaffTrainingStatus(teamMember.id) : TRAINING_STATUS.SOLO;
+      const isInTraining = trainingStatus === TRAINING_STATUS.OVERLAP_STAFF || trainingStatus === TRAINING_STATUS.OVERLAP_BCBA;
+      
+      if (isInTraining) {
+        console.log(`🚫 Excluding ${teamMember.name} from regular staff dropdown - in training (${trainingStatus})`);
+        return false; // Don't show in regular dropdown if they're in training
+      }
+      
       // Check if staff is available for this session
       const staffMember = staff.find(s => s.id === teamMember.id || s.id == teamMember.id);
       if (!staffMember) return false;
+      
+      // EXCLUDE staff who are absent for this session
+      if (!staffMember.isAvailableForSession(session)) {
+        console.log(`🚫 Excluding ${teamMember.name} from dropdown - absent for ${session}`);
+        return false;
+      }
       
       return schedule.isStaffAvailable(staffMember.id, session, student.program);
     });
@@ -393,6 +410,134 @@ export const ScheduleTableView = ({
     );
   };
 
+  const renderTraineeDropdown = (student, session) => {
+    // Check if student is absent for this session
+    if (!student.isAvailableForSession(session)) {
+      return null;
+    }
+
+    const team = getStudentTeam(student);
+    const traineeKey = `${student.id}_${session}`;
+    const selectedTraineeId = traineeAssignments[traineeKey] || '';
+    
+    // Filter team to ONLY show staff who are in training (overlap-staff or overlap-bcba status)
+    const traineesInTraining = team.filter(teamMember => {
+      const trainingStatus = student.getStaffTrainingStatus ? student.getStaffTrainingStatus(teamMember.id) : TRAINING_STATUS.SOLO;
+      const isInTraining = trainingStatus === TRAINING_STATUS.OVERLAP_STAFF || trainingStatus === TRAINING_STATUS.OVERLAP_BCBA;
+      
+      console.log(`🎓 Checking ${teamMember.name} for trainee dropdown:`, {
+        trainingStatus,
+        isInTraining,
+        isOverlapStaff: trainingStatus === TRAINING_STATUS.OVERLAP_STAFF,
+        isOverlapBCBA: trainingStatus === TRAINING_STATUS.OVERLAP_BCBA
+      });
+      
+      return isInTraining;
+    }).filter(teamMember => {
+      // Always show if currently selected
+      if (selectedTraineeId && teamMember.id == selectedTraineeId) {
+        return true;
+      }
+      // Check if staff is available for this session
+      const staffMember = staff.find(s => s.id === teamMember.id || s.id == teamMember.id);
+      if (!staffMember) return false;
+      
+      // EXCLUDE staff who are absent for this session
+      if (!staffMember.isAvailableForSession(session)) {
+        console.log(`🚫 Excluding ${teamMember.name} from trainee dropdown - absent for ${session}`);
+        return false;
+      }
+      
+      return schedule.isStaffAvailable(staffMember.id, session, student.program);
+    });
+
+    console.log(`🎓 Trainees available for ${student.name} ${session}:`, traineesInTraining.map(t => t.name));
+
+    const handleTraineeChange = (e) => {
+      const staffId = e.target.value ? parseInt(e.target.value) : null;
+      console.log(`🎓 Trainee selected: ${staffId} for ${student.name} ${session}`);
+      
+      if (staffId) {
+        // Update local state
+        setTraineeAssignments(prev => ({
+          ...prev,
+          [traineeKey]: staffId
+        }));
+        
+        // Update schedule object
+        const traineeAssignment = {
+          staffId: staffId,
+          studentId: student.id,
+          session: session,
+          program: student.program,
+          isTrainee: true
+        };
+        
+        if (schedule.removeTraineeAssignment) {
+          schedule.removeTraineeAssignment(student.id, session);
+        }
+        if (schedule.addTraineeAssignment) {
+          schedule.addTraineeAssignment(traineeAssignment);
+        }
+        
+        console.log('✅ Trainee assigned:', traineeAssignment);
+      } else {
+        // Remove trainee
+        setTraineeAssignments(prev => {
+          const newState = { ...prev };
+          delete newState[traineeKey];
+          return newState;
+        });
+        
+        if (schedule.removeTraineeAssignment) {
+          schedule.removeTraineeAssignment(student.id, session);
+        }
+        
+        console.log('🗑️ Trainee removed');
+      }
+    };
+
+    const handleRemoveTrainee = () => {
+      setTraineeAssignments(prev => {
+        const newState = { ...prev };
+        delete newState[traineeKey];
+        return newState;
+      });
+      
+      if (schedule.removeTraineeAssignment) {
+        schedule.removeTraineeAssignment(student.id, session);
+      }
+    };
+
+    return (
+      <div className="mt-2 pt-2 border-t border-gray-200">
+        <div className="flex items-center gap-2">
+          <select
+            value={selectedTraineeId}
+            onChange={handleTraineeChange}
+            className="text-sm border rounded px-2 py-1 min-w-[160px] bg-orange-50 border-orange-300"
+          >
+            <option value="">Trainee (optional)...</option>
+            {traineesInTraining.map(staffMember => (
+              <option key={staffMember.id} value={staffMember.id}>
+                🎓 {staffMember.name} ({staffMember.role})
+              </option>
+            ))}
+          </select>
+          {selectedTraineeId && (
+            <button
+              onClick={handleRemoveTrainee}
+              className="p-1 text-orange-600 hover:text-orange-800 hover:bg-orange-50 rounded"
+              title="Remove trainee"
+            >
+              <Unlock className="w-4 h-4" />
+            </button>
+          )}
+        </div>
+      </div>
+    );
+  };
+
   return (
     <div className="space-y-6">
       {programs.map(program => {
@@ -452,10 +597,12 @@ export const ScheduleTableView = ({
                         
                         <td className="px-6 py-4 whitespace-nowrap border-r">
                           {renderStaffDropdown(student, 'AM')}
+                          {renderTraineeDropdown(student, 'AM')}
                         </td>
                         
                         <td className="px-6 py-4 whitespace-nowrap border-r">
                           {renderStaffDropdown(student, 'PM')}
+                          {renderTraineeDropdown(student, 'PM')}
                         </td>
                         
                         <td className="px-6 py-4">
@@ -536,6 +683,9 @@ export const ScheduleGrid = ({
     
     if (!staffMember || !student) return null;
 
+    // Get training status for this staff member on this student
+    const trainingStatus = student.getStaffTrainingStatus ? student.getStaffTrainingStatus(staffMember.id) : TRAINING_STATUS.SOLO;
+
     return {
       id: assignment.id,
       staffName: staffMember.name,
@@ -543,7 +693,8 @@ export const ScheduleGrid = ({
       staffRole: staffMember.role,
       ratio: student.ratio,
       isLocked: schedule.isAssignmentLocked(assignment.id),
-      assignedBy: assignment.assignedBy
+      assignedBy: assignment.assignedBy,
+      trainingStatus: trainingStatus
     };
   };
 
@@ -682,6 +833,11 @@ const AssignmentCard = ({ assignment, onLock, onUnlock, onRemove }) => {
     return colors[role] || 'bg-gray-100 text-gray-800';
   };
 
+  // Check if this is a trainee working solo (needs warning)
+  const isTraineeSolo = (assignment.trainingStatus === TRAINING_STATUS.OVERLAP_STAFF || 
+                         assignment.trainingStatus === TRAINING_STATUS.OVERLAP_BCBA) && 
+                        assignment.ratio === RATIOS.ONE_TO_ONE;
+
   return (
     <div className={`border rounded-lg p-3 transition-all hover:shadow-md ${
       assignment.isLocked ? 'bg-yellow-50 border-yellow-300' : 'bg-white border-gray-200'
@@ -689,7 +845,21 @@ const AssignmentCard = ({ assignment, onLock, onUnlock, onRemove }) => {
       <div className="flex items-start justify-between mb-2">
         <div className="flex-1">
           <div className="font-medium text-gray-900">{assignment.studentName}</div>
-          <div className="text-sm text-gray-600">{assignment.staffName}</div>
+          <div className="text-sm text-gray-900 flex items-center gap-1">
+            {assignment.trainingStatus === TRAINING_STATUS.TRAINER && (
+              <Star className="w-3.5 h-3.5 text-yellow-500 fill-yellow-500 flex-shrink-0" title="Trainer" />
+            )}
+            {assignment.trainingStatus === TRAINING_STATUS.OVERLAP_STAFF && (
+              <GraduationCap className="w-3.5 h-3.5 text-red-600 flex-shrink-0" title="Needs Staff Overlap" />
+            )}
+            {assignment.trainingStatus === TRAINING_STATUS.OVERLAP_BCBA && (
+              <GraduationCap className="w-3.5 h-3.5 text-yellow-600 flex-shrink-0" title="Needs BCBA Overlap" />
+            )}
+            {isTraineeSolo && (
+              <AlertTriangle className="w-3.5 h-3.5 text-orange-500 flex-shrink-0" title="Warning: Trainee assigned solo" />
+            )}
+            <span className="font-medium">{assignment.staffName}</span>
+          </div>
         </div>
         <div className="flex items-center gap-1">
           <button

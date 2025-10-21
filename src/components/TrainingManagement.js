@@ -1,5 +1,5 @@
 import React, { useState, useMemo } from 'react';
-import { GraduationCap, CheckCircle, Users, Search, ChevronRight, Star } from 'lucide-react';
+import { GraduationCap, Users, Search, ChevronRight, Star } from 'lucide-react';
 import { TRAINING_STATUS } from '../types/index.js';
 
 /**
@@ -175,11 +175,7 @@ const TrainingManagement = ({ students, staff, onUpdateStudentTrainingStatus }) 
             </div>
             <div className="flex items-start gap-2">
               <ChevronRight className="w-4 h-4 mt-0.5 flex-shrink-0" />
-              <span><strong className="text-green-700">Certified:</strong> Staff has completed all training and is cleared to work solo with this student</span>
-            </div>
-            <div className="flex items-start gap-2">
-              <ChevronRight className="w-4 h-4 mt-0.5 flex-shrink-0" />
-              <span><strong className="text-gray-700">Solo:</strong> Staff member already established (no training tracking needed)</span>
+              <span><strong className="text-gray-700">Solo:</strong> Staff member can work independently with this student</span>
             </div>
           </div>
         </div>
@@ -291,16 +287,12 @@ const TrainingManagement = ({ students, staff, onUpdateStudentTrainingStatus }) 
                                 <option value={TRAINING_STATUS.TRAINER}>⭐ Trainer</option>
                                 <option value={TRAINING_STATUS.OVERLAP_STAFF}>🔴 Staff Overlap</option>
                                 <option value={TRAINING_STATUS.OVERLAP_BCBA}>🟡 BCBA Overlap</option>
-                                <option value={TRAINING_STATUS.CERTIFIED}>🟢 Certified</option>
                                 <option value={TRAINING_STATUS.SOLO}>Solo</option>
                               </select>
                             </div>
 
                             {currentStatus === TRAINING_STATUS.TRAINER && (
                               <Star className="w-6 h-6 text-yellow-500 fill-yellow-500 flex-shrink-0" />
-                            )}
-                            {currentStatus === TRAINING_STATUS.CERTIFIED && (
-                              <CheckCircle className="w-6 h-6 text-green-600 flex-shrink-0" />
                             )}
                             {currentStatus === TRAINING_STATUS.OVERLAP_STAFF && (
                               <GraduationCap className="w-6 h-6 text-red-600 flex-shrink-0" />

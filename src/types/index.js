@@ -352,11 +352,13 @@ export class Schedule {
   constructor({
     date,
     assignments = [],
+    traineeAssignments = [], // Array of trainee assignments (separate from regular assignments)
     lockedAssignments = new Set(),
     isFinalized = false
   }) {
     this.date = date;
     this.assignments = assignments; // Array of Assignment objects
+    this.traineeAssignments = traineeAssignments; // Array of trainee assignments
     this.lockedAssignments = lockedAssignments; // Set of assignment IDs that are manually locked
     this.isFinalized = isFinalized;
   }
@@ -380,7 +382,13 @@ export class Schedule {
     // Check for conflicts in the SAME SESSION across ALL PROGRAMS
     // A staff member can't work both Primary and Secondary in the same session
     const sessionAssignments = this.assignments.filter(a => a.session === session);
-    return !sessionAssignments.some(a => a.staffId === staffId);
+    const isInRegularAssignment = sessionAssignments.some(a => a.staffId === staffId);
+    
+    // Also check if staff is assigned as a trainee in this session
+    const sessionTraineeAssignments = this.traineeAssignments.filter(a => a.session === session);
+    const isInTraineeAssignment = sessionTraineeAssignments.some(a => a.staffId === staffId);
+    
+    return !isInRegularAssignment && !isInTraineeAssignment;
   }
 
   hasStaffWorkedWithStudentToday(staffId, studentId) {
@@ -407,6 +415,23 @@ export class Schedule {
 
   isAssignmentLocked(assignmentId) {
     return this.lockedAssignments.has(assignmentId);
+  }
+
+  // Trainee assignment methods
+  addTraineeAssignment(traineeAssignment) {
+    this.traineeAssignments.push(traineeAssignment);
+  }
+
+  removeTraineeAssignment(studentId, session) {
+    this.traineeAssignments = this.traineeAssignments.filter(
+      a => !(a.studentId === studentId && a.session === session)
+    );
+  }
+
+  getTraineeAssignment(studentId, session) {
+    return this.traineeAssignments.find(
+      a => a.studentId === studentId && a.session === session
+    );
   }
 }
 
@@ -513,6 +538,14 @@ export class SchedulingUtils {
       
       // Must not have worked with this student already today
       if (schedule.hasStaffWorkedWithStudentToday(staffMember.id, student.id)) return false;
+      
+      // EXCLUDE staff who are in training for THIS specific student
+      // They should only be manually assigned via the trainee dropdown
+      const trainingStatus = student.getStaffTrainingStatus ? student.getStaffTrainingStatus(staffMember.id) : TRAINING_STATUS.SOLO;
+      if (trainingStatus === TRAINING_STATUS.OVERLAP_STAFF || trainingStatus === TRAINING_STATUS.OVERLAP_BCBA) {
+        // This staff member is in training with this student - don't auto-assign them
+        return false;
+      }
       
       // Check direct session eligibility - supervisory roles can't do direct sessions
       if (!staffMember.canDoDirectSessions()) {
