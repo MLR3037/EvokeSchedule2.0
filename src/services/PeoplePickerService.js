@@ -209,6 +209,12 @@ export class PeoplePickerService {
       });
 
       if (!response.ok) {
+        // If 401 (Unauthorized), user doesn't have permission to query all site users
+        // This is common for non-admin users - gracefully handle it
+        if (response.status === 401) {
+          console.warn('User does not have permission to query all site users. Using limited fallback.');
+          return []; // Return empty array - search will work with searchUsers instead
+        }
         throw new Error(`Failed to get site users: ${response.status}`);
       }
 
@@ -226,7 +232,9 @@ export class PeoplePickerService {
         .sort((a, b) => a.title.localeCompare(b.title)); // Sort alphabetically
     } catch (error) {
       console.error('Error getting all site users:', error);
-      throw error;
+      // Don't throw - return empty array so the app can continue
+      // Users can still search for people using the searchUsers method
+      return [];
     }
   }
 

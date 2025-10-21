@@ -59,13 +59,19 @@ export const PeoplePicker = ({
     setIsSearching(true);
     
     try {
-      // Filter from all users locally for better performance
-      const filtered = allUsers.filter(user => 
-        user.title.toLowerCase().includes(text.toLowerCase()) ||
-        user.email.toLowerCase().includes(text.toLowerCase())
-      ).slice(0, 10); // Limit to 10 results
-
-      setSearchResults(filtered);
+      // If we have all users loaded, filter locally (better performance)
+      if (allUsers.length > 0) {
+        const filtered = allUsers.filter(user => 
+          user.title.toLowerCase().includes(text.toLowerCase()) ||
+          user.email.toLowerCase().includes(text.toLowerCase())
+        ).slice(0, 10); // Limit to 10 results
+        setSearchResults(filtered);
+      } else {
+        // Fallback to SharePoint search API if we couldn't load all users
+        // This works even for users without site admin permissions
+        const results = await peoplePickerService.searchUsers(text);
+        setSearchResults(results.slice(0, 10)); // Limit to 10 results
+      }
     } catch (error) {
       console.error('Error searching users:', error);
       setSearchResults([]);
@@ -276,6 +282,13 @@ export const StaffPeoplePicker = ({
     try {
       const allUsers = await peoplePickerService.getAllSiteUsers(true);
       
+      // If no users returned (permission denied), we'll rely on search instead
+      if (allUsers.length === 0) {
+        console.warn('Could not load all users - will use search-based filtering');
+        setFilteredUsers([]);
+        return;
+      }
+      
       // Filter to only users who are in the staff list
       const staffUsers = allUsers.filter(user => 
         allStaff.some(staff => 
@@ -287,6 +300,8 @@ export const StaffPeoplePicker = ({
       setFilteredUsers(staffUsers);
     } catch (error) {
       console.error('Error loading staff users:', error);
+      // Don't show error to user - search will still work
+      setFilteredUsers([]);
     }
   };
 

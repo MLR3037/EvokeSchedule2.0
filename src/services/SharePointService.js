@@ -285,6 +285,8 @@ export class SharePointService {
         this.requestDigest = data.d.GetContextWebInformation.FormDigestValue;
         this.digestExpiry = Date.now() + (data.d.GetContextWebInformation.FormDigestTimeoutSeconds * 1000) - 60000;
         return this.requestDigest;
+      } else if (response.status === 401) {
+        throw new Error('Authentication failed. Please make sure you are logged in and have access to this SharePoint site.');
       } else {
         throw new Error(`Failed to get request digest: ${response.status}`);
       }
