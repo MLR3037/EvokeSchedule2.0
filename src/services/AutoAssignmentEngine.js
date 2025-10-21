@@ -1075,33 +1075,24 @@ export class AutoAssignmentEngine {
     // PRIORITY 1: Only use preferred direct service providers (RBTs, BSs) if available
     const preferredStaff = availableStaff.filter(staff => staff.isPreferredDirectService());
 
-    console.log(`🔍 STAFF PRIORITY DEBUG for ${student.name}:`);
-    console.log(`  Total team staff: ${availableStaff.length}`);
-    console.log(`  Preferred staff (RBTs/BSs): ${preferredStaff.length}`);
-    console.log(`  Preferred staff list:`, preferredStaff.map(s => `${s.name} (${s.role})`));
-
     // Use preferred staff if available, otherwise fall back to all available staff
     const staffToUse = preferredStaff.length > 0 ? preferredStaff : availableStaff;
 
-    if (preferredStaff.length === 0) {
-      console.log(`⚠️ WARNING: No preferred staff (RBTs/BSs) available for ${student.name}, using fallback staff`);
-    }
-
-    // For AM sessions, use standard hierarchy-based sorting with LIGHT randomization
-    // For PM sessions, use MORE randomization to distribute workload
-    const randomizationFactor = session === 'PM' ? 2.0 : 0.8;
+    // ENHANCED: Stronger randomization to create variation between auto-assign runs
+    // Higher factor means more variation, but still respects team membership and role priorities
+    const randomizationFactor = session === 'PM' ? 3.5 : 2.5;
 
     const staffWithPriority = [...staffToUse].map(staff => ({
       staff,
       isTeamMember: student.teamIds.includes(staff.id),
       roleLevel: staff.getRoleLevel(),
       isPreferred: staff.isPreferredDirectService(),
-      // Add randomization that scales with session
+      // Stronger random factor for more variation between runs
       randomFactor: Math.random() * randomizationFactor
     }));
 
     return staffWithPriority.sort((a, b) => {
-      // Team members first (always strict)
+      // Team members first (always strict - this ensures quality)
       if (a.isTeamMember && !b.isTeamMember) return -1;
       if (!a.isTeamMember && b.isTeamMember) return 1;
 
@@ -1109,19 +1100,14 @@ export class AutoAssignmentEngine {
       if (a.isPreferred && !b.isPreferred) return -1;
       if (!a.isPreferred && b.isPreferred) return 1;
 
-      // Within same preference level, mix hierarchy with randomization
+      // ENHANCED: Within same preference/team level, use randomization to create variation
+      // This allows different staff to be selected on each auto-assign click
       const aScore = a.roleLevel + a.randomFactor;
       const bScore = b.roleLevel + b.randomFactor;
 
-      // For PM, allow more variance
-      const threshold = session === 'PM' ? 1.5 : 0.3;
-
-      if (Math.abs(aScore - bScore) > threshold) {
-        return aScore - bScore;
-      }
-
-      // If very close, alphabetical for consistency
-      return a.staff.name.localeCompare(b.staff.name);
+      // Use randomized score directly (no threshold filtering)
+      // This ensures variation while still respecting role hierarchy through roleLevel
+      return aScore - bScore;
     }).map(item => item.staff);
   }
 

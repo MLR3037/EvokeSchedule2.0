@@ -480,7 +480,6 @@ export const ScheduleTableView = ({
           schedule.addTraineeAssignment(traineeAssignment);
         }
         
-        console.log('✅ Trainee assigned:', traineeAssignment);
       } else {
         // Remove trainee
         setTraineeAssignments(prev => {

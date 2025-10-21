@@ -13,7 +13,9 @@ import {
   Settings,
   BarChart3,
   Clock,
-  GraduationCap
+  GraduationCap,
+  Download,
+  Check
 } from 'lucide-react';
 
 // Import our new components and services
@@ -21,6 +23,7 @@ import { Staff, Student, Schedule, Assignment, SchedulingUtils } from './types/i
 import { SharePointService } from './services/SharePointService.js';
 import { PeoplePickerService } from './services/PeoplePickerService.js';
 import { AutoAssignmentEngine } from './services/AutoAssignmentEngine.js';
+import { ExcelExportService } from './services/ExcelExportService.js';
 import { 
   ScheduleGrid, 
   ScheduleTableView,
@@ -177,20 +180,32 @@ const ABAScheduler = () => {
           console.log('💾 Saving attendance history for', oldDateStr);
           await sharePointService.saveAttendanceHistory(staff, students, currentDate);
           
-          // Clear attendance in SharePoint Staff/Students lists
+          // Clear attendance in local state FIRST
+          const clearedStaff = staff.map(s => new Staff({
+            ...s,
+            absentAM: false,
+            absentPM: false,
+            absentFullDay: false
+          }));
+          
+          const clearedStudents = students.map(s => new Student({
+            ...s,
+            absentAM: false,
+            absentPM: false,
+            absentFullDay: false
+          }));
+          
+          // Update local state immediately so UI shows cleared attendance
+          setStaff(clearedStaff);
+          setStudents(clearedStudents);
+          console.log('✅ Local attendance state cleared for', clearedStaff.length, 'staff and', clearedStudents.length, 'students');
+          
+          // Clear attendance in SharePoint in the background (don't wait for it)
+          // Using the cleared arrays ensures we clear ALL staff/students, not just those marked absent
           console.log('🧹 Clearing attendance in SharePoint...');
-          await sharePointService.clearAllAttendanceInSharePoint(staff, students);
-          
-          // Reload staff and students from SharePoint to get fresh data with cleared attendance
-          console.log('🔄 Reloading staff and students...');
-          const [staffData, studentsData] = await Promise.all([
-            sharePointService.loadStaff(),
-            sharePointService.loadStudents()
-          ]);
-          
-          setStaff(staffData);
-          setStudents(studentsData);
-          console.log('✅ Staff and student data reloaded with cleared attendance');
+          sharePointService.clearAllAttendanceInSharePoint(clearedStaff, clearedStudents)
+            .then(() => console.log('✅ SharePoint attendance cleared'))
+            .catch(err => console.error('Error clearing SharePoint attendance:', err));
         }
         
         // Update the date state
@@ -306,13 +321,75 @@ const ABAScheduler = () => {
       const result = await autoAssignEngine.autoAssignSchedule(schedule, staff, students);
       
       if (result.assignments.length > 0) {
-        // Combine existing assignments with new auto-assignments
-        const allAssignments = [...schedule.assignments, ...result.assignments];
+        // Keep only locked/manual assignments from the existing schedule
+        // Auto-assignments should be completely replaced
+        const manualAssignments = schedule.assignments.filter(a => 
+          a.assignedBy === 'manual' || a.isLocked
+        );
+        
+        // Combine manual assignments with new auto-assignments
+        let allAssignments = [...manualAssignments, ...result.assignments];
+        
+        // SAFETY CHECK 1: Remove any assignments where staff is marked absent
+        // This is a failsafe in case of state sync issues
+        allAssignments = allAssignments.filter(assignment => {
+          const staffMember = staff.find(s => s.id === assignment.staffId);
+          if (!staffMember) return true; // Keep if staff not found (shouldn't happen)
+          
+          const isAbsent = assignment.session === 'AM' 
+            ? (staffMember.absentAM || staffMember.absentFullDay)
+            : (staffMember.absentPM || staffMember.absentFullDay);
+            
+          if (isAbsent) {
+            console.warn(`⚠️ SAFETY CHECK: Removed assignment for absent staff: ${staffMember.name} (${assignment.session})`);
+            return false;
+          }
+          return true;
+        });
+        
+        // SAFETY CHECK 2: Limit assignments per student based on their ratio
+        // This prevents the auto-assignment engine from over-assigning
+        const assignmentsByStudent = {};
+        allAssignments.forEach(a => {
+          const key = `${a.studentId}-${a.session}`;
+          if (!assignmentsByStudent[key]) assignmentsByStudent[key] = [];
+          assignmentsByStudent[key].push(a);
+        });
+        
+        const validAssignments = [];
+        Object.entries(assignmentsByStudent).forEach(([key, assignments]) => {
+          const [studentId, session] = key.split('-');
+          const student = students.find(s => s.id == studentId);
+          if (!student) {
+            validAssignments.push(...assignments);
+            return;
+          }
+          
+          const ratio = session === 'AM' ? student.ratioAM : student.ratioPM;
+          const maxStaff = ratio === '2:1' ? 2 : 1;
+          
+          // Take only the first maxStaff assignments, prioritize manual/locked
+          const sorted = assignments.sort((a, b) => {
+            if (a.assignedBy === 'manual' || a.isLocked) return -1;
+            if (b.assignedBy === 'manual' || b.isLocked) return 1;
+            return 0;
+          });
+          
+          validAssignments.push(...sorted.slice(0, maxStaff));
+          
+          if (sorted.length > maxStaff) {
+            console.warn(`⚠️ ${student.name} ${session}: Trimmed ${sorted.length} assignments to ${maxStaff} (ratio: ${ratio})`);
+          }
+        });
+        
+        console.log(`🔄 Auto-assign: ${schedule.assignments.length} existing → ${manualAssignments.length} manual + ${result.assignments.length} new auto → ${validAssignments.length} final (after safety checks)`);
         
         // Force re-render by creating a new Schedule instance with ALL assignments
+        // IMPORTANT: Preserve traineeAssignments when creating new schedule instance
         const newSchedule = new Schedule({
           date: schedule.date,
-          assignments: allAssignments,
+          assignments: validAssignments,
+          traineeAssignments: [...(schedule.traineeAssignments || [])], // Preserve trainee assignments
           lockedAssignments: schedule.lockedAssignments,
           isFinalized: schedule.isFinalized
         });
@@ -338,6 +415,7 @@ const handleAssignmentLock = (assignmentId) => {
   const newSchedule = new Schedule({
     date: schedule.date,
     assignments: [...schedule.assignments],
+    traineeAssignments: [...(schedule.traineeAssignments || [])], // Preserve trainee assignments
     lockedAssignments: new Set(schedule.lockedAssignments),
     isFinalized: schedule.isFinalized
   });
@@ -352,6 +430,7 @@ const handleAssignmentUnlock = (assignmentId) => {
   const newSchedule = new Schedule({
     date: schedule.date,
     assignments: [...schedule.assignments],
+    traineeAssignments: [...(schedule.traineeAssignments || [])], // Preserve trainee assignments
     lockedAssignments: new Set(schedule.lockedAssignments),
     isFinalized: schedule.isFinalized
   });
@@ -384,6 +463,7 @@ const handleManualAssignment = ({ staffId, studentId, session, program }) => {
   const newSchedule = new Schedule({
     date: schedule.date,
     assignments: [...schedule.assignments], // Create new array reference
+    traineeAssignments: [...(schedule.traineeAssignments || [])], // Preserve trainee assignments
     lockedAssignments: new Set(schedule.lockedAssignments),
     isFinalized: schedule.isFinalized
   });
@@ -401,6 +481,7 @@ const handleAssignmentRemove = (assignmentId) => {
   const newSchedule = new Schedule({
     date: schedule.date,
     assignments: [...schedule.assignments], // Create new array reference
+    traineeAssignments: [...(schedule.traineeAssignments || [])], // Preserve trainee assignments
     lockedAssignments: new Set(schedule.lockedAssignments),
     isFinalized: schedule.isFinalized
   });
@@ -450,6 +531,17 @@ const handleAssignmentRemove = (assignmentId) => {
     }
   };
 
+  // Export schedule to Excel
+  const handleExportToExcel = () => {
+    try {
+      ExcelExportService.exportSchedule(schedule, students, staff, currentDate);
+      console.log('✅ Schedule exported to Excel successfully');
+    } catch (error) {
+      console.error('❌ Error exporting schedule:', error);
+      alert(`Failed to export schedule: ${error.message}`);
+    }
+  };
+
   // Staff management
   const handleAddStaff = async (staffData) => {
     setSaving(true);
@@ -487,10 +579,52 @@ const handleAssignmentRemove = (assignmentId) => {
   const handleDeleteStaff = async (staffId) => {
     if (window.confirm('Are you sure you want to delete this staff member?')) {
       try {
+        // First, remove this staff member from all student teams
+        console.log(`🗑️ Removing staff ID ${staffId} from all student teams...`);
+        
+        const updatedStudents = students.map(student => {
+          // Check if this staff is on the student's team
+          if (student.teamIds.includes(staffId)) {
+            console.log(`  Removing staff from ${student.name}'s team`);
+            
+            // Remove from team array (People Picker data)
+            const updatedTeam = student.team.filter(teamMember => teamMember.id !== staffId);
+            
+            // Remove from teamIds array
+            const updatedTeamIds = student.teamIds.filter(id => id !== staffId);
+            
+            // Create updated student
+            return new Student({
+              ...student,
+              team: updatedTeam,
+              teamIds: updatedTeamIds
+            });
+          }
+          return student;
+        });
+        
+        // Save all updated students to SharePoint
+        const studentsToUpdate = updatedStudents.filter((student, index) => {
+          return students[index].teamIds.includes(staffId);
+        });
+        
+        if (studentsToUpdate.length > 0) {
+          console.log(`📝 Updating ${studentsToUpdate.length} students in SharePoint...`);
+          await Promise.all(
+            studentsToUpdate.map(student => sharePointService.saveStudent(student, true))
+          );
+          console.log('✅ Student teams updated');
+        }
+        
+        // Now delete the staff member
         await sharePointService.deleteStaff(staffId);
+        console.log('✅ Staff member deleted');
+        
+        // Reload all data to reflect changes
         await loadData();
       } catch (error) {
         console.error('Error deleting staff:', error);
+        alert(`Failed to delete staff: ${error.message}`);
       }
     }
   };
@@ -765,6 +899,16 @@ const handleAssignmentRemove = (assignmentId) => {
                 </button>
                 
                 <button
+                  onClick={handleExportToExcel}
+                  disabled={loading || schedule.assignments.length === 0}
+                  className="bg-emerald-600 text-white px-4 py-2 rounded hover:bg-emerald-700 disabled:opacity-50 flex items-center gap-2"
+                  title="Export schedule to Excel"
+                >
+                  <Download className="w-4 h-4" />
+                  Export
+                </button>
+                
+                <button
                   onClick={loadData}
                   disabled={loading}
                   className="bg-gray-600 text-white px-4 py-2 rounded hover:bg-gray-700 disabled:opacity-50 flex items-center gap-2"
@@ -955,10 +1099,18 @@ const handleAssignmentRemove = (assignmentId) => {
                             {staffMember.role}
                           </td>
                           <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                            {staffMember.primaryProgram || '-'}
+                            {staffMember.primaryProgram ? (
+                              <Check className="w-5 h-5 text-green-600" />
+                            ) : (
+                              <span className="text-gray-300">-</span>
+                            )}
                           </td>
                           <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                            {staffMember.secondaryProgram || '-'}
+                            {staffMember.secondaryProgram ? (
+                              <Check className="w-5 h-5 text-green-600" />
+                            ) : (
+                              <span className="text-gray-300">-</span>
+                            )}
                           </td>
                           <td className="px-6 py-4 whitespace-nowrap">
                             <span className={`px-2 inline-flex text-xs leading-5 font-semibold rounded-full ${
@@ -969,7 +1121,10 @@ const handleAssignmentRemove = (assignmentId) => {
                           </td>
                           <td className="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
                             <button
-                              onClick={() => setEditingStaff(staffMember)}
+                              onClick={() => {
+                                setEditingStaff(staffMember);
+                                setShowAddStaff(true);
+                              }}
                               className="text-blue-600 hover:text-blue-900 mr-3"
                             >
                               <Edit2 className="w-4 h-4" />
@@ -1043,7 +1198,10 @@ const handleAssignmentRemove = (assignmentId) => {
                           </td>
                           <td className="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
                             <button
-                              onClick={() => setEditingStudent(student)}
+                              onClick={() => {
+                                setEditingStudent(student);
+                                setShowAddStudent(true);
+                              }}
                               className="text-blue-600 hover:text-blue-900 mr-3"
                             >
                               <Edit2 className="w-4 h-4" />

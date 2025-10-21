@@ -294,12 +294,7 @@ export const TeamManagement = ({
                           </div>
                         </div>
                       </div>
-                      <button
-                        onClick={() => onEditStaff && onEditStaff(item.staff)}
-                        className="p-2 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded"
-                      >
-                        <Edit className="w-4 h-4" />
-                      </button>
+                      {/* No edit button in Clients by Staff view to avoid errors */}
                     </div>
 
                     <div className="ml-13">

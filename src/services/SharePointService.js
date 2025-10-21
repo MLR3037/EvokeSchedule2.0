@@ -1045,45 +1045,39 @@ export class SharePointService {
         return false;
       }
 
-      console.log('🧹 Clearing attendance flags in SharePoint...');
+      console.log('🧹 Clearing attendance flags in SharePoint for ALL staff and students...');
 
       const clearPromises = [
-        // Clear staff attendance
+        // Clear ALL staff attendance (not just those currently marked absent)
         ...staff.map(async (staffMember) => {
-          if (staffMember.absentAM || staffMember.absentPM || staffMember.absentFullDay) {
-            const clearedStaff = new Staff({
-              ...staffMember,
-              absentAM: false,
-              absentPM: false,
-              absentFullDay: false
-            });
-            return this.saveStaff(clearedStaff, true).catch(err => {
-              console.error(`Failed to clear attendance for staff ${staffMember.name}:`, err);
-              return { success: false };
-            });
-          }
-          return { success: true };
+          const clearedStaff = new Staff({
+            ...staffMember,
+            absentAM: false,
+            absentPM: false,
+            absentFullDay: false
+          });
+          return this.saveStaff(clearedStaff, true).catch(err => {
+            console.error(`Failed to clear attendance for staff ${staffMember.name}:`, err);
+            return { success: false };
+          });
         }),
-        // Clear student attendance
+        // Clear ALL student attendance (not just those currently marked absent)
         ...students.map(async (student) => {
-          if (student.absentAM || student.absentPM || student.absentFullDay) {
-            const clearedStudent = new Student({
-              ...student,
-              absentAM: false,
-              absentPM: false,
-              absentFullDay: false
-            });
-            return this.saveStudent(clearedStudent, true).catch(err => {
-              console.error(`Failed to clear attendance for student ${student.name}:`, err);
-              return { success: false };
-            });
-          }
-          return { success: true };
+          const clearedStudent = new Student({
+            ...student,
+            absentAM: false,
+            absentPM: false,
+            absentFullDay: false
+          });
+          return this.saveStudent(clearedStudent, true).catch(err => {
+            console.error(`Failed to clear attendance for student ${student.name}:`, err);
+            return { success: false };
+          });
         })
       ];
 
       await Promise.all(clearPromises);
-      console.log('✅ Attendance cleared in SharePoint');
+      console.log('✅ Attendance cleared in SharePoint for', staff.length, 'staff and', students.length, 'students');
       return true;
     } catch (error) {
       console.error('Error clearing attendance in SharePoint:', error);
