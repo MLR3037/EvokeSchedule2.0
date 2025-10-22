@@ -730,6 +730,8 @@ export class SharePointService {
         TotalAssignments: schedule.assignments.length,
         CreatedDate: new Date().toISOString(),
         CreatedBy: this.currentUser?.displayName || 'System',
+        LastModified: new Date().toISOString(),
+        LastModifiedBy: this.currentUser?.displayName || 'System',
         AssignmentsSummary: this.generateAssignmentsSummary(schedule.assignments),
         TraineeAssignments: schedule.traineeAssignments ? JSON.stringify(schedule.traineeAssignments) : '[]'
       };

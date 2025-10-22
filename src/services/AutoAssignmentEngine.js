@@ -816,6 +816,25 @@ export class AutoAssignmentEngine {
       console.log(`\n✅ PHASE 2: No gaps found - schedule is perfect!`);
     }
 
+    // PHASE 3: Swap Optimization - Try to fill remaining gaps by swapping available staff
+    const remainingUnassignedCount = this.countUnassignedStudents(schedule, students);
+    
+    if (remainingUnassignedCount > 0) {
+      console.log(`\n🔀 PHASE 3: ${remainingUnassignedCount} gaps remain - attempting SWAP OPTIMIZATION`);
+      
+      const swapResults = await this.performSwapOptimization(schedule, staff, students);
+      
+      if (swapResults.swapsMade > 0) {
+        console.log(`\n✅ SWAP OPTIMIZATION: Made ${swapResults.swapsMade} swaps, filled ${swapResults.gapsFilled} gaps`);
+        newAssignments.push(...swapResults.newAssignments);
+        swapResults.swaps.forEach(swap => {
+          console.log(`  ✓ ${swap.description}`);
+        });
+      } else {
+        console.log(`\n⚠️ SWAP OPTIMIZATION: No beneficial swaps found`);
+      }
+    }
+
     console.log(`\n🎯 ========== AUTO-ASSIGNMENT COMPLETE ==========`);
     console.log(`📊 Total assignments: ${newAssignments.length}`);
     console.log(`❌ Errors: ${errors.length}`);
@@ -1310,32 +1329,52 @@ export class AutoAssignmentEngine {
    */
   async assignPairedStudents(student1, student2, session, program, staff, schedule) {
     const assignments = [];
-    this.log(`Assigning paired students: ${student1.name} and ${student2.name}`);
+    this.log(`\n🔗 Assigning paired students: ${student1.name} and ${student2.name} (${program} ${session})`);
 
     // Check if either student is already assigned in this session
     if (this.isStudentAssigned(student1.id, session, program, schedule) ||
         this.isStudentAssigned(student2.id, session, program, schedule)) {
-      this.log(`One of the paired students is already assigned`);
+      this.log(`  ⚠️ One of the paired students is already assigned`);
       return [];
     }
 
     // Get the combined staff requirements for both students
     const student1StaffCount = this.getRequiredStaffCount(student1, session);
     const student2StaffCount = this.getRequiredStaffCount(student2, session);
-    const totalStaffNeeded = student1StaffCount + student2StaffCount;
+    
+    // SPECIAL CASE: For paired 1:2 students, they share the SAME staff (not additive)
+    // Example: Henry (1:2) + Sebastian (1:2) = 1 staff total (not 2)
+    const bothAre1to2 = student1.isSmallGroup(session) && student2.isSmallGroup(session);
+    const totalStaffNeeded = bothAre1to2 ? 1 : (student1StaffCount + student2StaffCount);
 
-    this.log(`Paired students need ${student1StaffCount} + ${student2StaffCount} = ${totalStaffNeeded} staff total`);
+    this.log(`  Need: ${student1.name}=${student1StaffCount} staff, ${student2.name}=${student2StaffCount} staff, total=${totalStaffNeeded}${bothAre1to2 ? ' (shared for 1:2 pair)' : ''}`);
+    this.log(`  ${student1.name} team (${student1.teamIds.length}): ${staff.filter(s => student1.teamIds.includes(s.id)).map(s => s.name).join(', ')}`);
+    this.log(`  ${student2.name} team (${student2.teamIds.length}): ${staff.filter(s => student2.teamIds.includes(s.id)).map(s => s.name).join(', ')}`);
 
-    // Get available staff that can work with both students
+    // Get available staff that can work with BOTH students
+    // Must be on both students' teams
     const availableStaff = SchedulingUtils.getAvailableStaffForStudent(
       student1, session, program, staff, schedule
-    ).filter(staffMember => 
-      // Staff must be able to work with both students' programs
-      this.canStaffWorkWithStudent(staffMember, student2, schedule)
-    );
+    ).filter(staffMember => {
+      // Staff must be able to work with student2's program
+      if (!this.canStaffWorkWithStudent(staffMember, student2, schedule)) {
+        this.log(`  ❌ ${staffMember.name} already worked with ${student2.name} today`);
+        return false;
+      }
+      
+      // CRITICAL: Staff must be on BOTH students' teams (for paired students)
+      if (!student2.teamIds.includes(staffMember.id)) {
+        this.log(`  ❌ ${staffMember.name} is on ${student1.name}'s team but NOT on ${student2.name}'s team`);
+        return false;
+      }
+      
+      return true;
+    });
+
+    this.log(`  ✅ Shared team members available (${availableStaff.length}): ${availableStaff.map(s => s.name).join(', ')}`);
 
     if (availableStaff.length < totalStaffNeeded) {
-      this.log(`Insufficient staff for paired students. Need ${totalStaffNeeded}, have ${availableStaff.length}`);
+      this.log(`  ❌ INSUFFICIENT STAFF: Need ${totalStaffNeeded}, have ${availableStaff.length}`);
       return [];
     }
 
@@ -1781,5 +1820,210 @@ export class AutoAssignmentEngine {
     } catch (error) {
       return { success: false };
     }
+  }
+
+  /**
+   * PHASE 3: Swap Optimization - Fill gaps by swapping available staff
+   * 
+   * Strategy:
+   * 1. Find unassigned students (gaps)
+   * 2. For each gap, find UNASSIGNED staff who are available
+   * 3. Look for students who have staff that COULD work with the unassigned staff's students
+   * 4. Execute swaps: Unassigned staff → assigned student, their staff → gap student
+   * 
+   * Example:
+   * - Lydia (gap) has team members: [Amy, Bob]
+   * - Carol (unassigned) is available and has team members: [Dave]
+   * - Dave is currently assigned to Student X
+   * - Can Carol work with Student X? Check if X.teamIds.includes(Carol.id)
+   * - If yes: Swap Carol → X, Dave → Lydia
+   */
+  async performSwapOptimization(schedule, staff, students) {
+    const swaps = [];
+    const newAssignments = [];
+    let swapsMade = 0;
+    let gapsFilled = 0;
+
+    const activeStaff = staff.filter(s => s.isActive);
+    const activeStudents = students.filter(s => s.isActive);
+
+    // Find all unassigned students (gaps)
+    const sessions = ['AM', 'PM'];
+    const programs = [PROGRAMS.PRIMARY, PROGRAMS.SECONDARY];
+
+    for (const program of programs) {
+      for (const session of sessions) {
+        console.log(`\n🔍 SMART SWAP: Checking ${program} ${session} for swap opportunities...`);
+
+        const programStudents = activeStudents.filter(s => 
+          s.program === program && 
+          s.isAvailableForSession(session)
+        );
+
+        for (const gapStudent of programStudents) {
+          // Check if this student has a gap
+          if (this.isStudentAssigned(gapStudent.id, session, program, schedule)) {
+            continue; // Student already assigned
+          }
+
+          console.log(`\n🔀 GAP DETECTED: ${gapStudent.name} (${program} ${session})`);
+          console.log(`   Team: ${gapStudent.teamIds.length} members`);
+
+          // CRITICAL CHECK: If gap student is paired, skip individual gap filling
+          // Paired students must be assigned together with the same staff
+          if (gapStudent.isPaired && gapStudent.isPaired()) {
+            console.log(`   ⚠️ Skipping ${gapStudent.name} - paired student (must be assigned with partner)`);
+            continue;
+          }
+
+          // STEP 1: Find ALL unassigned staff who are available this session
+          const unassignedStaff = activeStaff.filter(staffMember => {
+            // Must be available for this session
+            if (!staffMember.isAvailableForSession(session)) return false;
+            
+            // Must be able to work this program
+            if (!staffMember.canWorkProgram(program)) return false;
+
+            // Must be able to do direct sessions
+            if (!this.canStaffDoDirectService(staffMember)) return false;
+            
+            // Must not already be assigned in this session
+            const alreadyAssigned = schedule.assignments.some(a => 
+              a.staffId === staffMember.id && a.session === session
+            );
+            
+            return !alreadyAssigned;
+          });
+
+          if (unassignedStaff.length === 0) {
+            console.log(`   ❌ No unassigned staff available this session`);
+            continue;
+          }
+
+          console.log(`   ✓ Found ${unassignedStaff.length} unassigned staff:`, unassignedStaff.map(s => s.name).join(', '));
+
+          // STEP 2: For each unassigned staff, look for swap opportunities
+          let swapFound = false;
+          
+          for (const unassignedStaffMember of unassignedStaff) {
+            console.log(`\n   🔍 Checking if ${unassignedStaffMember.name} can enable a swap...`);
+
+            // Find students who have staff members on the gap student's team
+            for (const otherStudent of programStudents) {
+              if (otherStudent.id === gapStudent.id) continue;
+
+              // Find this student's current assignment
+              const currentAssignment = schedule.assignments.find(a => 
+                a.studentId === otherStudent.id && 
+                a.session === session &&
+                a.program === program &&
+                !a.isLocked && // Don't swap locked assignments
+                a.assignedBy !== 'manual' // Don't swap manual assignments
+              );
+
+              if (!currentAssignment) continue;
+
+              const currentStaff = activeStaff.find(s => s.id === currentAssignment.staffId);
+              if (!currentStaff) continue;
+
+              // CRITICAL CHECK: Is the current staff on the gap student's team?
+              const isCurrentStaffOnGapTeam = gapStudent.teamIds.includes(currentStaff.id);
+              
+              // CRITICAL CHECK: Can the unassigned staff work with this other student?
+              const canUnassignedWorkWithOther = otherStudent.teamIds.includes(unassignedStaffMember.id);
+
+              // CRITICAL CHECK: Don't break paired students (1:2 ratio)
+              const isPairedStudent = otherStudent.isPaired && otherStudent.isPaired();
+              if (isPairedStudent) {
+                console.log(`      ⚠️ Skipping ${otherStudent.name} - paired student (1:2 ratio), can't swap`);
+                continue;
+              }
+
+              // CRITICAL CHECK: Has staff already worked with this student today?
+              const hasWorkedTogether = schedule.hasStaffWorkedWithStudentToday(unassignedStaffMember.id, otherStudent.id);
+              if (hasWorkedTogether) {
+                console.log(`      ⚠️ Skipping - ${unassignedStaffMember.name} already worked with ${otherStudent.name} today`);
+                continue;
+              }
+
+              // CRITICAL CHECK: Has freed staff already worked with gap student today?
+              const freedStaffWorkedWithGap = schedule.hasStaffWorkedWithStudentToday(currentStaff.id, gapStudent.id);
+              if (freedStaffWorkedWithGap) {
+                console.log(`      ⚠️ Skipping - ${currentStaff.name} already worked with ${gapStudent.name} today`);
+                continue;
+              }
+
+              if (isCurrentStaffOnGapTeam && canUnassignedWorkWithOther) {
+                // SWAP OPPORTUNITY FOUND!
+                console.log(`\n   ✅ SWAP OPPORTUNITY:`);
+                console.log(`      • ${unassignedStaffMember.name} can work with ${otherStudent.name}`);
+                console.log(`      • ${currentStaff.name} (currently with ${otherStudent.name}) can work with ${gapStudent.name}`);
+                console.log(`      SWAP: ${unassignedStaffMember.name} → ${otherStudent.name}, ${currentStaff.name} → ${gapStudent.name}`);
+
+                // Execute the swap
+                schedule.removeAssignment(currentAssignment.id);
+
+                // Create new assignment: unassigned staff → other student
+                const newAssignment1 = new Assignment({
+                  id: SchedulingUtils.generateAssignmentId(),
+                  staffId: unassignedStaffMember.id,
+                  staffName: unassignedStaffMember.name,
+                  studentId: otherStudent.id,
+                  studentName: otherStudent.name,
+                  session: session,
+                  program: program,
+                  date: schedule.date,
+                  isLocked: false,
+                  assignedBy: 'auto-swap'
+                });
+
+                // Create new assignment: freed staff → gap student
+                const newAssignment2 = new Assignment({
+                  id: SchedulingUtils.generateAssignmentId(),
+                  staffId: currentStaff.id,
+                  staffName: currentStaff.name,
+                  studentId: gapStudent.id,
+                  studentName: gapStudent.name,
+                  session: session,
+                  program: program,
+                  date: schedule.date,
+                  isLocked: false,
+                  assignedBy: 'auto-swap'
+                });
+
+                schedule.addAssignment(newAssignment1);
+                schedule.addAssignment(newAssignment2);
+                newAssignments.push(newAssignment1, newAssignment2);
+
+                swaps.push({
+                  oldAssignment: currentAssignment,
+                  description: `${unassignedStaffMember.name} → ${otherStudent.name}, ${currentStaff.name} → ${gapStudent.name}`
+                });
+
+                swapsMade++;
+                gapsFilled++;
+                swapFound = true;
+                break; // Move to next gap
+              }
+            }
+
+            if (swapFound) break; // Found a swap for this gap
+          }
+
+          if (!swapFound) {
+            console.log(`   ❌ No swap found to fill ${gapStudent.name}'s gap`);
+          }
+        }
+      }
+    }
+
+    console.log(`\n✅ SMART SWAP COMPLETE: ${swapsMade} swaps, ${gapsFilled} gaps filled`);
+
+    return {
+      swapsMade,
+      gapsFilled,
+      swaps,
+      newAssignments
+    };
   }
 }

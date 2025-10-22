@@ -261,6 +261,7 @@ export const SinglePeoplePicker = ({
 
 /**
  * Staff People Picker Component (specifically for staff selection)
+ * This component ONLY shows users who are in the Staff SharePoint list
  */
 export const StaffPeoplePicker = ({ 
   selectedStaff = [], 
@@ -269,57 +270,177 @@ export const StaffPeoplePicker = ({
   disabled = false,
   peoplePickerService
 }) => {
-  // Filter people picker results to only show users who are in the staff list
-  const [filteredUsers, setFilteredUsers] = useState([]);
+  const [searchText, setSearchText] = useState('');
+  const [isOpen, setIsOpen] = useState(false);
+  const dropdownRef = useRef(null);
 
+  // Handle clicks outside dropdown
   useEffect(() => {
-    if (peoplePickerService && allStaff.length > 0) {
-      loadStaffUsers();
-    }
-  }, [peoplePickerService, allStaff]);
-
-  const loadStaffUsers = async () => {
-    try {
-      const allUsers = await peoplePickerService.getAllSiteUsers(true);
-      
-      // If no users returned (permission denied), we'll rely on search instead
-      if (allUsers.length === 0) {
-        console.warn('Could not load all users - will use search-based filtering');
-        setFilteredUsers([]);
-        return;
+    const handleClickOutside = (event) => {
+      if (dropdownRef.current && !dropdownRef.current.contains(event.target)) {
+        setIsOpen(false);
       }
-      
-      // Filter to only users who are in the staff list
-      const staffUsers = allUsers.filter(user => 
-        allStaff.some(staff => 
-          staff.email && user.email && 
-          staff.email.toLowerCase() === user.email.toLowerCase()
-        )
+    };
+
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, []);
+
+  // Filter staff based on search text
+  const getFilteredStaff = () => {
+    if (!searchText.trim()) {
+      return allStaff.filter(staff => 
+        !selectedStaff.some(selected => selected.id === staff.id)
       );
-      
-      setFilteredUsers(staffUsers);
-    } catch (error) {
-      console.error('Error loading staff users:', error);
-      // Don't show error to user - search will still work
-      setFilteredUsers([]);
     }
+
+    const searchLower = searchText.toLowerCase();
+    return allStaff.filter(staff => {
+      // Don't show already selected staff
+      if (selectedStaff.some(selected => selected.id === staff.id)) {
+        return false;
+      }
+
+      // Filter by name or email
+      const nameMatch = staff.name?.toLowerCase().includes(searchLower);
+      const emailMatch = staff.email?.toLowerCase().includes(searchLower);
+      return nameMatch || emailMatch;
+    });
   };
 
+  const handleStaffSelect = (staff) => {
+    if (disabled) return;
+
+    // Create a user object compatible with People Picker format
+    const userObject = {
+      id: staff.id,
+      title: staff.name,
+      email: staff.email,
+      name: staff.name,
+      DisplayName: staff.name,
+      LookupValue: staff.name
+    };
+
+    const updatedStaff = [...selectedStaff, userObject];
+    onSelectionChange(updatedStaff);
+    setSearchText('');
+    setIsOpen(false);
+  };
+
+  const handleStaffRemove = (staffId) => {
+    if (disabled) return;
+    const updatedStaff = selectedStaff.filter(staff => staff.id !== staffId);
+    onSelectionChange(updatedStaff);
+  };
+
+  const filteredStaff = getFilteredStaff();
+
   return (
-    <div>
-      <PeoplePicker
-        selectedUsers={selectedStaff}
-        onSelectionChange={onSelectionChange}
-        placeholder="Search for staff members..."
-        disabled={disabled}
-        peoplePickerService={peoplePickerService}
-      />
-      
-      {allStaff.length > 0 && filteredUsers.length === 0 && (
-        <div className="mt-2 text-sm text-amber-600">
-          Note: Only users in the Staff list can be selected
+    <div className="relative" ref={dropdownRef}>
+      {/* Selected Staff Display */}
+      {selectedStaff.length > 0 && (
+        <div className="mb-2 flex flex-wrap gap-2">
+          {selectedStaff.map(staff => {
+            const staffName = staff.title || staff.name || staff.DisplayName || staff.LookupValue || 'Unknown';
+            
+            return (
+              <div
+                key={staff.id || Math.random()}
+                className="inline-flex items-center gap-2 px-3 py-1 bg-blue-100 text-blue-800 rounded-full text-sm"
+              >
+                <Users className="w-3 h-3" />
+                <span>{staffName}</span>
+                {!disabled && (
+                  <button
+                    onClick={() => handleStaffRemove(staff.id)}
+                    className="hover:bg-blue-200 rounded-full p-0.5"
+                  >
+                    <X className="w-3 h-3" />
+                  </button>
+                )}
+              </div>
+            );
+          })}
         </div>
       )}
+
+      {/* Search Input */}
+      <div className="relative">
+        <div className="flex items-center border border-gray-300 rounded-md">
+          <div className="flex-1 flex items-center">
+            <Search className="w-4 h-4 text-gray-400 ml-3" />
+            <input
+              type="text"
+              value={searchText}
+              onChange={(e) => setSearchText(e.target.value)}
+              onFocus={() => setIsOpen(true)}
+              placeholder="Search staff members..."
+              disabled={disabled}
+              className="w-full pl-2 pr-3 py-2 border-0 focus:outline-none focus:ring-0"
+            />
+          </div>
+          <button
+            onClick={() => setIsOpen(!isOpen)}
+            disabled={disabled}
+            className="px-3 py-2 border-l border-gray-300 hover:bg-gray-50 disabled:opacity-50"
+          >
+            <ChevronDown className={`w-4 h-4 transition-transform ${isOpen ? 'rotate-180' : ''}`} />
+          </button>
+        </div>
+
+        {/* Dropdown - Only shows staff from Staff list */}
+        {isOpen && !disabled && (
+          <div className="absolute z-50 w-full mt-1 bg-white border border-gray-300 rounded-md shadow-lg max-h-60 overflow-y-auto">
+            {filteredStaff.length === 0 && (
+              <div className="px-4 py-3 text-gray-500 text-sm">
+                {searchText.trim() 
+                  ? 'No staff members found matching your search' 
+                  : allStaff.length === 0 
+                    ? 'No staff members available'
+                    : 'All staff members have been selected'}
+              </div>
+            )}
+
+            {filteredStaff.map(staff => {
+              const staffName = staff.name || 'Unknown';
+              const staffEmail = staff.email || '';
+              const staffInitial = staffName.charAt(0).toUpperCase();
+              const staffRole = typeof staff.role === 'object' ? staff.role.name : staff.role;
+              
+              return (
+                <button
+                  key={staff.id}
+                  onClick={() => handleStaffSelect(staff)}
+                  className="w-full px-4 py-3 text-left hover:bg-gray-50 focus:bg-gray-50 focus:outline-none border-b border-gray-100 last:border-b-0"
+                >
+                  <div className="flex items-center gap-3">
+                    <div className="w-8 h-8 bg-blue-500 rounded-full flex items-center justify-center text-white text-sm font-medium">
+                      {staffInitial}
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <div className="font-medium text-gray-900 truncate">
+                        {staffName}
+                        {staffRole && (
+                          <span className="ml-2 text-xs text-gray-500">({staffRole})</span>
+                        )}
+                      </div>
+                      {staffEmail && (
+                        <div className="text-sm text-gray-500 truncate">
+                          {staffEmail}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                </button>
+              );
+            })}
+          </div>
+        )}
+      </div>
+
+      <div className="mt-1 text-xs text-gray-500">
+        {selectedStaff.length} staff member{selectedStaff.length !== 1 ? 's' : ''} selected • Only showing active staff from Staff list
+      </div>
     </div>
   );
 };

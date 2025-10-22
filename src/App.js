@@ -15,7 +15,8 @@ import {
   Clock,
   GraduationCap,
   Download,
-  Check
+  Check,
+  AlertCircle
 } from 'lucide-react';
 
 // Import our new components and services
@@ -73,6 +74,7 @@ const ABAScheduler = () => {
   const [students, setStudents] = useState([]);
   const [currentDate, setCurrentDate] = useState(new Date());
   const [schedule, setSchedule] = useState(new Schedule({ date: new Date() }));
+  const [dataLoadedAt, setDataLoadedAt] = useState(null); // Track when data was last loaded from server
 
   // UI state
   const [activeTab, setActiveTab] = useState('schedule');
@@ -148,8 +150,9 @@ const ABAScheduler = () => {
       setStaff(staffData);
       setStudents(studentsData);
       setSchedule(scheduleData);
+      setDataLoadedAt(new Date()); // Track when data was loaded
       
-      console.log(`✅ Loaded ${staffData.length} staff, ${studentsData.length} students`);
+      console.log(`✅ Loaded ${staffData.length} staff, ${studentsData.length} students at ${new Date().toLocaleTimeString()}`);
       
       if (staffData.length === 0 && studentsData.length === 0) {
         console.warn('⚠️ No data loaded. Check authentication and SharePoint list names.');
@@ -356,7 +359,7 @@ const ABAScheduler = () => {
           assignmentsByStudent[key].push(a);
         });
         
-        const validAssignments = [];
+        let validAssignments = [];
         Object.entries(assignmentsByStudent).forEach(([key, assignments]) => {
           const [studentId, session] = key.split('-');
           const student = students.find(s => s.id == studentId);
@@ -381,6 +384,34 @@ const ABAScheduler = () => {
             console.warn(`⚠️ ${student.name} ${session}: Trimmed ${sorted.length} assignments to ${maxStaff} (ratio: ${ratio})`);
           }
         });
+
+        // SAFETY CHECK 3: Prevent double-booking of staff in the same session
+        // Staff can only be assigned once per session UNLESS students are paired (1:2)
+        const staffDoubleBookings = {};
+        validAssignments = validAssignments.filter(assignment => {
+          const key = `${assignment.staffId}-${assignment.session}`;
+          
+          if (staffDoubleBookings[key]) {
+            // Staff is already assigned in this session
+            const existingAssignment = staffDoubleBookings[key];
+            const currentStudent = students.find(s => s.id === assignment.studentId);
+            const existingStudent = students.find(s => s.id === existingAssignment.studentId);
+            
+            // Allow only if students are paired (1:2 ratio)
+            const arePaired = currentStudent && existingStudent && 
+              currentStudent.isPaired() && 
+              currentStudent.pairedWith === existingStudent.id;
+            
+            if (!arePaired) {
+              const staffMember = staff.find(s => s.id === assignment.staffId);
+              console.warn(`⚠️ BLOCKED DOUBLE-BOOKING: ${staffMember?.name || 'Staff'} cannot be assigned to ${currentStudent?.name || 'student'} - already assigned to ${existingStudent?.name || 'another student'} in ${assignment.session}`);
+              return false; // Remove this assignment
+            }
+          }
+          
+          staffDoubleBookings[key] = assignment;
+          return true; // Keep this assignment
+        });
         
         console.log(`🔄 Auto-assign: ${schedule.assignments.length} existing → ${manualAssignments.length} manual + ${result.assignments.length} new auto → ${validAssignments.length} final (after safety checks)`);
         
@@ -402,6 +433,114 @@ const ABAScheduler = () => {
     } catch (error) {
       console.error('Auto-assignment failed:', error);
       alert('Auto-assignment failed. Please check the console for details.');
+    } finally {
+      setAutoAssigning(false);
+    }
+  };
+
+  // Smart Swap Optimization - Fill gaps by finding beneficial swaps
+  const handleSmartSwap = async () => {
+    setAutoAssigning(true);
+    
+    try {
+      console.log('🔀 Starting Smart Swap Optimization...');
+      
+      // Use the AutoAssignmentEngine's swap optimization
+      const result = await autoAssignEngine.performSwapOptimization(schedule, staff, students);
+      
+      if (result.swapsMade > 0 || result.newAssignments.length > 0) {
+        console.log(`✅ Smart Swap Results: ${result.swapsMade} swaps, ${result.gapsFilled} gaps filled`);
+        
+        // Apply swaps and new assignments
+        let updatedAssignments = [...schedule.assignments];
+        
+        // Remove swapped assignments
+        for (const swap of result.swaps) {
+          if (swap.oldAssignment) {
+            updatedAssignments = updatedAssignments.filter(a => a.id !== swap.oldAssignment.id);
+          }
+        }
+        
+        // Add all new assignments from swaps and gap fills
+        updatedAssignments = [...updatedAssignments, ...result.newAssignments];
+        
+        // SAFETY CHECK 1: Limit assignments per student based on their ratio
+        const assignmentsByStudent = {};
+        updatedAssignments.forEach(a => {
+          const key = `${a.studentId}-${a.session}`;
+          if (!assignmentsByStudent[key]) assignmentsByStudent[key] = [];
+          assignmentsByStudent[key].push(a);
+        });
+        
+        let validAssignments = [];
+        Object.entries(assignmentsByStudent).forEach(([key, assignments]) => {
+          const [studentId, session] = key.split('-');
+          const student = students.find(s => s.id == studentId);
+          if (!student) {
+            validAssignments.push(...assignments);
+            return;
+          }
+          
+          const ratio = session === 'AM' ? student.ratioAM : student.ratioPM;
+          const maxStaff = ratio === '2:1' ? 2 : 1;
+          
+          // Take only the first maxStaff assignments, prioritize manual/locked
+          const sorted = assignments.sort((a, b) => {
+            if (a.assignedBy === 'manual' || a.isLocked) return -1;
+            if (b.assignedBy === 'manual' || b.isLocked) return 1;
+            return 0;
+          });
+          
+          validAssignments.push(...sorted.slice(0, maxStaff));
+          
+          if (sorted.length > maxStaff) {
+            console.warn(`⚠️ SMART SWAP: ${student.name} ${session}: Trimmed ${sorted.length} assignments to ${maxStaff} (ratio: ${ratio})`);
+          }
+        });
+
+        // SAFETY CHECK 2: Prevent double-booking of staff in the same session
+        const staffDoubleBookings = {};
+        validAssignments = validAssignments.filter(assignment => {
+          const key = `${assignment.staffId}-${assignment.session}`;
+          
+          if (staffDoubleBookings[key]) {
+            const existingAssignment = staffDoubleBookings[key];
+            const currentStudent = students.find(s => s.id === assignment.studentId);
+            const existingStudent = students.find(s => s.id === existingAssignment.studentId);
+            
+            // Allow only if students are paired (1:2 ratio)
+            const arePaired = currentStudent && existingStudent && 
+              currentStudent.isPaired() && 
+              currentStudent.pairedWith === existingStudent.id;
+            
+            if (!arePaired) {
+              const staffMember = staff.find(s => s.id === assignment.staffId);
+              console.warn(`⚠️ SMART SWAP BLOCKED DOUBLE-BOOKING: ${staffMember?.name || 'Staff'} cannot be assigned to ${currentStudent?.name || 'student'} - already assigned to ${existingStudent?.name || 'another student'} in ${assignment.session}`);
+              return false;
+            }
+          }
+          
+          staffDoubleBookings[key] = assignment;
+          return true;
+        });
+        
+        // Create new schedule instance
+        const newSchedule = new Schedule({
+          date: schedule.date,
+          assignments: validAssignments,
+          traineeAssignments: [...(schedule.traineeAssignments || [])],
+          lockedAssignments: schedule.lockedAssignments,
+          isFinalized: schedule.isFinalized
+        });
+        
+        setSchedule(newSchedule);
+        alert(`✅ Smart Swap Complete!\n\n${result.swapsMade} swaps made\n${result.gapsFilled} gaps filled\n\nCheck the schedule for improvements.`);
+      } else {
+        alert('ℹ️ No beneficial swaps found.\n\nAll gaps may require staff who are already assigned or unavailable.');
+      }
+    } catch (error) {
+      console.error('Smart swap failed:', error);
+      alert('Smart swap failed. Please check the console for details.');
     } finally {
       setAutoAssigning(false);
     }
@@ -443,12 +582,45 @@ const handleManualAssignment = ({ staffId, studentId, session, program }) => {
   const staffMember = staff.find(s => s.id === staffId);
   const student = students.find(s => s.id === studentId);
   
+  if (!staffMember || !student) {
+    console.error('❌ Cannot assign: Staff or student not found');
+    return;
+  }
+
+  // CRITICAL CHECK 1: Staff must be on student's team
+  if (!student.teamIds.includes(staffId)) {
+    alert(`❌ Cannot assign ${staffMember.name} to ${student.name}.\n\n${staffMember.name} is not on ${student.name}'s team.\n\nOnly team members can be assigned to a student.`);
+    console.warn(`⚠️ Blocked assignment: ${staffMember.name} is not on ${student.name}'s team`);
+    return;
+  }
+
+  // CRITICAL CHECK 2: Prevent double-booking of staff
+  // Check if staff is already assigned in this session (any program)
+  const existingStaffAssignment = schedule.assignments.find(a => 
+    a.staffId === staffId && a.session === session
+  );
+
+  if (existingStaffAssignment) {
+    // Allow only if the student is 1:2 (paired) and staff is already with their paired partner
+    const isPairedStudent = student.isPaired();
+    const existingStudent = students.find(s => s.id === existingStaffAssignment.studentId);
+    const isWithPairedPartner = isPairedStudent && existingStudent && 
+      student.pairedWith === existingStudent.id;
+
+    if (!isWithPairedPartner) {
+      const existingStudentName = existingStudent ? existingStudent.name : 'unknown student';
+      alert(`❌ Cannot assign ${staffMember.name} to ${student.name} in ${session} session.\n\n${staffMember.name} is already assigned to ${existingStudentName} in the ${session} session.\n\nStaff can only be assigned to multiple students if they are in a 1:2 paired group.`);
+      console.warn(`⚠️ Blocked double-booking: ${staffMember.name} already assigned to ${existingStudentName} in ${session}`);
+      return;
+    }
+  }
+
   const assignment = new Assignment({
     id: SchedulingUtils.generateAssignmentId(),
     staffId,
-    staffName: staffMember ? staffMember.name : '',
+    staffName: staffMember.name,
     studentId,
-    studentName: student ? student.name : '',
+    studentName: student.name,
     session,
     program,
     date: currentDate,
@@ -493,17 +665,39 @@ const handleAssignmentRemove = (assignmentId) => {
 
   // Save schedule
   const handleSaveSchedule = async () => {
+    // Check if schedule was modified after we loaded it
+    if (schedule.lastModified && dataLoadedAt) {
+      const scheduleModifiedAt = new Date(schedule.lastModified);
+      if (scheduleModifiedAt > dataLoadedAt) {
+        const timeDiff = Math.floor((scheduleModifiedAt - dataLoadedAt) / 1000 / 60); // minutes
+        const confirmMessage = `⚠️ WARNING: This schedule was modified by ${schedule.lastModifiedBy} ${timeDiff} minute${timeDiff !== 1 ? 's' : ''} after you loaded the page.\n\nSaving now may overwrite their changes.\n\nRecommendation: Click "Cancel", then click the "Refresh" button to see their changes before making your edits.\n\nDo you want to save anyway and potentially overwrite their work?`;
+        
+        if (!window.confirm(confirmMessage)) {
+          return; // User chose not to save
+        }
+      }
+    }
+
     setSaving(true);
     try {
-      // Ensure schedule has the current date
-      const scheduleToSave = {
+      // Get current user info from SharePoint service
+      const currentUser = sharePointService.currentUser?.displayName || 'Unknown User';
+      const timestamp = new Date().toISOString();
+
+      // Update schedule with metadata before saving
+      const scheduleToSave = new Schedule({
         ...schedule,
-        date: currentDate.toISOString().split('T')[0]
-      };
+        date: currentDate.toISOString().split('T')[0],
+        lastModified: timestamp,
+        lastModifiedBy: currentUser
+      });
 
       const success = await sharePointService.saveSchedule(scheduleToSave);
       
       if (success) {
+        // Update local schedule state with metadata
+        setSchedule(scheduleToSave);
+        setDataLoadedAt(new Date()); // Reset the load time since we just saved
         console.log('✅ Schedule saved successfully to SharePoint');
         alert('Schedule saved successfully! Historical data is now available for rule checking.');
       } else {
@@ -890,6 +1084,16 @@ const handleAssignmentRemove = (assignmentId) => {
                 </button>
                 
                 <button
+                  onClick={handleSmartSwap}
+                  disabled={autoAssigning || loading || schedule.assignments.length === 0}
+                  className="bg-purple-600 text-white px-4 py-2 rounded hover:bg-purple-700 disabled:opacity-50 flex items-center gap-2"
+                  title="Fill gaps by swapping staff to enable team member assignments"
+                >
+                  {autoAssigning ? <RefreshCw className="w-4 h-4 animate-spin" /> : '🔀'}
+                  Smart Swap
+                </button>
+                
+                <button
                   onClick={handleSaveSchedule}
                   disabled={saving || loading}
                   className="bg-blue-600 text-white px-4 py-2 rounded hover:bg-blue-700 disabled:opacity-50 flex items-center gap-2"
@@ -990,6 +1194,48 @@ const handleAssignmentRemove = (assignmentId) => {
             {/* Schedule Tab */}
             {activeTab === 'schedule' && (
               <div className="space-y-6">
+                {/* Concurrent User Warning Banner */}
+                {schedule.lastModified && (
+                  <div className="bg-amber-50 border-l-4 border-amber-400 p-4 rounded-r-lg shadow-sm">
+                    <div className="flex items-start">
+                      <AlertCircle className="w-5 h-5 text-amber-600 mt-0.5 mr-3 flex-shrink-0" />
+                      <div className="flex-1">
+                        <h3 className="text-sm font-semibold text-amber-800">
+                          Schedule Status
+                        </h3>
+                        <p className="text-sm text-amber-700 mt-1">
+                          Last saved by <span className="font-medium">{schedule.lastModifiedBy}</span> at{' '}
+                          <span className="font-medium">
+                            {new Date(schedule.lastModified).toLocaleString()}
+                          </span>
+                        </p>
+                        <p className="text-xs text-amber-600 mt-2">
+                          ⚠️ If someone else is editing this schedule, their changes may overwrite yours. Click Refresh before making changes to see the latest version.
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+                )}
+                
+                {!schedule.lastModified && (
+                  <div className="bg-blue-50 border-l-4 border-blue-400 p-4 rounded-r-lg shadow-sm">
+                    <div className="flex items-start">
+                      <AlertCircle className="w-5 h-5 text-blue-600 mt-0.5 mr-3 flex-shrink-0" />
+                      <div className="flex-1">
+                        <h3 className="text-sm font-semibold text-blue-800">
+                          New Schedule
+                        </h3>
+                        <p className="text-sm text-blue-700 mt-1">
+                          This schedule hasn't been saved yet. Click "Save Schedule" to preserve your changes.
+                        </p>
+                        <p className="text-xs text-blue-600 mt-2">
+                          💡 Save frequently if multiple people are working on schedules to avoid losing your work.
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+                )}
+
                 <div className="grid grid-cols-1 lg:grid-cols-4 gap-6 mb-6">
                   <SessionSummary 
                     schedule={schedule} 

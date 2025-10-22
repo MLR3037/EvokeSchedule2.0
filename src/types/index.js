@@ -354,13 +354,17 @@ export class Schedule {
     assignments = [],
     traineeAssignments = [], // Array of trainee assignments (separate from regular assignments)
     lockedAssignments = new Set(),
-    isFinalized = false
+    isFinalized = false,
+    lastModified = null, // Timestamp of last modification
+    lastModifiedBy = null // User who last modified the schedule
   }) {
     this.date = date;
     this.assignments = assignments; // Array of Assignment objects
     this.traineeAssignments = traineeAssignments; // Array of trainee assignments
     this.lockedAssignments = lockedAssignments; // Set of assignment IDs that are manually locked
     this.isFinalized = isFinalized;
+    this.lastModified = lastModified; // Track when schedule was last saved
+    this.lastModifiedBy = lastModifiedBy; // Track who last saved the schedule
   }
 
   getAssignmentsForSession(session, program) {
@@ -533,6 +537,9 @@ export class SchedulingUtils {
       // Must be able to work this program
       if (!staffMember.canWorkProgram(program)) return false;
       
+      // CRITICAL: Must be on student's team
+      if (!student.teamIds.includes(staffMember.id)) return false;
+      
       // Must be available for this session
       if (!schedule.isStaffAvailable(staffMember.id, session, program)) return false;
       
@@ -557,9 +564,6 @@ export class SchedulingUtils {
       if (sessionRatio === RATIOS.ONE_TO_ONE && !staffMember.canDo1To1Sessions()) {
         return false; // Teacher/Trainer/Director/BCBA can't do 1:1 sessions
       }
-      
-      // Must not be excluded by student
-      // Note: excludedStaff validation removed - now using team-based assignments
       
       return true;
     });
