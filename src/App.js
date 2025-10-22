@@ -154,6 +154,13 @@ const ABAScheduler = () => {
       
       console.log(`✅ Loaded ${staffData.length} staff, ${studentsData.length} students at ${new Date().toLocaleTimeString()}`);
       
+      // Log attendance status after load
+      const absentStaff = staffData.filter(s => s.absentAM || s.absentPM || s.absentFullDay);
+      const absentStudents = studentsData.filter(s => s.absentAM || s.absentPM || s.absentFullDay);
+      if (absentStaff.length > 0 || absentStudents.length > 0) {
+        console.log(`📊 Attendance after load: ${absentStaff.length} staff absent, ${absentStudents.length} students absent`);
+      }
+      
       if (staffData.length === 0 && studentsData.length === 0) {
         console.warn('⚠️ No data loaded. Check authentication and SharePoint list names.');
       }
@@ -203,12 +210,15 @@ const ABAScheduler = () => {
           setStudents(clearedStudents);
           console.log('✅ Local attendance state cleared for', clearedStaff.length, 'staff and', clearedStudents.length, 'students');
           
-          // Clear attendance in SharePoint in the background (don't wait for it)
-          // Using the cleared arrays ensures we clear ALL staff/students, not just those marked absent
+          // Clear attendance in SharePoint synchronously to ensure it's saved before loading new date
           console.log('🧹 Clearing attendance in SharePoint...');
-          sharePointService.clearAllAttendanceInSharePoint(clearedStaff, clearedStudents)
-            .then(() => console.log('✅ SharePoint attendance cleared'))
-            .catch(err => console.error('Error clearing SharePoint attendance:', err));
+          try {
+            await sharePointService.clearAllAttendanceInSharePoint(clearedStaff, clearedStudents);
+            console.log('✅ SharePoint attendance cleared');
+          } catch (err) {
+            console.error('⚠️ Error clearing SharePoint attendance:', err);
+            // Continue anyway - local state is already cleared
+          }
         }
         
         // Update the date state
@@ -1078,19 +1088,10 @@ const handleAssignmentRemove = (assignmentId) => {
                   onClick={handleAutoAssign}
                   disabled={autoAssigning || loading}
                   className="bg-green-600 text-white px-4 py-2 rounded hover:bg-green-700 disabled:opacity-50 flex items-center gap-2"
+                  title="Automatically assign staff to students (includes smart swap optimization)"
                 >
                   {autoAssigning ? <RefreshCw className="w-4 h-4 animate-spin" /> : <Play className="w-4 h-4" />}
                   Auto Assign
-                </button>
-                
-                <button
-                  onClick={handleSmartSwap}
-                  disabled={autoAssigning || loading || schedule.assignments.length === 0}
-                  className="bg-purple-600 text-white px-4 py-2 rounded hover:bg-purple-700 disabled:opacity-50 flex items-center gap-2"
-                  title="Fill gaps by swapping staff to enable team member assignments"
-                >
-                  {autoAssigning ? <RefreshCw className="w-4 h-4 animate-spin" /> : '🔀'}
-                  Smart Swap
                 </button>
                 
                 <button
