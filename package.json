@@ -2,7 +2,7 @@
   "name": "evoke-schedule",
   "version": "0.1.0",
   "private": true,
-  "homepage": "https://mlr3037.github.io/EvokeSchedule2.0",
+  "homepage": "https://schedule.evokebehavioralhealth.com",
   "dependencies": {
     "@azure/msal-browser": "^4.25.0",
     "@azure/msal-react": "^3.0.20",
