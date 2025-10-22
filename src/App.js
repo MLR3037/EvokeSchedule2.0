@@ -1095,6 +1095,16 @@ const handleAssignmentRemove = (assignmentId) => {
                 </button>
                 
                 <button
+                  onClick={handleSmartSwap}
+                  disabled={autoAssigning || loading || schedule.assignments.length === 0}
+                  className="bg-purple-600 text-white px-4 py-2 rounded hover:bg-purple-700 disabled:opacity-50 flex items-center gap-2"
+                  title="Fill gaps by swapping staff to enable team member assignments"
+                >
+                  {autoAssigning ? <RefreshCw className="w-4 h-4 animate-spin" /> : '🔀'}
+                  Smart Swap
+                </button>
+                
+                <button
                   onClick={handleSaveSchedule}
                   disabled={saving || loading}
                   className="bg-blue-600 text-white px-4 py-2 rounded hover:bg-blue-700 disabled:opacity-50 flex items-center gap-2"
