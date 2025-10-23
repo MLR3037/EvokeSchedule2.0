@@ -29,28 +29,21 @@ export class ExcelExportService {
 
       // Set column widths for better readability
       scheduleSheet['!cols'] = [
-        { wch: 20 }, // Client Name
-        { wch: 12 }, // Program
-        { wch: 25 }, // AM Staff
-        { wch: 10 }, // AM Start
-        { wch: 10 }, // AM End
-        { wch: 15 }, // Lunch 1 Cov
-        { wch: 15 }, // Lunch 2 Cov
-        { wch: 25 }, // PM Staff
-        { wch: 10 }, // PM Start
-        { wch: 10 }  // PM End
+        { wch: 25 }, // Client
+        { wch: 15 }, // Program
+        { wch: 30 }, // AM Staff
+        { wch: 30 }  // PM Staff
       ];
 
       absencesSheet['!cols'] = [
         { wch: 25 }, // Name
-        { wch: 15 }, // Staff/Student
-        { wch: 12 }, // Absent AM
-        { wch: 12 }  // Absent PM
+        { wch: 15 }, // Role
+        { wch: 20 }  // Status
       ];
 
       // Add worksheets to workbook
       XLSX.utils.book_append_sheet(workbook, scheduleSheet, 'Schedule');
-      XLSX.utils.book_append_sheet(workbook, absencesSheet, 'Absences');
+      XLSX.utils.book_append_sheet(workbook, absencesSheet, 'Staff Attendance');
 
       // Format the date for filename
       const dateStr = date.toLocaleDateString('en-US', { 
@@ -83,16 +76,10 @@ export class ExcelExportService {
     
     // Header row
     data.push([
-      'Client Name',
+      'Client',
       'Program',
       'AM Staff',
-      'AM Start',
-      'AM End',
-      'Lunch 1 Cov',
-      'Lunch 2 Cov',
-      'PM Staff',
-      'PM Start',
-      'PM End'
+      'PM Staff'
     ]);
 
     // Get all active students, sorted by name
@@ -158,13 +145,7 @@ export class ExcelExportService {
           student.name,
           student.program,
           isAbsentAM ? 'ABSENT' : uniqueAmStaff || '',
-          '', // AM Start (to be filled in)
-          '', // AM End (to be filled in)
-          '', // Lunch 1 Cov
-          '', // Lunch 2 Cov
-          isAbsentPM ? 'ABSENT' : uniquePmStaff || '',
-          '', // PM Start (to be filled in)
-          ''  // PM End (to be filled in)
+          isAbsentPM ? 'ABSENT' : uniquePmStaff || ''
         ]);
       }
 
@@ -176,13 +157,7 @@ export class ExcelExportService {
             student.name + ' (Trainee)',
             student.program,
             traineeStaff.name,
-            '', // AM Start
-            '', // AM End
-            '', // Lunch 1 Cov
-            '', // Lunch 2 Cov
-            '', // PM Staff (trainee is AM only)
-            '', // PM Start
-            ''  // PM End
+            '' // PM Staff (trainee is AM only)
           ]);
         }
       }
@@ -194,13 +169,7 @@ export class ExcelExportService {
             student.name + ' (Trainee)',
             student.program,
             '', // AM Staff (trainee is PM only)
-            '', // AM Start
-            '', // AM End
-            '', // Lunch 1 Cov
-            '', // Lunch 2 Cov
-            traineeStaff.name,
-            '', // PM Start
-            ''  // PM End
+            traineeStaff.name
           ]);
         }
       }
@@ -221,64 +190,60 @@ export class ExcelExportService {
     // Header row
     data.push([
       'Name',
-      'Staff/Student',
-      'Absent AM',
-      'Absent PM'
+      'Role',
+      'Status'
     ]);
 
-    // Collect all absences
-    const absences = [];
+    // Collect all staff with their status
+    const staffList = [];
 
-    // Student absences
-    students.forEach(student => {
-      if (!student.isActive) return;
-      
-      const absentAM = !student.isAvailableForSession('AM');
-      const absentPM = !student.isAvailableForSession('PM');
-      
-      if (absentAM || absentPM) {
-        absences.push({
-          name: student.name,
-          type: 'Student',
-          absentAM: absentAM ? 'Yes' : 'No',
-          absentPM: absentPM ? 'Yes' : 'No'
-        });
-      }
-    });
-
-    // Staff absences
+    // Process all active staff
     staff.forEach(staffMember => {
       if (!staffMember.isActive) return;
       
-      const absentAM = !staffMember.isAvailableForSession('AM');
-      const absentPM = !staffMember.isAvailableForSession('PM');
+      // Determine status based on attendance flags
+      let status = 'Present';
       
-      if (absentAM || absentPM) {
-        absences.push({
-          name: staffMember.name,
-          type: 'Staff',
-          absentAM: absentAM ? 'Yes' : 'No',
-          absentPM: absentPM ? 'Yes' : 'No'
-        });
+      if (staffMember.absentFullDay) {
+        status = 'Absent Full Day';
+      } else if (staffMember.absentAM && staffMember.absentPM) {
+        status = 'Absent Full Day';
+      } else if (staffMember.absentAM) {
+        status = 'Absent AM';
+      } else if (staffMember.absentPM) {
+        status = 'Absent PM';
+      } else if (staffMember.outOfSessionFullDay) {
+        status = 'Out Session Full Day';
+      } else if (staffMember.outOfSessionAM && staffMember.outOfSessionPM) {
+        status = 'Out Session Full Day';
+      } else if (staffMember.outOfSessionAM) {
+        status = 'Out Session AM';
+      } else if (staffMember.outOfSessionPM) {
+        status = 'Out Session PM';
       }
+      
+      staffList.push({
+        name: staffMember.name,
+        role: staffMember.role,
+        status: status
+      });
     });
 
-    // Sort absences by name
-    absences.sort((a, b) => a.name.localeCompare(b.name));
+    // Sort staff by name
+    staffList.sort((a, b) => a.name.localeCompare(b.name));
 
     // Add to data array
-    absences.forEach(absence => {
+    staffList.forEach(staff => {
       data.push([
-        absence.name,
-        absence.type,
-        absence.absentAM,
-        absence.absentPM
+        staff.name,
+        staff.role,
+        staff.status
       ]);
     });
 
-    // Add a row if no absences
-    if (absences.length === 0) {
-      data.push(['No absences recorded', '', '', '']);
+    // Add a row if no staff
+    if (staffList.length === 0) {
+      data.push(['No active staff found', '', '']);
     }
 
     return data;

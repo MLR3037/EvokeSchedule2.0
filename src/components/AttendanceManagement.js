@@ -53,7 +53,10 @@ export const AttendanceManagement = ({
     const updates = {
       absentAM: staffMember.absentAM || false,
       absentPM: staffMember.absentPM || false,
-      absentFullDay: staffMember.absentFullDay || false
+      absentFullDay: staffMember.absentFullDay || false,
+      outOfSessionAM: staffMember.outOfSessionAM || false,
+      outOfSessionPM: staffMember.outOfSessionPM || false,
+      outOfSessionFullDay: staffMember.outOfSessionFullDay || false
     };
     
     if (field === 'absentFullDay') {
@@ -69,6 +72,20 @@ export const AttendanceManagement = ({
       updates.absentPM = value;
       if (!value && !updates.absentAM) {
         updates.absentFullDay = false;
+      }
+    } else if (field === 'outOfSessionFullDay') {
+      updates.outOfSessionFullDay = value;
+      updates.outOfSessionAM = value;
+      updates.outOfSessionPM = value;
+    } else if (field === 'outOfSessionAM') {
+      updates.outOfSessionAM = value;
+      if (!value && !updates.outOfSessionPM) {
+        updates.outOfSessionFullDay = false;
+      }
+    } else if (field === 'outOfSessionPM') {
+      updates.outOfSessionPM = value;
+      if (!value && !updates.outOfSessionAM) {
+        updates.outOfSessionFullDay = false;
       }
     }
 
@@ -131,6 +148,27 @@ export const AttendanceManagement = ({
         <span className="px-2 py-1 bg-orange-100 text-orange-800 rounded-full text-xs font-medium flex items-center gap-1">
           <AlertCircle className="w-3 h-3" />
           Absent PM
+        </span>
+      );
+    } else if (status === 'Out Full Day') {
+      return (
+        <span className="px-2 py-1 bg-cyan-100 text-cyan-800 rounded-full text-xs font-medium flex items-center gap-1">
+          <AlertCircle className="w-3 h-3" />
+          Out Full Day
+        </span>
+      );
+    } else if (status === 'Out AM') {
+      return (
+        <span className="px-2 py-1 bg-blue-100 text-blue-800 rounded-full text-xs font-medium flex items-center gap-1">
+          <AlertCircle className="w-3 h-3" />
+          Out AM
+        </span>
+      );
+    } else if (status === 'Out PM') {
+      return (
+        <span className="px-2 py-1 bg-indigo-100 text-indigo-800 rounded-full text-xs font-medium flex items-center gap-1">
+          <AlertCircle className="w-3 h-3" />
+          Out PM
         </span>
       );
     }
@@ -297,6 +335,45 @@ export const AttendanceManagement = ({
                       />
                       <span className="text-sm text-gray-700 font-medium">Full Day</span>
                     </label>
+                  </div>
+
+                  {/* Out of Session Section */}
+                  <div className="mt-3 pt-3 border-t border-gray-200">
+                    <div className="text-xs text-gray-500 font-medium mb-2">Out of Session (Meetings, etc.)</div>
+                    <div className="grid grid-cols-3 gap-3">
+                      <label className="flex items-center gap-2 cursor-pointer">
+                        <input
+                          type="checkbox"
+                          checked={staffMember.outOfSessionAM || staffMember.outOfSessionFullDay}
+                          onChange={(e) => handleStaffAttendanceChange(staffMember, 'outOfSessionAM', e.target.checked)}
+                          disabled={staffMember.outOfSessionFullDay || staffMember.absentAM || staffMember.absentFullDay}
+                          className="rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                        />
+                        <span className="text-sm text-gray-700">Out AM</span>
+                      </label>
+
+                      <label className="flex items-center gap-2 cursor-pointer">
+                        <input
+                          type="checkbox"
+                          checked={staffMember.outOfSessionPM || staffMember.outOfSessionFullDay}
+                          onChange={(e) => handleStaffAttendanceChange(staffMember, 'outOfSessionPM', e.target.checked)}
+                          disabled={staffMember.outOfSessionFullDay || staffMember.absentPM || staffMember.absentFullDay}
+                          className="rounded border-gray-300 text-indigo-600 focus:ring-indigo-500"
+                        />
+                        <span className="text-sm text-gray-700">Out PM</span>
+                      </label>
+
+                      <label className="flex items-center gap-2 cursor-pointer">
+                        <input
+                          type="checkbox"
+                          checked={staffMember.outOfSessionFullDay}
+                          onChange={(e) => handleStaffAttendanceChange(staffMember, 'outOfSessionFullDay', e.target.checked)}
+                          disabled={staffMember.absentFullDay}
+                          className="rounded border-gray-300 text-cyan-600 focus:ring-cyan-500"
+                        />
+                        <span className="text-sm text-gray-700 font-medium">Out Full Day</span>
+                      </label>
+                    </div>
                   </div>
                 </div>
               ))

@@ -244,7 +244,10 @@ const ABAScheduler = () => {
         ...s,
         absentAM: false,
         absentPM: false,
-        absentFullDay: false
+        absentFullDay: false,
+        outOfSessionAM: false,
+        outOfSessionPM: false,
+        outOfSessionFullDay: false
       }));
       
       // Clear attendance for all students
@@ -274,7 +277,7 @@ const ABAScheduler = () => {
       ];
       
       await Promise.all(savePromises);
-      console.log('✅ All attendance cleared for new day');
+      console.log('✅ All attendance and out-of-session status cleared for new day');
     } catch (error) {
       console.error('Error clearing attendance:', error);
     }
@@ -894,23 +897,31 @@ const handleAssignmentRemove = (assignmentId) => {
             ...s,
             absentAM: attendanceData.absentAM,
             absentPM: attendanceData.absentPM,
-            absentFullDay: attendanceData.absentFullDay
+            absentFullDay: attendanceData.absentFullDay,
+            outOfSessionAM: attendanceData.outOfSessionAM,
+            outOfSessionPM: attendanceData.outOfSessionPM,
+            outOfSessionFullDay: attendanceData.outOfSessionFullDay
           });
         }
         return s;
       });
       setStaff(updatedStaff);
 
-      // AUTO-CLEANUP: Remove staff from schedule if marked absent
-      if (attendanceData.absentAM || attendanceData.absentPM || attendanceData.absentFullDay) {
-        console.log(`🗑️ Staff ${staffMember.name} marked absent - removing from schedule...`);
+      // AUTO-CLEANUP: Remove staff from schedule if marked absent OR out of session
+      const isUnavailableAM = attendanceData.absentAM || attendanceData.absentFullDay || 
+                              attendanceData.outOfSessionAM || attendanceData.outOfSessionFullDay;
+      const isUnavailablePM = attendanceData.absentPM || attendanceData.absentFullDay || 
+                              attendanceData.outOfSessionPM || attendanceData.outOfSessionFullDay;
+      
+      if (isUnavailableAM || isUnavailablePM) {
+        console.log(`🗑️ Staff ${staffMember.name} marked unavailable - removing from schedule...`);
         
         const sessionsToRemove = [];
-        if (attendanceData.absentFullDay) {
+        if ((attendanceData.absentFullDay || attendanceData.outOfSessionFullDay)) {
           sessionsToRemove.push('AM', 'PM');
         } else {
-          if (attendanceData.absentAM) sessionsToRemove.push('AM');
-          if (attendanceData.absentPM) sessionsToRemove.push('PM');
+          if (isUnavailableAM) sessionsToRemove.push('AM');
+          if (isUnavailablePM) sessionsToRemove.push('PM');
         }
 
         // Remove all assignments for this staff in the affected sessions
@@ -932,7 +943,10 @@ const handleAssignmentRemove = (assignmentId) => {
         ...staffMember,
         absentAM: attendanceData.absentAM,
         absentPM: attendanceData.absentPM,
-        absentFullDay: attendanceData.absentFullDay
+        absentFullDay: attendanceData.absentFullDay,
+        outOfSessionAM: attendanceData.outOfSessionAM,
+        outOfSessionPM: attendanceData.outOfSessionPM,
+        outOfSessionFullDay: attendanceData.outOfSessionFullDay
       });
       await sharePointService.saveStaff(updatedStaffMember, true);
       

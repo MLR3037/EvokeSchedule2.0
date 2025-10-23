@@ -58,7 +58,10 @@ export class Staff {
     isActive = true,
     absentAM = false, // Absent for AM session
     absentPM = false, // Absent for PM session
-    absentFullDay = false // Absent for full day (both sessions)
+    absentFullDay = false, // Absent for full day (both sessions)
+    outOfSessionAM = false, // Out of session for AM (meetings, etc.)
+    outOfSessionPM = false, // Out of session for PM (meetings, etc.)
+    outOfSessionFullDay = false // Out of session for full day (meetings, etc.)
   }) {
     this.id = id;
     this.listItemId = listItemId; // For SharePoint updates
@@ -93,6 +96,11 @@ export class Staff {
     this.absentFullDay = absentFullDay;
     this.absentAM = absentFullDay ? true : absentAM; // If full day absent, AM is also absent
     this.absentPM = absentFullDay ? true : absentPM; // If full day absent, PM is also absent
+    
+    // Out of session tracking (meetings, trainings, etc.)
+    this.outOfSessionFullDay = outOfSessionFullDay;
+    this.outOfSessionAM = outOfSessionFullDay ? true : outOfSessionAM;
+    this.outOfSessionPM = outOfSessionFullDay ? true : outOfSessionPM;
   }
 
   getRoleLevel() {
@@ -131,25 +139,32 @@ export class Staff {
   /**
    * Check if staff member is available for a specific session
    * @param {string} session - 'AM' or 'PM'
-   * @returns {boolean} True if staff is available (not absent)
+   * @returns {boolean} True if staff is available (not absent or out of session)
    */
   isAvailableForSession(session) {
     if (!this.isActive) return false;
-    if (this.absentFullDay) return false;
-    if (session === 'AM') return !this.absentAM;
-    if (session === 'PM') return !this.absentPM;
+    if (this.absentFullDay || this.outOfSessionFullDay) return false;
+    if (session === 'AM') return !this.absentAM && !this.outOfSessionAM;
+    if (session === 'PM') return !this.absentPM && !this.outOfSessionPM;
     return true;
   }
 
   /**
    * Get attendance status string
-   * @returns {string} 'Present', 'Absent AM', 'Absent PM', or 'Absent Full Day'
+   * @returns {string} 'Present', 'Absent AM', 'Absent PM', 'Absent Full Day', 'Out AM', 'Out PM', or 'Out Full Day'
    */
   getAttendanceStatus() {
     if (this.absentFullDay) return 'Absent Full Day';
     if (this.absentAM && this.absentPM) return 'Absent Full Day';
     if (this.absentAM) return 'Absent AM';
     if (this.absentPM) return 'Absent PM';
+    
+    // Check out of session status
+    if (this.outOfSessionFullDay) return 'Out Full Day';
+    if (this.outOfSessionAM && this.outOfSessionPM) return 'Out Full Day';
+    if (this.outOfSessionAM) return 'Out AM';
+    if (this.outOfSessionPM) return 'Out PM';
+    
     return 'Present';
   }
 

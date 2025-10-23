@@ -347,7 +347,7 @@ export class SharePointService {
       
       // Staff list uses Person/Group field, so we need to expand it
       const url = `${this.config.siteUrl}/_api/web/lists/getbytitle('${this.config.staffListName}')/items?` +
-        `$select=Id,StaffPerson/Id,StaffPerson/Title,StaffPerson/EMail,Role,PrimaryProgram,SecondaryProgram,IsActive,AbsentAM,AbsentPM,AbsentFullDay&` +
+        `$select=Id,StaffPerson/Id,StaffPerson/Title,StaffPerson/EMail,Role,PrimaryProgram,SecondaryProgram,IsActive,AbsentAM,AbsentPM,AbsentFullDay,OutOfSessionAM,OutOfSessionPM,OutOfSessionFullDay&` +
         `$expand=StaffPerson&` +
         `$top=5000`;
 
@@ -388,7 +388,10 @@ export class SharePointService {
           isActive: item.IsActive !== false,
           absentAM: item.AbsentAM === true,
           absentPM: item.AbsentPM === true,
-          absentFullDay: item.AbsentFullDay === true
+          absentFullDay: item.AbsentFullDay === true,
+          outOfSessionAM: item.OutOfSessionAM === true,
+          outOfSessionPM: item.OutOfSessionPM === true,
+          outOfSessionFullDay: item.OutOfSessionFullDay === true
         });
 
         console.log(`✅ Loaded staff: ${staff.name} (${staff.role}) - Primary: ${staff.primaryProgram}, Secondary: ${staff.secondaryProgram}`);
@@ -568,7 +571,10 @@ export class SharePointService {
         IsActive: staff.isActive,
         AbsentAM: staff.absentAM || false,
         AbsentPM: staff.absentPM || false,
-        AbsentFullDay: staff.absentFullDay || false
+        AbsentFullDay: staff.absentFullDay || false,
+        OutOfSessionAM: staff.outOfSessionAM || false,
+        OutOfSessionPM: staff.outOfSessionPM || false,
+        OutOfSessionFullDay: staff.outOfSessionFullDay || false
       };
 
       const response = await this.makeRequest(url, {
