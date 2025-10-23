@@ -83,29 +83,29 @@ export const ScheduleTableView = ({
         if (!fullName) return null;
         
         // Find staff member by email to get role info (more reliable than name matching)
-        let staffRole = 'RBT'; // Default role
+        let staffMember = null;
         let staffEmail = teamMember.email;
         
         if (teamMember.email) {
-          const staffMember = staff.find(s => s.email && s.email.toLowerCase() === teamMember.email.toLowerCase());
-          if (staffMember) {
-            staffRole = staffMember.role;
-          }
+          staffMember = staff.find(s => s.email && s.email.toLowerCase() === teamMember.email.toLowerCase());
         }
         
         // If email match failed, try ID match as backup
-        if (staffRole === 'RBT' && teamMember.id) {
-          const staffMember = staff.find(s => s.id === teamMember.id);
-          if (staffMember) {
-            staffRole = staffMember.role;
-          }
+        if (!staffMember && teamMember.id) {
+          staffMember = staff.find(s => s.id === teamMember.id);
+        }
+        
+        // FILTER OUT: If staff member not found in active staff list, they've been deleted
+        if (!staffMember) {
+          console.log(`⚠️ Skipping deleted staff member: ${fullName} (not in active staff list)`);
+          return null;
         }
         
         // Return team member using ONLY People Picker data
         return {
           id: teamMember.id,
           name: fullName, // Use ONLY the full name from People Picker
-          role: staffRole, // Role from staff list match
+          role: staffMember.role, // Role from staff list match
           email: staffEmail
         };
       }).filter(Boolean);

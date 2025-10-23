@@ -1011,6 +1011,89 @@ const handleAssignmentRemove = (assignmentId) => {
     }
   };
 
+  // Clean up deleted staff from student teams
+  const handleCleanupDeletedStaff = async () => {
+    if (!window.confirm('This will remove deleted staff members from all student teams. This action cannot be undone. Continue?')) {
+      return;
+    }
+
+    setSaving(true);
+    try {
+      console.log('🧹 Starting cleanup of deleted staff from student teams...');
+      
+      const activeStaffIds = new Set(staff.filter(s => s.isActive).map(s => s.id));
+      const activeStaffEmails = new Set(staff.filter(s => s.isActive && s.email).map(s => s.email.toLowerCase()));
+      
+      let totalCleaned = 0;
+      const updatedStudents = [];
+
+      for (const student of students) {
+        if (!student.team || student.team.length === 0) continue;
+
+        const originalTeamSize = student.team.length;
+        
+        // Filter out deleted staff (not in active staff list)
+        const cleanedTeam = student.team.filter(teamMember => {
+          // Check by email first (most reliable)
+          if (teamMember.email) {
+            const found = activeStaffEmails.has(teamMember.email.toLowerCase());
+            if (found) return true;
+          }
+          
+          // Check by ID
+          if (teamMember.id) {
+            const found = activeStaffIds.has(teamMember.id);
+            if (found) return true;
+          }
+          
+          // Staff member not found - they've been deleted
+          console.log(`  🗑️ Removing deleted staff "${teamMember.title || teamMember.name}" from ${student.name}'s team`);
+          return false;
+        });
+
+        // If team changed, update the student
+        if (cleanedTeam.length !== originalTeamSize) {
+          const removedCount = originalTeamSize - cleanedTeam.length;
+          totalCleaned += removedCount;
+          console.log(`  ✅ Cleaned ${removedCount} deleted staff from ${student.name}'s team`);
+          
+          // Update student with cleaned team
+          const cleanedStudent = new Student({
+            ...student,
+            team: cleanedTeam,
+            teamIds: cleanedTeam.map(t => t.id)
+          });
+          
+          updatedStudents.push(cleanedStudent);
+        }
+      }
+
+      if (updatedStudents.length === 0) {
+        alert('No deleted staff found in student teams. All teams are clean!');
+        return;
+      }
+
+      // Save all updated students to SharePoint
+      console.log(`💾 Saving ${updatedStudents.length} students with cleaned teams...`);
+      
+      for (const student of updatedStudents) {
+        await sharePointService.saveStudent(student, true);
+      }
+
+      // Reload data to reflect changes
+      await loadData();
+      
+      alert(`Successfully cleaned up ${totalCleaned} deleted staff member(s) from ${updatedStudents.length} student team(s)!`);
+      console.log(`✅ Cleanup complete: ${totalCleaned} deleted staff removed from ${updatedStudents.length} student teams`);
+      
+    } catch (error) {
+      console.error('❌ Error cleaning up deleted staff:', error);
+      alert(`Failed to clean up deleted staff: ${error.message}`);
+    } finally {
+      setSaving(false);
+    }
+  };
+
   // Training management
   const handleUpdateStudentTrainingStatus = async (studentId, staffId, newStatus) => {
     try {
@@ -1543,6 +1626,7 @@ const handleAssignmentRemove = (assignmentId) => {
                   setEditingStudent(student);
                   setShowAddStudent(true);
                 }}
+                onCleanupDeletedStaff={handleCleanupDeletedStaff}
               />
             )}
 

@@ -8,7 +8,8 @@ export const TeamManagement = ({
   staff, 
   students, 
   onEditStudent,
-  onEditStaff 
+  onEditStaff,
+  onCleanupDeletedStaff
 }) => {
   const [view, setView] = useState('clients-by-staff'); // or 'staff-by-client'
   const [searchTerm, setSearchTerm] = useState('');
@@ -196,10 +197,26 @@ export const TeamManagement = ({
   return (
     <div className="bg-white rounded-lg shadow-lg">
       <div className="bg-indigo-600 text-white p-4 rounded-t-lg">
-        <h2 className="text-xl font-bold flex items-center gap-2">
-          <Users className="w-5 h-5" />
-          Team Management
-        </h2>
+        <div className="flex justify-between items-center">
+          <h2 className="text-xl font-bold flex items-center gap-2">
+            <Users className="w-5 h-5" />
+            Team Management
+          </h2>
+          
+          {/* Cleanup Button */}
+          {onCleanupDeletedStaff && (
+            <button
+              onClick={onCleanupDeletedStaff}
+              className="px-4 py-2 bg-white text-indigo-600 rounded-md hover:bg-indigo-50 transition-colors text-sm font-medium flex items-center gap-2"
+              title="Remove deleted staff from all student teams"
+            >
+              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+              </svg>
+              Clean Up Teams
+            </button>
+          )}
+        </div>
       </div>
 
       <div className="p-6">
