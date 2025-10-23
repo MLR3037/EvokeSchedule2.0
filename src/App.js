@@ -901,6 +901,32 @@ const handleAssignmentRemove = (assignmentId) => {
       });
       setStaff(updatedStaff);
 
+      // AUTO-CLEANUP: Remove staff from schedule if marked absent
+      if (attendanceData.absentAM || attendanceData.absentPM || attendanceData.absentFullDay) {
+        console.log(`🗑️ Staff ${staffMember.name} marked absent - removing from schedule...`);
+        
+        const sessionsToRemove = [];
+        if (attendanceData.absentFullDay) {
+          sessionsToRemove.push('AM', 'PM');
+        } else {
+          if (attendanceData.absentAM) sessionsToRemove.push('AM');
+          if (attendanceData.absentPM) sessionsToRemove.push('PM');
+        }
+
+        // Remove all assignments for this staff in the affected sessions
+        const removedCount = schedule.removeStaffFromSessions(staffId, sessionsToRemove);
+        
+        if (removedCount > 0) {
+          console.log(`  ✅ Removed ${removedCount} assignment(s) for ${staffMember.name}`);
+          // Trigger re-render by updating schedule state
+          setSchedule(new Schedule({ 
+            ...schedule, 
+            assignments: [...schedule.assignments],
+            traineeAssignments: [...schedule.traineeAssignments]
+          }));
+        }
+      }
+
       // Save to SharePoint in background
       const updatedStaffMember = new Staff({
         ...staffMember,
@@ -940,6 +966,32 @@ const handleAssignmentRemove = (assignmentId) => {
         return s;
       });
       setStudents(updatedStudents);
+
+      // AUTO-CLEANUP: Remove student assignments and free up staff if marked absent
+      if (attendanceData.absentAM || attendanceData.absentPM || attendanceData.absentFullDay) {
+        console.log(`🗑️ Student ${student.name} marked absent - removing from schedule...`);
+        
+        const sessionsToRemove = [];
+        if (attendanceData.absentFullDay) {
+          sessionsToRemove.push('AM', 'PM');
+        } else {
+          if (attendanceData.absentAM) sessionsToRemove.push('AM');
+          if (attendanceData.absentPM) sessionsToRemove.push('PM');
+        }
+
+        // Remove all assignments for this student in the affected sessions
+        const removedCount = schedule.removeStudentFromSessions(studentId, sessionsToRemove);
+        
+        if (removedCount > 0) {
+          console.log(`  ✅ Removed ${removedCount} assignment(s) for ${student.name} - staff are now available`);
+          // Trigger re-render by updating schedule state
+          setSchedule(new Schedule({ 
+            ...schedule, 
+            assignments: [...schedule.assignments],
+            traineeAssignments: [...schedule.traineeAssignments]
+          }));
+        }
+      }
 
       // Save to SharePoint in background
       const updatedStudent = new Student({

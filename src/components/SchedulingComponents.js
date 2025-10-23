@@ -59,16 +59,16 @@ export const ScheduleTableView = ({
   // Generate role color mapping
   const getRoleColor = (role) => {
     const roleColors = {
-      'RBT': 'bg-purple-100 text-purple-800',
-      'BS': 'bg-indigo-100 text-indigo-800', 
-      'BCBA': 'bg-blue-100 text-blue-800',
-      'EA': 'bg-green-100 text-green-800',
-      'MHA': 'bg-yellow-100 text-yellow-800',
-      'CC': 'bg-orange-100 text-orange-800',
-      'Teacher': 'bg-pink-100 text-pink-800',
-      'Director': 'bg-gray-100 text-gray-800'
+      'RBT': 'bg-purple-100 text-purple-700 font-bold',
+      'BS': 'bg-blue-100 text-blue-700 font-bold', 
+      'BCBA': 'bg-orange-100 text-orange-700 font-bold',
+      'EA': 'bg-green-100 text-green-700 font-bold',
+      'MHA': 'bg-yellow-100 text-yellow-800 font-bold',
+      'CC': 'bg-red-100 text-red-700 font-bold',
+      'Teacher': 'bg-pink-100 text-pink-700 font-bold',
+      'Director': 'bg-gray-100 text-gray-800 font-bold'
     };
-    return roleColors[role] || 'bg-gray-100 text-gray-800';
+    return roleColors[role] || 'bg-gray-100 text-gray-800 font-bold';
   };
 
   const getStudentTeam = (student) => {
@@ -130,12 +130,66 @@ export const ScheduleTableView = ({
 
   const handleStaffSelection = (studentId, session, staffId, staffIndex = 0) => {
     const key = getPreAssignmentKey(studentId, session, staffIndex);
-    setPreAssignments(prev => ({
-      ...prev,
-      [key]: staffId ? parseInt(staffId) : null
-    }));
     
     console.log(`📝 Staff selected: Student ${studentId}, Session ${session}, Staff ${staffId}, Index ${staffIndex}`);
+    
+    if (!staffId) {
+      // If clearing the selection, just update pre-assignments
+      setPreAssignments(prev => ({
+        ...prev,
+        [key]: null
+      }));
+      return;
+    }
+    
+    // AUTO-LOCK: Immediately lock the assignment when staff is selected
+    const parsedStaffId = parseInt(staffId);
+    const student = students.find(s => s.id === studentId);
+    
+    if (student && onManualAssignment) {
+      console.log(`🔒 AUTO-LOCKING assignment: ${parsedStaffId} → ${student.name} (${session})`);
+      
+      onManualAssignment({
+        staffId: parsedStaffId,
+        studentId: studentId,
+        session: session,
+        program: student.program
+      });
+      
+      // Add to locked assignments
+      setLockedAssignments(prev => new Set([...prev, key]));
+      
+      console.log(`✅ Assignment auto-locked successfully`);
+      
+      // If this student is paired, also create the assignment for their pair partner
+      if (student.isPaired && student.isPaired()) {
+        const pairedStudent = student.getPairedStudent(students);
+        if (pairedStudent) {
+          console.log(`🔗 LINKED PAIR: Also assigning ${parsedStaffId} to pair partner ${pairedStudent.name}`);
+          
+          // Check the ratio for the paired student's session
+          const pairedRatio = session === 'AM' ? pairedStudent.ratioAM : pairedStudent.ratioPM;
+          
+          // Only auto-assign if the paired student also has a 1:2 ratio for this session
+          if (pairedRatio === '1:2') {
+            onManualAssignment({
+              staffId: parsedStaffId,
+              studentId: pairedStudent.id,
+              session: session,
+              program: pairedStudent.program
+            });
+            
+            // Mark the paired student's assignment as locked too
+            const pairedKey = getPreAssignmentKey(pairedStudent.id, session, staffIndex);
+            setLockedAssignments(prev => new Set([...prev, pairedKey]));
+            
+            console.log(`✅ Pair partner assignment auto-locked: ${pairedStudent.name} with same staff`);
+          } else {
+            console.log(`⚠️ Pair partner ${pairedStudent.name} has ratio ${pairedRatio}, not auto-assigning`);
+          }
+        }
+      }
+    }
   };
 
   const handleLockAssignment = (studentId, session, staffIndex = 0) => {
@@ -145,7 +199,7 @@ export const ScheduleTableView = ({
     console.log(`🔒 Locking assignment: Student ${studentId}, Session ${session}, Staff ${staffId}`);
     
     if (staffId) {
-      // Create manual assignment
+      // Create manual assignment for the current student
       const student = students.find(s => s.id === studentId);
       if (student && onManualAssignment) {
         console.log(`📤 Calling onManualAssignment with:`, {
@@ -173,6 +227,35 @@ export const ScheduleTableView = ({
         });
         
         console.log(`✅ Assignment locked successfully`);
+        
+        // If this student is paired, also create the assignment for their pair partner
+        if (student.isPaired && student.isPaired()) {
+          const pairedStudent = student.getPairedStudent(students);
+          if (pairedStudent) {
+            console.log(`🔗 LINKED PAIR: Also assigning ${staffId} to pair partner ${pairedStudent.name}`);
+            
+            // Check the ratio for the paired student's session
+            const pairedRatio = session === 'AM' ? pairedStudent.ratioAM : pairedStudent.ratioPM;
+            
+            // Only auto-assign if the paired student also has a 1:2 ratio for this session
+            if (pairedRatio === '1:2') {
+              onManualAssignment({
+                staffId: staffId,
+                studentId: pairedStudent.id,
+                session: session,
+                program: pairedStudent.program
+              });
+              
+              // Mark the paired student's assignment as locked too
+              const pairedKey = getPreAssignmentKey(pairedStudent.id, session, staffIndex);
+              setLockedAssignments(prev => new Set([...prev, pairedKey]));
+              
+              console.log(`✅ Pair partner assignment locked: ${pairedStudent.name} with same staff`);
+            } else {
+              console.log(`⚠️ Pair partner ${pairedStudent.name} has ratio ${pairedRatio}, not auto-assigning`);
+            }
+          }
+        }
       }
     } else {
       console.warn(`⚠️ No staff selected for ${studentId} ${session}`);
@@ -192,6 +275,9 @@ export const ScheduleTableView = ({
     if (currentAssignment) {
       console.log(`🗑️ Removing assignment ID: ${currentAssignment.id} (Index ${staffIndex})`);
       
+      // Store the staff ID before removing, for paired unlocking
+      const staffId = currentAssignment.staffId;
+      
       // Remove the actual assignment
       if (onAssignmentRemove) {
         onAssignmentRemove(currentAssignment.id);
@@ -200,6 +286,40 @@ export const ScheduleTableView = ({
       // Also unlock via parent handler if available
       if (onAssignmentUnlock) {
         onAssignmentUnlock(currentAssignment.id);
+      }
+      
+      // If this student is paired, also unlock the same staff from their pair partner
+      if (student.isPaired && student.isPaired()) {
+        const pairedStudent = student.getPairedStudent(students);
+        if (pairedStudent) {
+          console.log(`🔗 LINKED PAIR: Also removing ${staffId} from pair partner ${pairedStudent.name}`);
+          
+          // Find the assignment with the same staff for the paired student
+          const pairedAssignments = getStudentAssignments(pairedStudent, session);
+          const pairedAssignment = pairedAssignments.find(a => a.staffId === staffId);
+          
+          if (pairedAssignment) {
+            console.log(`🗑️ Removing paired assignment ID: ${pairedAssignment.id}`);
+            
+            if (onAssignmentRemove) {
+              onAssignmentRemove(pairedAssignment.id);
+            }
+            
+            if (onAssignmentUnlock) {
+              onAssignmentUnlock(pairedAssignment.id);
+            }
+            
+            // Remove from locked assignments
+            const pairedKey = getPreAssignmentKey(pairedStudent.id, session, staffIndex);
+            setLockedAssignments(prev => {
+              const newSet = new Set(prev);
+              newSet.delete(pairedKey);
+              return newSet;
+            });
+            
+            console.log(`✅ Pair partner assignment unlocked: ${pairedStudent.name}`);
+          }
+        }
       }
     }
     
@@ -358,40 +478,49 @@ export const ScheduleTableView = ({
             onChange={(e) => handleStaffSelection(student.id, session, e.target.value, staffIndex)}
             disabled={!!currentAssignment}
             className={`text-sm border rounded px-2 py-1 min-w-[160px] ${
-              currentAssignment ? 'bg-gray-100 text-gray-600' : 'bg-white'
+              currentAssignment 
+                ? (() => {
+                    const staffMember = staff.find(s => s.id === currentAssignment.staffId);
+                    if (!staffMember) return 'bg-gray-100 text-gray-600 font-bold';
+                    const roleColors = {
+                      'RBT': 'bg-purple-100 text-purple-700 font-bold',
+                      'BS': 'bg-blue-100 text-blue-700 font-bold',
+                      'BCBA': 'bg-orange-100 text-orange-700 font-bold',
+                      'EA': 'bg-green-100 text-green-700 font-bold',
+                      'MHA': 'bg-yellow-100 text-yellow-800 font-bold',
+                      'CC': 'bg-red-100 text-red-700 font-bold',
+                      'Teacher': 'bg-pink-100 text-pink-700 font-bold',
+                      'Director': 'bg-gray-100 text-gray-800 font-bold'
+                    };
+                    return roleColors[staffMember.role] || 'bg-gray-100 text-gray-600 font-bold';
+                  })()
+                : 'bg-white'
             }`}
           >
             <option value="">Select staff...</option>
-            {availableForThisDropdown.map(staffMember => (
-              <option key={staffMember.id} value={staffMember.id}>
-                {staffMember.name} ({staffMember.role})
-              </option>
-            ))}
+            {availableForThisDropdown.map(staffMember => {
+              const trainingStatus = student.getStaffTrainingStatus ? student.getStaffTrainingStatus(staffMember.id) : TRAINING_STATUS.SOLO;
+              const isTrainer = trainingStatus === TRAINING_STATUS.TRAINER;
+              return (
+                <option key={staffMember.id} value={staffMember.id}>
+                  {isTrainer ? '⭐ ' : ''}{staffMember.name} ({staffMember.role})
+                </option>
+              );
+            })}
           </select>
           
           {requiredStaffCount > 1 && (
             <span className="text-xs text-gray-500">#{staffIndex + 1}</span>
           )}
           
-          {/* Show lock button if staff is selected but not yet assigned */}
-          {!currentAssignment && selectedStaffId && (
-            <button
-              onClick={() => handleLockAssignment(student.id, session, staffIndex)}
-              className="p-1 text-green-600 hover:text-green-800 hover:bg-green-50 rounded"
-              title="Lock in this assignment"
-            >
-              <Lock className="w-4 h-4" />
-            </button>
-          )}
-          
-          {/* Show unlock button if there's a current assignment */}
+          {/* Show lock button if there's a current assignment (auto-locked on selection) */}
           {currentAssignment && (
             <button
               onClick={() => handleUnlockAssignment(student.id, session, staffIndex)}
               className="p-1 text-red-600 hover:text-red-800 hover:bg-red-50 rounded"
               title="Remove this assignment"
             >
-              <Unlock className="w-4 h-4" />
+              <Lock className="w-4 h-4" />
             </button>
           )}
         </div>
@@ -458,13 +587,13 @@ export const ScheduleTableView = ({
       console.log(`🎓 Trainee selected: ${staffId} for ${student.name} ${session}`);
       
       if (staffId) {
-        // Update local state
+        // Update local state for current student
         setTraineeAssignments(prev => ({
           ...prev,
           [traineeKey]: staffId
         }));
         
-        // Update schedule object
+        // Update schedule object for current student
         const traineeAssignment = {
           staffId: staffId,
           studentId: student.id,
@@ -480,8 +609,42 @@ export const ScheduleTableView = ({
           schedule.addTraineeAssignment(traineeAssignment);
         }
         
+        // If this student is paired, also assign the trainee to their pair partner
+        if (student.isPaired && student.isPaired()) {
+          const pairedStudent = student.getPairedStudent(students);
+          if (pairedStudent) {
+            console.log(`🔗 LINKED PAIR TRAINEE: Also assigning trainee ${staffId} to pair partner ${pairedStudent.name}`);
+            
+            const pairedTraineeKey = `${pairedStudent.id}_${session}`;
+            
+            // Update local state for paired student
+            setTraineeAssignments(prev => ({
+              ...prev,
+              [pairedTraineeKey]: staffId
+            }));
+            
+            // Update schedule object for paired student
+            const pairedTraineeAssignment = {
+              staffId: staffId,
+              studentId: pairedStudent.id,
+              session: session,
+              program: pairedStudent.program,
+              isTrainee: true
+            };
+            
+            if (schedule.removeTraineeAssignment) {
+              schedule.removeTraineeAssignment(pairedStudent.id, session);
+            }
+            if (schedule.addTraineeAssignment) {
+              schedule.addTraineeAssignment(pairedTraineeAssignment);
+            }
+            
+            console.log(`✅ Pair partner trainee assigned: ${pairedStudent.name}`);
+          }
+        }
+        
       } else {
-        // Remove trainee
+        // Remove trainee from current student
         setTraineeAssignments(prev => {
           const newState = { ...prev };
           delete newState[traineeKey];
@@ -492,11 +655,34 @@ export const ScheduleTableView = ({
           schedule.removeTraineeAssignment(student.id, session);
         }
         
+        // If this student is paired, also remove trainee from their pair partner
+        if (student.isPaired && student.isPaired()) {
+          const pairedStudent = student.getPairedStudent(students);
+          if (pairedStudent) {
+            console.log(`🔗 LINKED PAIR TRAINEE: Also removing trainee from pair partner ${pairedStudent.name}`);
+            
+            const pairedTraineeKey = `${pairedStudent.id}_${session}`;
+            
+            setTraineeAssignments(prev => {
+              const newState = { ...prev };
+              delete newState[pairedTraineeKey];
+              return newState;
+            });
+            
+            if (schedule.removeTraineeAssignment) {
+              schedule.removeTraineeAssignment(pairedStudent.id, session);
+            }
+            
+            console.log(`✅ Pair partner trainee removed: ${pairedStudent.name}`);
+          }
+        }
+        
         console.log('🗑️ Trainee removed');
       }
     };
 
     const handleRemoveTrainee = () => {
+      // Remove trainee from current student
       setTraineeAssignments(prev => {
         const newState = { ...prev };
         delete newState[traineeKey];
@@ -505,6 +691,28 @@ export const ScheduleTableView = ({
       
       if (schedule.removeTraineeAssignment) {
         schedule.removeTraineeAssignment(student.id, session);
+      }
+      
+      // If this student is paired, also remove trainee from their pair partner
+      if (student.isPaired && student.isPaired()) {
+        const pairedStudent = student.getPairedStudent(students);
+        if (pairedStudent) {
+          console.log(`🔗 LINKED PAIR TRAINEE: Also removing trainee from pair partner ${pairedStudent.name}`);
+          
+          const pairedTraineeKey = `${pairedStudent.id}_${session}`;
+          
+          setTraineeAssignments(prev => {
+            const newState = { ...prev };
+            delete newState[pairedTraineeKey];
+            return newState;
+          });
+          
+          if (schedule.removeTraineeAssignment) {
+            schedule.removeTraineeAssignment(pairedStudent.id, session);
+          }
+          
+          console.log(`✅ Pair partner trainee removed: ${pairedStudent.name}`);
+        }
       }
     };
 
@@ -526,10 +734,10 @@ export const ScheduleTableView = ({
           {selectedTraineeId && (
             <button
               onClick={handleRemoveTrainee}
-              className="p-1 text-orange-600 hover:text-orange-800 hover:bg-orange-50 rounded"
+              className="p-1 text-red-600 hover:text-red-800 hover:bg-red-50 rounded"
               title="Remove trainee"
             >
-              <Unlock className="w-4 h-4" />
+              <Lock className="w-4 h-4" />
             </button>
           )}
         </div>
@@ -820,16 +1028,16 @@ const AssignmentCard = ({ assignment, onLock, onUnlock, onRemove }) => {
 
   const getRoleColor = (role) => {
     const colors = {
-      'RBT': 'bg-purple-100 text-purple-800',
-      'BS': 'bg-indigo-100 text-indigo-800',
-      'BCBA': 'bg-blue-100 text-blue-800',
-      'EA': 'bg-green-100 text-green-800',
-      'MHA': 'bg-yellow-100 text-yellow-800',
-      'CC': 'bg-orange-100 text-orange-800',
-      'Teacher': 'bg-pink-100 text-pink-800',
-      'Director': 'bg-gray-100 text-gray-800'
+      'RBT': 'bg-purple-100 text-purple-700 font-bold',
+      'BS': 'bg-blue-100 text-blue-700 font-bold',
+      'BCBA': 'bg-orange-100 text-orange-700 font-bold',
+      'EA': 'bg-green-100 text-green-700 font-bold',
+      'MHA': 'bg-yellow-100 text-yellow-800 font-bold',
+      'CC': 'bg-red-100 text-red-700 font-bold',
+      'Teacher': 'bg-pink-100 text-pink-700 font-bold',
+      'Director': 'bg-gray-100 text-gray-800 font-bold'
     };
-    return colors[role] || 'bg-gray-100 text-gray-800';
+    return colors[role] || 'bg-gray-100 text-gray-800 font-bold';
   };
 
   // Check if this is a trainee working solo (needs warning)

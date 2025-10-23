@@ -409,6 +409,48 @@ export class Schedule {
     this.assignments = this.assignments.filter(a => a.id !== assignmentId);
   }
 
+  // Remove all assignments for a specific staff member in specified sessions
+  removeStaffFromSessions(staffId, sessions) {
+    const initialCount = this.assignments.length;
+    const initialTraineeCount = this.traineeAssignments.length;
+    
+    // Remove from regular assignments
+    this.assignments = this.assignments.filter(a => 
+      !(a.staffId === staffId && sessions.includes(a.session))
+    );
+    
+    // Remove from trainee assignments
+    this.traineeAssignments = this.traineeAssignments.filter(a =>
+      !(a.staffId === staffId && sessions.includes(a.session))
+    );
+    
+    const removedCount = (initialCount - this.assignments.length) + 
+                        (initialTraineeCount - this.traineeAssignments.length);
+    
+    return removedCount;
+  }
+
+  // Remove all assignments for a specific student in specified sessions
+  removeStudentFromSessions(studentId, sessions) {
+    const initialCount = this.assignments.length;
+    const initialTraineeCount = this.traineeAssignments.length;
+    
+    // Remove from regular assignments
+    this.assignments = this.assignments.filter(a =>
+      !(a.studentId === studentId && sessions.includes(a.session))
+    );
+    
+    // Remove from trainee assignments
+    this.traineeAssignments = this.traineeAssignments.filter(a =>
+      !(a.studentId === studentId && sessions.includes(a.session))
+    );
+    
+    const removedCount = (initialCount - this.assignments.length) + 
+                        (initialTraineeCount - this.traineeAssignments.length);
+    
+    return removedCount;
+  }
+
   lockAssignment(assignmentId) {
     this.lockedAssignments.add(assignmentId);
   }

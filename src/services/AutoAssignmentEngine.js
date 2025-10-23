@@ -2,6 +2,7 @@ import {
   Assignment, 
   PROGRAMS, 
   RATIOS, 
+  TRAINING_STATUS,
   SchedulingUtils, 
   SchedulingRules 
 } from '../types/index.js';
@@ -19,16 +20,17 @@ export class AutoAssignmentEngine {
 
   /**
      * Get staff priority score - LOWER is BETTER
-     * RBT/BS should always be preferred over EAs
+     * RBT should be strongly preferred over BS, both preferred over BCBAs/EAs
+     * Hierarchy: RBT > BS > BCBA > EA > CC > MHA
      */
   getStaffPriorityScore(staffMember) {
     const hierarchy = {
       'RBT': 1,
-      'BS': 2,
-      'EA': 10,      // Large gap - use EAs only as last resort
-      'BCBA': 20,    // Even lower priority
-      'CC': 21,
-      'MHA': 22,
+      'BS': 5,       // Increased penalty - prefer RBTs significantly over BS
+      'BCBA': 10,    // Prefer BCBAs over EAs when needed
+      'EA': 15,      // Use EAs only as last resort for direct service
+      'CC': 20,
+      'MHA': 21,
       'Teacher': 999,   // Should never be used
       'Director': 999,  // Should never be used
       'TEACHER': 999,
@@ -44,6 +46,27 @@ export class AutoAssignmentEngine {
   canStaffDoDirectService(staffMember) {
     const blockedRoles = ['Teacher', 'Director', 'TEACHER', 'DIRECTOR'];
     return !blockedRoles.includes(staffMember.role) && staffMember.canDoDirectSessions();
+  }
+
+  /**
+   * Check if staff is currently in training for a specific student
+   * Staff in training (overlap-staff or overlap-bcba) should NOT be auto-assigned as main staff
+   * They should only appear in the trainee dropdown
+   */
+  isStaffInTrainingForStudent(staffMember, student) {
+    if (!student.getStaffTrainingStatus) {
+      return false; // No training status tracking for this student
+    }
+    
+    const trainingStatus = student.getStaffTrainingStatus(staffMember.id);
+    const isInTraining = trainingStatus === TRAINING_STATUS.OVERLAP_STAFF || 
+                         trainingStatus === TRAINING_STATUS.OVERLAP_BCBA;
+    
+    if (isInTraining) {
+      console.log(`  🎓 ${staffMember.name} is in training for ${student.name} (${trainingStatus}) - excluding from main assignment`);
+    }
+    
+    return isInTraining;
   }
 
   /**
@@ -108,6 +131,10 @@ export class AutoAssignmentEngine {
       if (!this.canStaffDoDirectService(s)) return false;
       if (!schedule.isStaffAvailable(s.id, session, program)) return false;
       if (schedule.hasStaffWorkedWithStudentToday(s.id, student.id)) return false;
+      
+      // EXCLUDE staff who are in training for this student
+      if (this.isStaffInTrainingForStudent(s, student)) return false;
+      
       return true;
     });
 
@@ -890,6 +917,13 @@ export class AutoAssignmentEngine {
         return false;
       }
 
+      // EXCLUDE staff who are in training for this student
+      // They should only be assigned as trainees, not main staff
+      if (this.isStaffInTrainingForStudent(staffMember, student)) {
+        console.log(`  🚫 EXCLUDING ${staffMember.name}: In training for ${student.name} (trainee only)`);
+        return false;
+      }
+
       return true;
     });
 
@@ -1021,9 +1055,17 @@ export class AutoAssignmentEngine {
     );
 
     // FILTER TO ONLY TEAM MEMBERS - this ensures dropdown compatibility
-    let teamStaff = availableStaff.filter(staffMember => 
-      student.teamIds.includes(staffMember.id)
-    );
+    let teamStaff = availableStaff.filter(staffMember => {
+      // Must be on the student's team
+      if (!student.teamIds.includes(staffMember.id)) return false;
+      
+      // EXCLUDE staff who are in training for this student
+      if (this.isStaffInTrainingForStudent(staffMember, student)) {
+        return false;
+      }
+      
+      return true;
+    });
 
     // ADDITIONAL FILTERING: Only use preferred direct service staff (RBTs/BSs)
     const preferredTeamStaff = teamStaff.filter(staffMember => staffMember.isPreferredDirectService());
