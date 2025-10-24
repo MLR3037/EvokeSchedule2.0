@@ -1,5 +1,6 @@
-import React, { useState, useMemo } from 'react';
-import { Users, User, Search, Filter, Edit, Eye } from 'lucide-react';
+import React, { useState, useMemo, useEffect } from 'react';
+import { Users, User, Search, Filter, Edit, Eye, GraduationCap } from 'lucide-react';
+import { TRAINING_STATUS } from '../types/index.js';
 
 /**
  * Team Management Component - Allows viewing clients by staff and staff by client
@@ -9,11 +10,32 @@ export const TeamManagement = ({
   students, 
   onEditStudent,
   onEditStaff,
-  onCleanupDeletedStaff
+  onCleanupDeletedStaff,
+  onUpdateTrainingStatus
 }) => {
-  const [view, setView] = useState('clients-by-staff'); // or 'staff-by-client'
-  const [searchTerm, setSearchTerm] = useState('');
-  const [selectedProgram, setSelectedProgram] = useState('');
+  // Restore view preferences from localStorage or use defaults
+  const [view, setView] = useState(() => {
+    return localStorage.getItem('teamManagement_view') || 'clients-by-staff';
+  });
+  const [searchTerm, setSearchTerm] = useState(() => {
+    return localStorage.getItem('teamManagement_searchTerm') || '';
+  });
+  const [selectedProgram, setSelectedProgram] = useState(() => {
+    return localStorage.getItem('teamManagement_selectedProgram') || '';
+  });
+
+  // Save view preferences to localStorage whenever they change
+  useEffect(() => {
+    localStorage.setItem('teamManagement_view', view);
+  }, [view]);
+
+  useEffect(() => {
+    localStorage.setItem('teamManagement_searchTerm', searchTerm);
+  }, [searchTerm]);
+
+  useEffect(() => {
+    localStorage.setItem('teamManagement_selectedProgram', selectedProgram);
+  }, [selectedProgram]);
 
   // Prepare data for clients by staff view
   const clientsByStaff = useMemo(() => {
@@ -148,6 +170,28 @@ export const TeamManagement = ({
         }
       }).filter(Boolean);
       
+      // Sort team members by role first, then alphabetically
+      const rolePriority = {
+        'CC': 1,
+        'BCBA': 2,
+        'Teacher': 3,
+        'EA': 4,
+        'BS': 5,
+        'RBT': 6,
+        'MHA': 7,
+        'Director': 8
+      };
+      
+      teamMembers.sort((a, b) => {
+        const roleA = rolePriority[a.role] || 999;
+        const roleB = rolePriority[b.role] || 999;
+        
+        if (roleA !== roleB) {
+          return roleA - roleB;
+        }
+        return a.name.localeCompare(b.name);
+      });
+
       result[student.id] = {
         student: student,
         teamMembers: teamMembers
@@ -162,21 +206,54 @@ export const TeamManagement = ({
 
   // Filter data based on search and program
   const filteredData = useMemo(() => {
+    // Define role priority order (lower number = higher priority)
+    const rolePriority = {
+      'BCBA': 1,
+      'CC': 2,
+      'Teacher': 3,
+      'EA': 4,
+      'BS': 5,
+      'RBT': 6,
+      'MHA': 7,
+      'Director': 8
+    };
+
+    let data;
     if (view === 'clients-by-staff') {
-      return Object.values(clientsByStaff).filter(item => {
+      data = Object.values(clientsByStaff).filter(item => {
         const matchesSearch = item.staff.name.toLowerCase().includes(searchTerm.toLowerCase());
         const matchesProgram = !selectedProgram || 
           (selectedProgram === 'Primary' && item.staff.primaryProgram) ||
           (selectedProgram === 'Secondary' && item.staff.secondaryProgram);
         return matchesSearch && matchesProgram;
       });
+      // Sort by role first, then alphabetically by name
+      data.sort((a, b) => {
+        // Extract role string (handle both string and object)
+        const getRoleString = (staff) => {
+          if (typeof staff.role === 'string') return staff.role;
+          if (typeof staff.role === 'object' && staff.role?.name) return staff.role.name;
+          return 'Unknown';
+        };
+        
+        const roleA = rolePriority[getRoleString(a.staff)] || 999;
+        const roleB = rolePriority[getRoleString(b.staff)] || 999;
+        
+        if (roleA !== roleB) {
+          return roleA - roleB;
+        }
+        return a.staff.name.localeCompare(b.staff.name);
+      });
     } else {
-      return Object.values(staffByClient).filter(item => {
+      data = Object.values(staffByClient).filter(item => {
         const matchesSearch = item.student.name.toLowerCase().includes(searchTerm.toLowerCase());
         const matchesProgram = !selectedProgram || item.student.program === selectedProgram;
         return matchesSearch && matchesProgram;
       });
+      // Sort alphabetically by student name
+      data.sort((a, b) => a.student.name.localeCompare(b.student.name));
     }
+    return data;
   }, [view, clientsByStaff, staffByClient, searchTerm, selectedProgram]);
 
   const getClientCountByRatio = (clients, ratio, session) => {
@@ -185,13 +262,44 @@ export const TeamManagement = ({
 
   const getStaffRoleColor = (role) => {
     const colors = {
-      'RBT': 'bg-blue-100 text-blue-800',
-      'Senior RBT': 'bg-green-100 text-green-800',
-      'Lead': 'bg-purple-100 text-purple-800',
-      'Supervisor': 'bg-orange-100 text-orange-800',
-      'Director': 'bg-red-100 text-red-800'
+      'RBT': 'bg-purple-100 text-purple-700 font-bold',
+      'BS': 'bg-blue-100 text-blue-700 font-bold',
+      'BCBA': 'bg-orange-100 text-orange-700 font-bold',
+      'EA': 'bg-green-100 text-green-700 font-bold',
+      'MHA': 'bg-yellow-100 text-yellow-800 font-bold',
+      'CC': 'bg-red-100 text-red-700 font-bold',
+      'Teacher': 'bg-pink-100 text-pink-700 font-bold',
+      'Director': 'bg-gray-100 text-gray-800 font-bold'
     };
-    return colors[role] || 'bg-gray-100 text-gray-800';
+    return colors[role] || 'bg-gray-100 text-gray-800 font-bold';
+  };
+
+  const getTrainingStatusLabel = (status) => {
+    const labels = {
+      [TRAINING_STATUS.CERTIFIED]: 'Certified',
+      [TRAINING_STATUS.TRAINER]: 'Trainer',
+      [TRAINING_STATUS.OVERLAP_BCBA]: 'Overlap BCBA',
+      [TRAINING_STATUS.OVERLAP_STAFF]: 'Overlap Staff',
+      [TRAINING_STATUS.SOLO]: 'Solo'
+    };
+    return labels[status] || 'Solo';
+  };
+
+  const getTrainingStatusColor = (status) => {
+    const colors = {
+      [TRAINING_STATUS.CERTIFIED]: 'bg-green-100 text-green-800 border-green-300',
+      [TRAINING_STATUS.TRAINER]: 'bg-purple-100 text-purple-800 border-purple-300',
+      [TRAINING_STATUS.OVERLAP_BCBA]: 'bg-orange-100 text-orange-800 border-orange-300',
+      [TRAINING_STATUS.OVERLAP_STAFF]: 'bg-yellow-100 text-yellow-800 border-yellow-300',
+      [TRAINING_STATUS.SOLO]: 'bg-green-100 text-green-800 border-green-300 font-bold'
+    };
+    return colors[status] || 'bg-green-100 text-green-800 border-green-300 font-bold';
+  };
+
+  const handleTrainingStatusChange = async (studentId, staffId, newStatus) => {
+    if (onUpdateTrainingStatus) {
+      await onUpdateTrainingStatus(studentId, staffId, newStatus);
+    }
   };
 
   return (
@@ -393,15 +501,43 @@ export const TeamManagement = ({
                       </div>
 
                       {item.teamMembers.length > 0 ? (
-                        <div className="flex flex-wrap gap-2">
-                              {item.teamMembers.map(staffMember => (
-                                <div key={staffMember.id} className="flex items-center gap-2 bg-indigo-100 rounded-full px-3 py-1">
-                                  <span className="text-sm">{typeof staffMember.name === 'string' ? staffMember.name : (staffMember.name?.toString?.() || JSON.stringify(staffMember.name))}</span>
-                                  <span className={`text-xs px-2 py-0.5 rounded ${getStaffRoleColor(typeof staffMember.role === 'object' ? staffMember.role.name : (typeof staffMember.role === 'string' ? staffMember.role : JSON.stringify(staffMember.role)))}`}>
-                                    {typeof staffMember.role === 'object' ? staffMember.role.name : (typeof staffMember.role === 'string' ? staffMember.role : JSON.stringify(staffMember.role))}
-                                  </span>
+                        <div className="space-y-2">
+                          {item.teamMembers.map(staffMember => {
+                            const trainingStatus = item.student.getStaffTrainingStatus ? item.student.getStaffTrainingStatus(staffMember.id) : TRAINING_STATUS.SOLO;
+                            
+                            return (
+                              <div key={staffMember.id} className="flex items-center justify-between bg-indigo-50 rounded-lg px-4 py-3 border border-indigo-200">
+                                <div className="flex items-center gap-3 flex-1">
+                                  <div className="w-8 h-8 bg-indigo-500 rounded-full flex items-center justify-center text-white font-medium text-sm">
+                                    {typeof staffMember.name === 'string' ? staffMember.name.charAt(0) : (staffMember.name?.toString?.().charAt(0) || '?')}
+                                  </div>
+                                  <div className="flex-1">
+                                    <div className="flex items-center gap-2">
+                                      <span className="text-sm font-medium">{typeof staffMember.name === 'string' ? staffMember.name : (staffMember.name?.toString?.() || JSON.stringify(staffMember.name))}</span>
+                                      <span className={`text-xs px-2 py-0.5 rounded ${getStaffRoleColor(typeof staffMember.role === 'object' ? staffMember.role.name : (typeof staffMember.role === 'string' ? staffMember.role : JSON.stringify(staffMember.role)))}`}>
+                                        {typeof staffMember.role === 'object' ? staffMember.role.name : (typeof staffMember.role === 'string' ? staffMember.role : JSON.stringify(staffMember.role))}
+                                      </span>
+                                    </div>
+                                  </div>
                                 </div>
-                              ))}
+                                
+                                {/* Training Status Dropdown */}
+                                <div className="flex items-center gap-2">
+                                  <GraduationCap className="w-4 h-4 text-gray-400" />
+                                  <select
+                                    value={trainingStatus}
+                                    onChange={(e) => handleTrainingStatusChange(item.student.id, staffMember.id, e.target.value)}
+                                    className={`text-xs px-3 py-1.5 rounded-md border font-medium focus:outline-none focus:ring-2 focus:ring-indigo-500 ${getTrainingStatusColor(trainingStatus)}`}
+                                  >
+                                    <option value={TRAINING_STATUS.TRAINER}>⭐ Trainer</option>
+                                    <option value={TRAINING_STATUS.OVERLAP_BCBA}>🔶 Overlap BCBA</option>
+                                    <option value={TRAINING_STATUS.OVERLAP_STAFF}>🔷 Overlap Staff</option>
+                                    <option value={TRAINING_STATUS.SOLO}>✓ Solo</option>
+                                  </select>
+                                </div>
+                              </div>
+                            );
+                          })}
                         </div>
                       ) : (
                         <p className="text-sm text-gray-500 italic">No team members assigned</p>

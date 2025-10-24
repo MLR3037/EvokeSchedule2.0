@@ -40,7 +40,6 @@ import {
 } from './components/DataManagementComponents.js';
 import TeamManagement from './components/TeamManagement.js';
 import AttendanceManagement from './components/AttendanceManagement.js';
-import TrainingManagement from './components/TrainingManagement.js';
 import { runTests } from './tests/SchedulingTestSuite.js';
 import ErrorBoundary from './components/ErrorBoundary.js';
 
@@ -1315,7 +1314,6 @@ const handleAssignmentRemove = (assignmentId) => {
               { id: 'students', label: 'Students', icon: Users },
               { id: 'teams', label: 'Teams', icon: Users },
               { id: 'attendance', label: 'Attendance', icon: Calendar },
-              { id: 'training', label: 'Training', icon: GraduationCap },
               { id: 'validation', label: 'Validation', icon: BarChart3 },
               { id: 'rules', label: 'Rules', icon: Settings },
               { id: 'tests', label: 'Tests', icon: Play }
@@ -1641,6 +1639,7 @@ const handleAssignmentRemove = (assignmentId) => {
                   setShowAddStudent(true);
                 }}
                 onCleanupDeletedStaff={handleCleanupDeletedStaff}
+                onUpdateTrainingStatus={handleUpdateStudentTrainingStatus}
               />
             )}
 
@@ -1654,15 +1653,6 @@ const handleAssignmentRemove = (assignmentId) => {
                 onUpdateStaffAttendance={handleUpdateStaffAttendance}
                 onUpdateStudentAttendance={handleUpdateStudentAttendance}
                 onResetAllAttendance={clearAllAttendance}
-              />
-            )}
-
-            {/* Training Tab */}
-            {activeTab === 'training' && (
-              <TrainingManagement
-                staff={staff}
-                students={students}
-                onUpdateStudentTrainingStatus={handleUpdateStudentTrainingStatus}
               />
             )}
 
