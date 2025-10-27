@@ -116,6 +116,11 @@
                 <li>Creates records in ClientTeamMembers for each team member</li>
                 <li>Preserves training status information</li>
             </ul>
+            <p><strong>Note:</strong> If you get an authentication error (AADSTS50011), you have two options:</p>
+            <ol>
+                <li><strong>Run from GitHub Pages:</strong> Host this file at <code>https://mlr3037.github.io/EvokeSchedule2.0/migrate-to-client-team-members.html</code></li>
+                <li><strong>Run locally:</strong> Start a local web server at <code>http://localhost:3000</code> and open the file there</li>
+            </ol>
         </div>
 
         <button id="loginBtn" onclick="login()">1. Login to SharePoint</button>
@@ -146,7 +151,9 @@
             siteUrl: 'https://evokebehavioralhealthcom.sharepoint.com/sites/Clinistrators',
             clientId: 'c9f70b7e-8ffb-403d-af93-80b95b38a0bb',
             tenantId: 'a4adcc38-7b4e-485c-80f9-7d9ca4e83d64',
-            redirectUri: window.location.origin + window.location.pathname
+            redirectUri: window.location.hostname === 'localhost' 
+                ? 'http://localhost:3000' 
+                : 'https://mlr3037.github.io/EvokeSchedule2.0'
         };
 
         const msalConfig = {
