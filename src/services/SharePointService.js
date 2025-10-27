@@ -405,6 +405,71 @@ export class SharePointService {
   }
 
   /**
+   * Load client team members from the ClientTeamMembers list
+   */
+  async loadClientTeamMembers() {
+    try {
+      console.log('🔍 Loading client team members from ClientTeamMembers list...');
+
+      const headers = await this.getHeaders();
+      
+      // Load all active team member assignments
+      const url = `${this.config.siteUrl}/_api/web/lists/getbytitle('ClientTeamMembers')/items?` +
+        `$select=Id,ClientID,ClientName,StaffMember/Id,StaffMember/Title,StaffMember/EMail,TrainingStatus,IsActive,DateAdded&` +
+        `$expand=StaffMember&` +
+        `$filter=IsActive eq true&` +
+        `$top=5000`;
+
+      console.log('📋 Fetching team members from:', url);
+
+      const response = await this.makeRequest(url, { headers });
+
+      if (!response.ok) {
+        const errorText = await response.text();
+        console.error('❌ SharePoint ClientTeamMembers API Error:', response.status, errorText);
+        
+        // If the list doesn't exist, return empty array and log warning
+        if (response.status === 404) {
+          console.warn('⚠️ ClientTeamMembers list not found - using legacy Team field instead');
+          return [];
+        }
+        
+        throw new Error(`Failed to load client team members: ${response.status} - ${errorText}`);
+      }
+
+      const data = await response.json();
+      const teamMembers = data.d.results || [];
+      console.log(`✅ Found ${teamMembers.length} client team member assignments`);
+
+      // Group by client ID for easier lookup
+      const teamsByClient = {};
+      teamMembers.forEach(item => {
+        const clientId = item.ClientID;
+        if (!teamsByClient[clientId]) {
+          teamsByClient[clientId] = [];
+        }
+        
+        if (item.StaffMember) {
+          teamsByClient[clientId].push({
+            id: item.StaffMember.Id,
+            title: item.StaffMember.Title,
+            name: item.StaffMember.Title,
+            email: item.StaffMember.EMail || '',
+            trainingStatus: item.TrainingStatus || 'solo'
+          });
+        }
+      });
+
+      console.log('📊 Team members grouped by client:', Object.keys(teamsByClient).length, 'clients have teams');
+      return teamsByClient;
+
+    } catch (error) {
+      console.error('❌ Error loading client team members:', error);
+      return {}; // Return empty object to allow fallback to legacy method
+    }
+  }
+
+  /**
    * Load student data using SharePoint REST API
    */
   async loadStudents() {
@@ -441,7 +506,10 @@ export class SharePointService {
         console.log('📋 First student team data:', studentItems[0].Team);
       }
 
-      return this.parseStudents(studentItems);
+      // Load team members from new ClientTeamMembers list
+      const teamsByClient = await this.loadClientTeamMembers();
+
+      return this.parseStudents(studentItems, teamsByClient);
 
     } catch (error) {
       console.error('❌ Error loading students:', error);
@@ -452,7 +520,7 @@ export class SharePointService {
   /**
    * Parse student items from SharePoint response
    */
-  parseStudents(studentItems) {
+  parseStudents(studentItems, teamsByClient = {}) {
     console.log(`🔍 Parsing ${studentItems.length} students`);
     
     const students = studentItems.map(item => {
@@ -460,9 +528,25 @@ export class SharePointService {
       
       let team = [];
       let teamIds = [];
+      let teamTrainingStatus = {};
 
-      // Handle Team field as multi-person picker (User/Group field)
-      if (item.Team) {
+      // PRIORITY 1: Try to load from ClientTeamMembers list (new method)
+      if (teamsByClient[item.Id] && teamsByClient[item.Id].length > 0) {
+        console.log(`  📋 Using ClientTeamMembers list for ${item.Title}`);
+        team = teamsByClient[item.Id];
+        teamIds = team.map(member => member.id);
+        
+        // Build training status object from team data
+        team.forEach(member => {
+          teamTrainingStatus[member.id] = member.trainingStatus || 'solo';
+        });
+        
+        console.log(`  ✅ ${item.Title} has ${team.length} team members from ClientTeamMembers list`);
+      }
+      // FALLBACK: Use legacy Team field if ClientTeamMembers list doesn't exist or is empty
+      else if (item.Team) {
+        console.log(`  📋 Using legacy Team field for ${item.Title}`);
+        
         if (item.Team.results && Array.isArray(item.Team.results)) {
           // Multi-value person picker format
           console.log(`  📋 Team data for ${item.Title}:`, item.Team.results);
@@ -489,6 +573,16 @@ export class SharePointService {
           
           teamIds = [item.Team.Id];
         }
+        
+        // Load training status from JSON field (legacy)
+        try {
+          teamTrainingStatus = item.TeamTrainingStatus ? JSON.parse(item.TeamTrainingStatus) : {};
+        } catch (e) {
+          console.warn(`  ⚠️ Failed to parse TeamTrainingStatus for ${item.Title}:`, e);
+          teamTrainingStatus = {};
+        }
+        
+        console.log(`  ✅ ${item.Title} has ${team.length} team members from legacy Team field`);
       }
 
       const student = new Student({
@@ -504,11 +598,11 @@ export class SharePointService {
         absentAM: item.AbsentAM === true,
         absentPM: item.AbsentPM === true,
         absentFullDay: item.AbsentFullDay === true,
-        teamTrainingStatus: item.TeamTrainingStatus ? JSON.parse(item.TeamTrainingStatus) : {}
+        teamTrainingStatus: teamTrainingStatus
       });
 
       if (team.length > 0) {
-        console.log(`✅ ${item.Title} has ${team.length} team members:`, team.map(t => t.title));
+        console.log(`✅ ${item.Title} has ${team.length} team members:`, team.map(t => t.title || t.name));
       } else {
         console.log(`⚠️ ${item.Title} has no team members`);
       }
@@ -594,6 +688,161 @@ export class SharePointService {
     }
   }
 
+  /**
+   * Save client team member to ClientTeamMembers list
+   * This replaces the need to save team data as JSON
+   */
+  async saveClientTeamMember(clientId, clientName, staffMember, trainingStatus = 'solo', isUpdate = false, itemId = null) {
+    try {
+      const headers = await this.getHeaders(true);
+      
+      if (isUpdate && itemId) {
+        headers['X-HTTP-Method'] = 'MERGE';
+        headers['If-Match'] = '*';
+      }
+
+      const url = isUpdate && itemId
+        ? `${this.config.siteUrl}/_api/web/lists/getbytitle('ClientTeamMembers')/items(${itemId})`
+        : `${this.config.siteUrl}/_api/web/lists/getbytitle('ClientTeamMembers')/items`;
+
+      const body = {
+        __metadata: { type: 'SP.Data.ClientTeamMembersListItem' },
+        ClientID: clientId,
+        ClientName: clientName,
+        StaffMemberId: staffMember.id, // Person picker field
+        TrainingStatus: trainingStatus,
+        IsActive: true,
+        DateAdded: new Date().toISOString()
+      };
+
+      const response = await this.makeRequest(url, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify(body)
+      });
+
+      if (!response.ok) {
+        const errorText = await response.text();
+        console.error(`Failed to save team member: ${response.status}`, errorText);
+        throw new Error(`Failed to save team member: ${response.status}`);
+      }
+
+      console.log(`✅ Team member saved: ${staffMember.name} → ${clientName} (${trainingStatus})`);
+      return true;
+    } catch (error) {
+      console.error('Error saving client team member:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Delete a client team member from ClientTeamMembers list
+   */
+  async deleteClientTeamMember(itemId) {
+    try {
+      const headers = await this.getHeaders(true);
+      headers['X-HTTP-Method'] = 'DELETE';
+      headers['If-Match'] = '*';
+
+      const url = `${this.config.siteUrl}/_api/web/lists/getbytitle('ClientTeamMembers')/items(${itemId})`;
+
+      const response = await this.makeRequest(url, {
+        method: 'POST',
+        headers
+      });
+
+      if (!response.ok) {
+        throw new Error(`Failed to delete team member: ${response.status}`);
+      }
+
+      console.log(`✅ Team member deleted: ${itemId}`);
+      return true;
+    } catch (error) {
+      console.error('Error deleting client team member:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Sync student team to ClientTeamMembers list
+   * This is called when saving a student from the React app
+   */
+  async syncStudentTeamToList(student) {
+    try {
+      console.log(`🔄 Syncing team for ${student.name} to ClientTeamMembers list...`);
+      
+      // First, get existing team members from the list
+      const headers = await this.getHeaders();
+      const url = `${this.config.siteUrl}/_api/web/lists/getbytitle('ClientTeamMembers')/items?` +
+        `$filter=ClientID eq ${student.id} and IsActive eq true&` +
+        `$select=Id,StaffMember/Id&` +
+        `$expand=StaffMember`;
+
+      const response = await this.makeRequest(url, { headers });
+      
+      let existingMembers = [];
+      if (response.ok) {
+        const data = await response.json();
+        existingMembers = data.d.results || [];
+        console.log(`  Found ${existingMembers.length} existing team members in list`);
+      } else {
+        console.warn('  ClientTeamMembers list may not exist - skipping sync');
+        return false;
+      }
+
+      // Determine what to add and what to remove
+      const existingStaffIds = existingMembers.map(m => m.StaffMember?.Id).filter(Boolean);
+      const newStaffIds = student.teamIds;
+
+      const toAdd = newStaffIds.filter(id => !existingStaffIds.includes(id));
+      const toRemove = existingMembers.filter(m => !newStaffIds.includes(m.StaffMember?.Id));
+
+      console.log(`  To add: ${toAdd.length}, To remove: ${toRemove.length}`);
+
+      // Remove team members that are no longer in the team
+      for (const member of toRemove) {
+        await this.deleteClientTeamMember(member.Id);
+      }
+
+      // Add new team members
+      for (const staffId of toAdd) {
+        const staffMember = student.team.find(t => t.id === staffId);
+        if (staffMember) {
+          const trainingStatus = student.getStaffTrainingStatus(staffId);
+          await this.saveClientTeamMember(
+            student.id,
+            student.name,
+            staffMember,
+            trainingStatus
+          );
+        }
+      }
+
+      // Update training status for existing members
+      for (const member of existingMembers) {
+        if (newStaffIds.includes(member.StaffMember?.Id)) {
+          const trainingStatus = student.getStaffTrainingStatus(member.StaffMember.Id);
+          // Only update if training status changed
+          // We'd need to load the current status to check, so for now just update all
+          await this.saveClientTeamMember(
+            student.id,
+            student.name,
+            { id: member.StaffMember.Id, name: member.StaffMember.Title },
+            trainingStatus,
+            true,
+            member.Id
+          );
+        }
+      }
+
+      console.log(`✅ Team sync complete for ${student.name}`);
+      return true;
+    } catch (error) {
+      console.error('Error syncing student team to list:', error);
+      return false;
+    }
+  }
+
   async saveStudent(student, isUpdate = false) {
     try {
       const headers = await this.getHeaders(true);
@@ -607,7 +856,7 @@ export class SharePointService {
         ? `${this.config.siteUrl}/_api/web/lists/getbytitle('${this.config.studentsListName}')/items(${student.id})`
         : `${this.config.siteUrl}/_api/web/lists/getbytitle('${this.config.studentsListName}')/items`;
 
-      // Prepare team field for SharePoint People Picker
+      // Prepare team field for SharePoint People Picker (legacy support)
       const teamResults = student.team && student.team.length > 0
         ? student.team.map(person => person.id || person.userId).filter(id => id)
         : [];
@@ -619,11 +868,11 @@ export class SharePointService {
         RatioAM: student.ratioAM,
         RatioPM: student.ratioPM,
         IsActive: student.isActive,
-        TeamId: { results: teamResults }, // People Picker field
+        TeamId: { results: teamResults }, // People Picker field (legacy)
         AbsentAM: student.absentAM || false,
         AbsentPM: student.absentPM || false,
         AbsentFullDay: student.absentFullDay || false,
-        TeamTrainingStatus: student.teamTrainingStatus ? JSON.stringify(student.teamTrainingStatus) : '{}'
+        TeamTrainingStatus: student.teamTrainingStatus ? JSON.stringify(student.teamTrainingStatus) : '{}' // Legacy fallback
       };
 
       const response = await this.makeRequest(url, {
@@ -634,6 +883,15 @@ export class SharePointService {
 
       if (!response.ok) {
         throw new Error(`Failed to save student: ${response.status}`);
+      }
+
+      // NEW: Sync team data to ClientTeamMembers list (if it exists)
+      // This runs in the background and doesn't fail if the list doesn't exist
+      if (isUpdate) {
+        this.syncStudentTeamToList(student).catch(err => {
+          console.warn('⚠️ Failed to sync team to ClientTeamMembers list:', err.message);
+          console.log('  → Falling back to legacy Team field storage');
+        });
       }
 
       return response;
