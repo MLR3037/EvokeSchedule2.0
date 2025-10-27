@@ -308,7 +308,9 @@ export const StudentForm = ({
     team: student?.team || [], // Renamed from preferredStaff
     isActive: student?.isActive ?? true,
     notes: student?.notes || '',
-    dateStarted: student?.dateStarted || ''
+    dateStarted: student?.dateStarted || '',
+    teamTrainingStatus: student?.teamTrainingStatus || {}, // PRESERVE training status data
+    pairedWith: student?.pairedWith || null // PRESERVE paired student data
   });
 
   const [errors, setErrors] = useState({});
