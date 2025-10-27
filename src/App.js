@@ -785,6 +785,17 @@ const handleAssignmentRemove = (assignmentId) => {
   const handleDeleteStaff = async (staffId) => {
     if (window.confirm('Are you sure you want to delete this staff member?')) {
       try {
+        // Find the staff member to get their listItemId
+        const staffMember = staff.find(s => s.id === staffId);
+        if (!staffMember) {
+          console.error('Staff member not found:', staffId);
+          alert('Staff member not found');
+          return;
+        }
+
+        const listItemId = staffMember.listItemId || staffMember.id;
+        console.log(`🗑️ Deleting staff: ${staffMember.name} (User ID: ${staffId}, List Item ID: ${listItemId})`);
+        
         // First, remove this staff member from all student teams
         console.log(`🗑️ Removing staff ID ${staffId} from all student teams...`);
         
@@ -822,8 +833,8 @@ const handleAssignmentRemove = (assignmentId) => {
           console.log('✅ Student teams updated');
         }
         
-        // Now delete the staff member
-        await sharePointService.deleteStaff(staffId);
+        // Now delete the staff member using the list item ID
+        await sharePointService.deleteStaff(listItemId);
         console.log('✅ Staff member deleted');
         
         // Reload all data to reflect changes

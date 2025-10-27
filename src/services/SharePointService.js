@@ -643,6 +643,70 @@ export class SharePointService {
     }
   }
 
+  /**
+   * Delete a staff member from SharePoint
+   */
+  async deleteStaff(staffId) {
+    try {
+      console.log(`🗑️ Deleting staff member with ID: ${staffId}`);
+      
+      const headers = await this.getHeaders(true);
+      headers['X-HTTP-Method'] = 'DELETE';
+      headers['If-Match'] = '*';
+
+      const url = `${this.config.siteUrl}/_api/web/lists/getbytitle('${this.config.staffListName}')/items(${staffId})`;
+
+      const response = await this.makeRequest(url, {
+        method: 'POST',
+        headers
+      });
+
+      if (!response.ok) {
+        const errorText = await response.text();
+        console.error(`Failed to delete staff: ${response.status}`, errorText);
+        throw new Error(`Failed to delete staff: ${response.status}`);
+      }
+
+      console.log(`✅ Staff member ${staffId} deleted successfully`);
+      return true;
+    } catch (error) {
+      console.error('Error deleting staff:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Delete a student from SharePoint
+   */
+  async deleteStudent(studentId) {
+    try {
+      console.log(`🗑️ Deleting student with ID: ${studentId}`);
+      
+      const headers = await this.getHeaders(true);
+      headers['X-HTTP-Method'] = 'DELETE';
+      headers['If-Match'] = '*';
+
+      const url = `${this.config.siteUrl}/_api/web/lists/getbytitle('${this.config.studentsListName}')/items(${studentId})`;
+
+      const response = await this.makeRequest(url, {
+        method: 'POST',
+        headers
+      });
+
+      if (!response.ok) {
+        const errorText = await response.text();
+        console.error(`Failed to delete student: ${response.status}`, errorText);
+        throw new Error(`Failed to delete student: ${response.status}`);
+      }
+
+      console.log(`✅ Student ${studentId} deleted successfully`);
+      return true;
+    } catch (error) {
+      console.error('Error deleting student:', error);
+      throw error;
+    }
+  }
+
   async saveSchedule(schedule) {
     try {
       console.log('🔐 Checking authentication status...');
