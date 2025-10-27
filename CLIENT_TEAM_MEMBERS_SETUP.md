@@ -109,10 +109,36 @@ Create these helpful views:
 
 ## Migration Notes
 
-After setting up this list, you'll need to:
-1. Run the migration script to copy existing team data from the Clients list
-2. Update the app to read from this new list
-3. (Optional) Remove the old `Team` and `TeamTrainingStatus` columns from the Clients list
+### Running the Migration Script
+
+After setting up the ClientTeamMembers list:
+
+1. **Open the migration tool**: `migrate-to-client-team-members.html`
+   - Open this file in your web browser
+   - Or host it on a web server
+
+2. **Follow the steps in order**:
+   - Click **"1. Login to SharePoint"** - Authenticate with your Microsoft account
+   - Click **"2. Start Migration"** - This will copy all team data from Clients list
+   - Click **"3. Verify Data"** - Confirms the migration was successful
+
+3. **What the migration does**:
+   - Reads all clients from the Clients list
+   - For each client, reads their Team field and TeamTrainingStatus
+   - Creates records in ClientTeamMembers for each team member
+   - Preserves training status information
+   - Skips duplicates if you run it multiple times
+
+4. **Safe to run multiple times**:
+   - The script checks for existing records and skips them
+   - Your Clients list data is never modified
+   - It's additive only (no deletions)
+
+### After Migration
+
+1. Test the React app - it should now load teams from ClientTeamMembers list
+2. (Optional) Keep the old Team and TeamTrainingStatus columns as backup
+3. (Optional) Remove the old columns after confirming everything works
 
 ## Benefits
 
