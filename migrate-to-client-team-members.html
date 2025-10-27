@@ -197,8 +197,6 @@
             try {
                 log('🔐 Starting login...', 'info');
                 
-                await msalInstance.initialize();
-                
                 const accounts = msalInstance.getAllAccounts();
                 let response;
                 
@@ -209,6 +207,7 @@
                             account: accounts[0]
                         });
                     } catch (silentError) {
+                        log('⚠️ Silent login failed, opening popup...', 'warning');
                         response = await msalInstance.loginPopup({
                             scopes: ['https://evokebehavioralhealthcom.sharepoint.com/.default']
                         });
