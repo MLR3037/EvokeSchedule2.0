@@ -275,9 +275,9 @@
 
         async function checkExistingRecord(clientId, staffId) {
             const url = `${config.siteUrl}/_api/web/lists/getbytitle('ClientTeamMembers')/items?` +
-                `$filter=ClientID eq ${clientId} and StaffMember/Id eq ${staffId}&` +
+                `$filter=Client/Id eq ${clientId} and StaffMember/Id eq ${staffId}&` +
                 `$select=Id&` +
-                `$expand=StaffMember`;
+                `$expand=Client,StaffMember`;
 
             const response = await fetch(url, {
                 headers: {
@@ -298,8 +298,7 @@
             const body = {
                 __metadata: { type: 'SP.Data.ClientTeamMembersListItem' },
                 Title: `${client.Title} - ${staffMember.Title}`,
-                ClientID: client.Id,
-                ClientName: client.Title,
+                ClientId: client.Id, // Lookup field - use "Id" suffix
                 StaffMemberId: staffMember.Id,
                 TrainingStatus: trainingStatus,
                 IsActive: true,
@@ -420,8 +419,8 @@
                 
                 // Load ClientTeamMembers
                 const url = `${config.siteUrl}/_api/web/lists/getbytitle('ClientTeamMembers')/items?` +
-                    `$select=Id,ClientID,StaffMember/Id&` +
-                    `$expand=StaffMember&` +
+                    `$select=Id,Client/Id,StaffMember/Id&` +
+                    `$expand=Client,StaffMember&` +
                     `$filter=IsActive eq true&` +
                     `$top=5000`;
 
@@ -442,7 +441,9 @@
                 // Count by client
                 const byClient = {};
                 teamMembers.forEach(tm => {
-                    byClient[tm.ClientID] = (byClient[tm.ClientID] || 0) + 1;
+                    if (tm.Client) {
+                        byClient[tm.Client.Id] = (byClient[tm.Client.Id] || 0) + 1;
+                    }
                 });
                 
                 log(`   Unique clients in ClientTeamMembers: ${Object.keys(byClient).length}`, 'info');

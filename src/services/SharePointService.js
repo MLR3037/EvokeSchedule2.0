@@ -414,9 +414,10 @@ export class SharePointService {
       const headers = await this.getHeaders();
       
       // Load all active team member assignments
+      // Client is a Lookup field, so we need to expand it
       const url = `${this.config.siteUrl}/_api/web/lists/getbytitle('ClientTeamMembers')/items?` +
-        `$select=Id,ClientID,ClientName,StaffMember/Id,StaffMember/Title,StaffMember/EMail,TrainingStatus,IsActive,DateAdded&` +
-        `$expand=StaffMember&` +
+        `$select=Id,Client/Id,Client/Title,StaffMember/Id,StaffMember/Title,StaffMember/EMail,TrainingStatus,IsActive,DateAdded&` +
+        `$expand=Client,StaffMember&` +
         `$filter=IsActive eq true&` +
         `$top=5000`;
 
@@ -444,19 +445,21 @@ export class SharePointService {
       // Group by client ID for easier lookup
       const teamsByClient = {};
       teamMembers.forEach(item => {
-        const clientId = item.ClientID;
-        if (!teamsByClient[clientId]) {
-          teamsByClient[clientId] = [];
-        }
-        
-        if (item.StaffMember) {
-          teamsByClient[clientId].push({
-            id: item.StaffMember.Id,
-            title: item.StaffMember.Title,
-            name: item.StaffMember.Title,
-            email: item.StaffMember.EMail || '',
-            trainingStatus: item.TrainingStatus || 'solo'
-          });
+        if (item.Client) {
+          const clientId = item.Client.Id;
+          if (!teamsByClient[clientId]) {
+            teamsByClient[clientId] = [];
+          }
+          
+          if (item.StaffMember) {
+            teamsByClient[clientId].push({
+              id: item.StaffMember.Id,
+              title: item.StaffMember.Title,
+              name: item.StaffMember.Title,
+              email: item.StaffMember.EMail || '',
+              trainingStatus: item.TrainingStatus || 'solo'
+            });
+          }
         }
       });
 
@@ -708,8 +711,7 @@ export class SharePointService {
       const body = {
         __metadata: { type: 'SP.Data.ClientTeamMembersListItem' },
         Title: `${clientName} - ${staffMember.name}`, // Use Title field for easy identification
-        ClientID: clientId,
-        ClientName: clientName,
+        ClientId: clientId, // Lookup field - use "Id" suffix
         StaffMemberId: staffMember.id, // Person picker field
         TrainingStatus: trainingStatus,
         IsActive: true,
@@ -775,9 +777,9 @@ export class SharePointService {
       // First, get existing team members from the list
       const headers = await this.getHeaders();
       const url = `${this.config.siteUrl}/_api/web/lists/getbytitle('ClientTeamMembers')/items?` +
-        `$filter=ClientID eq ${student.id} and IsActive eq true&` +
-        `$select=Id,StaffMember/Id&` +
-        `$expand=StaffMember`;
+        `$filter=Client/Id eq ${student.id} and IsActive eq true&` +
+        `$select=Id,Client/Id,StaffMember/Id&` +
+        `$expand=Client,StaffMember`;
 
       const response = await this.makeRequest(url, { headers });
       
