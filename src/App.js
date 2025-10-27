@@ -1505,7 +1505,7 @@ const handleAssignmentRemove = (assignmentId) => {
                       </tr>
                     </thead>
                     <tbody className="bg-white divide-y divide-gray-200">
-                      {staff.map(staffMember => (
+                      {[...staff].sort((a, b) => a.name.localeCompare(b.name)).map(staffMember => (
                         <tr key={staffMember.id}>
                           <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">
                             {staffMember.name}
