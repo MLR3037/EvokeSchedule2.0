@@ -12,23 +12,29 @@ This new list replaces the `Team` field and `TeamTrainingStatus` JSON field in t
 
 ## Add These Columns
 
-### 1. ClientID (Number)
+### 1. Title (Single line of text) - DEFAULT COLUMN
+- **This is the built-in Title column - don't create it, just use it!**
+- Use format: **"ClientName - StaffName"** (e.g., "John Doe - Sarah Smith")
+- This makes each record easy to identify in SharePoint views
+- The app will auto-generate this when syncing
+
+### 2. ClientID (Number)
 - Type: **Number**
 - Required: **Yes**
 - Description: "ID of the client from the Clients list"
 
-### 2. ClientName (Single line of text)
+### 3. ClientName (Single line of text)
 - Type: **Single line of text**
 - Required: **Yes**
 - Description: "Name of the client (for easy reference)"
 
-### 3. StaffMember (Person or Group)
+### 4. StaffMember (Person or Group)
 - Type: **Person or Group**
 - Required: **Yes**
 - Allow multiple selections: **No**
 - Description: "Staff member on this client's team"
 
-### 4. TrainingStatus (Choice)
+### 5. TrainingStatus (Choice)
 - Type: **Choice**
 - Required: **Yes**
 - Choices:
@@ -40,13 +46,13 @@ This new list replaces the `Team` field and `TeamTrainingStatus` JSON field in t
 - Display: **Drop-Down Menu**
 - Description: "Training status for this staff member with this client"
 
-### 5. IsActive (Yes/No)
+### 6. IsActive (Yes/No)
 - Type: **Yes/No**
 - Required: **Yes**
 - Default: **Yes**
 - Description: "Whether this team member assignment is active"
 
-### 6. DateAdded (Date and Time)
+### 7. DateAdded (Date and Time)
 - Type: **Date and Time**
 - Required: **No**
 - Include Time: **Yes**
@@ -81,10 +87,13 @@ Create these helpful views:
 
 ### To Add a Staff Member to a Client's Team:
 1. Click **New** in the ClientTeamMembers list
-2. Select **Client** (enter ID and name)
-3. Select **Staff Member** from People Picker
-4. Choose **Training Status** (default is Solo)
-5. Click **Save**
+2. **Title**: Enter **"ClientName - StaffName"** (e.g., "John Doe - Sarah Smith")
+   - Or just enter the client name - the app will fix it when syncing
+3. **ClientID**: Enter the client's ID number (from Clients list)
+4. **ClientName**: Enter the client's name
+5. **StaffMember**: Select staff member from People Picker
+6. **TrainingStatus**: Choose from dropdown (default is Solo)
+7. Click **Save**
 
 ### To Change Training Status:
 1. Find the record in the ClientTeamMembers list

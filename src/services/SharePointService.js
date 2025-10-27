@@ -707,6 +707,7 @@ export class SharePointService {
 
       const body = {
         __metadata: { type: 'SP.Data.ClientTeamMembersListItem' },
+        Title: `${clientName} - ${staffMember.name}`, // Use Title field for easy identification
         ClientID: clientId,
         ClientName: clientName,
         StaffMemberId: staffMember.id, // Person picker field
