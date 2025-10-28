@@ -414,11 +414,11 @@ export class SharePointService {
       const headers = await this.getHeaders();
       
       // Load all active team member assignments
-      // Client is a Lookup field, so we need to expand it
+      // For Lookup fields: Use ClientId to get the ID value directly (no expand needed)
+      // For Person fields: Expand StaffMember to get full details
       const url = `${this.config.siteUrl}/_api/web/lists/getbytitle('ClientTeamMembers')/items?` +
-        `$select=Id,Client/Id,Client/Title,StaffMember/Id,StaffMember/Title,StaffMember/EMail,TrainingStatus,IsActive,DateAdded&` +
-        `$expand=Client,StaffMember&` +
-        `$filter=IsActive eq true&` +
+        `$select=Id,ClientId,StaffMember/Id,StaffMember/Title,StaffMember/EMail,TrainingStatus,IsActive,DateAdded&` +
+        `$expand=StaffMember&` +
         `$top=5000`;
 
       console.log('📋 Fetching team members from:', url);
@@ -445,21 +445,20 @@ export class SharePointService {
       // Group by client ID for easier lookup
       const teamsByClient = {};
       teamMembers.forEach(item => {
-        if (item.Client) {
-          const clientId = item.Client.Id;
+        // For Lookup fields, SharePoint returns the ID as ClientId (not Client.Id)
+        if (item.ClientId && item.StaffMember) {
+          const clientId = item.ClientId;
           if (!teamsByClient[clientId]) {
             teamsByClient[clientId] = [];
           }
           
-          if (item.StaffMember) {
-            teamsByClient[clientId].push({
-              id: item.StaffMember.Id,
-              title: item.StaffMember.Title,
-              name: item.StaffMember.Title,
-              email: item.StaffMember.EMail || '',
-              trainingStatus: item.TrainingStatus || 'solo'
-            });
-          }
+          teamsByClient[clientId].push({
+            id: item.StaffMember.Id,
+            title: item.StaffMember.Title,
+            name: item.StaffMember.Title,
+            email: item.StaffMember.EMail || '',
+            trainingStatus: item.TrainingStatus || 'solo'
+          });
         }
       });
 
@@ -526,7 +525,7 @@ export class SharePointService {
   parseStudents(studentItems, teamsByClient = null) {
     console.log(`🔍 Parsing ${studentItems.length} students`);
     
-    // ✅ NEW: Check if ClientTeamMembers list exists (null = doesn't exist, object = exists)
+    // Check if ClientTeamMembers list exists (null = doesn't exist, object = exists)
     const useClientTeamMembersList = teamsByClient !== null;
     
     const students = studentItems.map(item => {
