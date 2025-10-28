@@ -463,6 +463,7 @@ export class SharePointService {
       });
 
       console.log('📊 Team members grouped by client:', Object.keys(teamsByClient).length, 'clients have teams');
+      console.log('📊 Client IDs with teams:', Object.keys(teamsByClient).sort((a, b) => a - b).join(', '));
       return teamsByClient;
 
     } catch (error) {
@@ -537,7 +538,7 @@ export class SharePointService {
 
       // PRIORITY 1: If ClientTeamMembers list exists, use ONLY that data (even if empty)
       if (useClientTeamMembersList) {
-        console.log(`  📋 Using ClientTeamMembers list for ${item.Title}`);
+        console.log(`  📋 Using ClientTeamMembers list for ${item.Title} (ID: ${item.Id})`);
         
         // Load team from ClientTeamMembers (may be empty array if no team members)
         team = teamsByClient[item.Id] || [];
@@ -549,9 +550,9 @@ export class SharePointService {
         });
         
         if (team.length > 0) {
-          console.log(`  ✅ ${item.Title} has ${team.length} team members from ClientTeamMembers list`);
+          console.log(`  ✅ ${item.Title} (ID: ${item.Id}) has ${team.length} team members from ClientTeamMembers list`);
         } else {
-          console.log(`  ℹ️ ${item.Title} has no team members in ClientTeamMembers list`);
+          console.log(`  ⚠️ ${item.Title} (ID: ${item.Id}) has no team members in ClientTeamMembers list`);
         }
       }
       // FALLBACK: Use legacy Team field ONLY if ClientTeamMembers list doesn't exist
@@ -785,9 +786,9 @@ export class SharePointService {
       // First, get existing team members from the list
       const headers = await this.getHeaders();
       const url = `${this.config.siteUrl}/_api/web/lists/getbytitle('ClientTeamMembers')/items?` +
-        `$filter=Client/Id eq ${student.id} and IsActive eq true&` +
-        `$select=Id,Client/Id,StaffMember/Id&` +
-        `$expand=Client,StaffMember`;
+        `$filter=ClientId eq ${student.id}&` +
+        `$select=Id,ClientId,StaffMember/Id,StaffMember/Title&` +
+        `$expand=StaffMember`;
 
       const response = await this.makeRequest(url, { headers });
       
