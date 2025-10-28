@@ -410,6 +410,45 @@ export class SharePointService {
   }
 
   /**
+   * Normalize training status from SharePoint to match app constants
+   * SharePoint stores: "Solo", "Trainer", "Overlap BCBA", "Overlap Staff"
+   * App expects: "solo", "trainer", "overlap-bcba", "overlap-staff"
+   */
+  normalizeTrainingStatus(spValue) {
+    if (!spValue) return 'solo';
+    
+    const normalized = spValue.toLowerCase().trim();
+    
+    // Map SharePoint values to app constants
+    const mappings = {
+      'solo': 'solo',
+      'trainer': 'trainer',
+      'overlap bcba': 'overlap-bcba',
+      'overlap staff': 'overlap-staff',
+      'overlap-bcba': 'overlap-bcba',
+      'overlap-staff': 'overlap-staff'
+    };
+    
+    return mappings[normalized] || 'solo';
+  }
+
+  /**
+   * Convert app training status to SharePoint format
+   * App uses: "solo", "trainer", "overlap-bcba", "overlap-staff"
+   * SharePoint needs: "Solo", "Trainer", "Overlap BCBA", "Overlap Staff"
+   */
+  toSharePointTrainingStatus(appValue) {
+    const mappings = {
+      'solo': 'Solo',
+      'trainer': 'Trainer',
+      'overlap-bcba': 'Overlap BCBA',
+      'overlap-staff': 'Overlap Staff'
+    };
+    
+    return mappings[appValue] || 'Solo';
+  }
+
+  /**
    * Load client team members from the ClientTeamMembers list
    * Uses caching to improve performance
    */
@@ -469,7 +508,7 @@ export class SharePointService {
             title: item.StaffMember.Title,
             name: item.StaffMember.Title,
             email: item.StaffMember.EMail || '',
-            trainingStatus: item.TrainingStatus || 'solo'
+            trainingStatus: this.normalizeTrainingStatus(item.TrainingStatus)
           });
         }
       });
@@ -749,7 +788,7 @@ export class SharePointService {
         Title: `${clientName} - ${staffMember.name}`, // Use Title field for easy identification
         ClientId: clientId, // Lookup field - use "Id" suffix
         StaffMemberId: staffMember.id, // Person picker field
-        TrainingStatus: trainingStatus,
+        TrainingStatus: this.toSharePointTrainingStatus(trainingStatus), // Convert to SharePoint format
         IsActive: true,
         DateAdded: new Date().toISOString()
       };
