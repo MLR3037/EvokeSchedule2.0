@@ -114,7 +114,7 @@ const ABAScheduler = () => {
       }
       
       if (isAuth) {
-        await loadData();
+        await loadData(true); // Skip confirmation on initial load
       }
     } catch (error) {
       console.error('Error initializing app:', error);
@@ -127,7 +127,15 @@ const ABAScheduler = () => {
   };
 
   // Load all data from SharePoint
-  const loadData = async () => {
+  const loadData = async (skipConfirmation = false) => {
+    // Check if there are unsaved schedule changes (schedule has assignments but no lastModified)
+    if (!skipConfirmation && schedule.assignments && schedule.assignments.length > 0 && !schedule.lastModified) {
+      const confirmMessage = '⚠️ WARNING: Refreshing will clear any unsaved schedule changes.\n\nIf you have filled slots on the Schedule page, they will be lost.\n\nRecommendation: Save your schedule first before refreshing.\n\nDo you want to refresh anyway?';
+      if (!window.confirm(confirmMessage)) {
+        return; // User chose not to refresh
+      }
+    }
+
     setLoading(true);
     try {
       // Load staff, students, and schedule in parallel
@@ -298,7 +306,7 @@ const ABAScheduler = () => {
         }
         
         // Load data after successful authentication
-        await loadData();
+        await loadData(true); // Skip confirmation on login
       }
     } catch (error) {
       console.error('Login error:', error);
@@ -754,7 +762,7 @@ const handleAssignmentRemove = (assignmentId) => {
     try {
       const newStaff = new Staff(staffData);
       await sharePointService.saveStaff(newStaff);
-      await loadData(); // Reload data to get updated list
+      await loadData(true); // Reload data to get updated list (skip confirmation)
       setShowAddStaff(false);
       alert('Staff member added successfully!');
     } catch (error) {
@@ -770,7 +778,7 @@ const handleAssignmentRemove = (assignmentId) => {
     try {
       const updatedStaff = new Staff({ ...staffData, id: editingStaff.id });
       await sharePointService.saveStaff(updatedStaff, true);
-      await loadData(); // Reload data
+      await loadData(true); // Reload data (skip confirmation)
       setEditingStaff(null);
       setShowAddStaff(false);
       alert('Staff member updated successfully!');
@@ -838,7 +846,7 @@ const handleAssignmentRemove = (assignmentId) => {
         console.log('✅ Staff member deleted');
         
         // Reload all data to reflect changes
-        await loadData();
+        await loadData(true); // Skip confirmation
       } catch (error) {
         console.error('Error deleting staff:', error);
         alert(`Failed to delete staff: ${error.message}`);
@@ -852,7 +860,7 @@ const handleAssignmentRemove = (assignmentId) => {
     try {
       const newStudent = new Student(studentData);
       await sharePointService.saveStudent(newStudent);
-      await loadData();
+      await loadData(true); // Skip confirmation
       setShowAddStudent(false);
       alert('Student added successfully!');
     } catch (error) {
@@ -868,7 +876,7 @@ const handleAssignmentRemove = (assignmentId) => {
     try {
       const updatedStudent = new Student({ ...studentData, id: editingStudent.id });
       await sharePointService.saveStudent(updatedStudent, true);
-      await loadData();
+      await loadData(true); // Skip confirmation
       setEditingStudent(null);
       setShowAddStudent(false);
       alert('Student updated successfully!');
@@ -884,7 +892,7 @@ const handleAssignmentRemove = (assignmentId) => {
     if (window.confirm('Are you sure you want to delete this student?')) {
       try {
         await sharePointService.deleteStudent(studentId);
-        await loadData();
+        await loadData(true); // Skip confirmation
       } catch (error) {
         console.error('Error deleting student:', error);
       }
@@ -1105,7 +1113,7 @@ const handleAssignmentRemove = (assignmentId) => {
       }
 
       // Reload data to reflect changes
-      await loadData();
+      await loadData(true); // Skip confirmation
       
       alert(`Successfully cleaned up ${totalCleaned} deleted staff member(s) from ${updatedStudents.length} student team(s)!`);
       console.log(`✅ Cleanup complete: ${totalCleaned} deleted staff removed from ${updatedStudents.length} student teams`);
@@ -1392,13 +1400,24 @@ const handleAssignmentRemove = (assignmentId) => {
                       <AlertCircle className="w-5 h-5 text-blue-600 mt-0.5 mr-3 flex-shrink-0" />
                       <div className="flex-1">
                         <h3 className="text-sm font-semibold text-blue-800">
-                          New Schedule
+                          New Schedule - Not Yet Saved
                         </h3>
                         <p className="text-sm text-blue-700 mt-1">
-                          This schedule hasn't been saved yet. Click "Save Schedule" to preserve your changes.
+                          This schedule hasn't been saved yet. Your changes are only visible to you until someone saves the schedule to SharePoint.
                         </p>
-                        <p className="text-xs text-blue-600 mt-2">
-                          💡 Save frequently if multiple people are working on schedules to avoid losing your work.
+                        <div className="mt-3 p-3 bg-blue-100 rounded-md">
+                          <p className="text-xs font-semibold text-blue-800 mb-1">
+                            👥 Multi-User Workflow:
+                          </p>
+                          <ul className="text-xs text-blue-700 space-y-1 ml-4 list-disc">
+                            <li>Multiple people can work on the schedule at the same time</li>
+                            <li>The <strong>last person to click "Save Schedule"</strong> will overwrite all previous work</li>
+                            <li>Coordinate with your team to decide who will save the final version</li>
+                            <li>If working simultaneously, communicate frequently to avoid losing changes</li>
+                          </ul>
+                        </div>
+                        <p className="text-xs text-blue-600 mt-2 font-medium">
+                          💡 Best Practice: Designate one person to be the "schedule saver" for the day, or take turns and communicate before saving.
                         </p>
                       </div>
                     </div>
@@ -1641,6 +1660,8 @@ const handleAssignmentRemove = (assignmentId) => {
               <TeamManagement
                 staff={staff}
                 students={students}
+                dataLoadedAt={dataLoadedAt}
+                loading={loading}
                 onEditStaff={(staff) => {
                   setEditingStaff(staff);
                   setShowAddStaff(true);

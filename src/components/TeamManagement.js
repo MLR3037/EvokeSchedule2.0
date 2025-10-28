@@ -1,5 +1,5 @@
 import React, { useState, useMemo, useEffect } from 'react';
-import { Users, User, Search, Filter, Edit, Eye, GraduationCap } from 'lucide-react';
+import { Users, User, Search, Filter, Edit, Eye, GraduationCap, RefreshCw, Clock } from 'lucide-react';
 import { TRAINING_STATUS } from '../types/index.js';
 
 /**
@@ -7,7 +7,9 @@ import { TRAINING_STATUS } from '../types/index.js';
  */
 export const TeamManagement = ({ 
   staff, 
-  students, 
+  students,
+  dataLoadedAt,
+  loading,
   onEditStudent,
   onEditStaff,
   onCleanupDeletedStaff,
@@ -326,6 +328,25 @@ export const TeamManagement = ({
           )}
         </div>
       </div>
+
+      {/* Data Freshness Indicator */}
+      {(loading || dataLoadedAt) && (
+        <div className="border-b border-gray-200">
+          {loading ? (
+            <div className="px-6 py-3 bg-blue-50 flex items-center gap-2 text-blue-700">
+              <RefreshCw className="w-4 h-4 animate-spin" />
+              <span className="text-sm font-medium">Loading team data...</span>
+            </div>
+          ) : dataLoadedAt && (
+            <div className="px-6 py-3 bg-gray-50 flex items-center gap-2 text-gray-600">
+              <Clock className="w-4 h-4" />
+              <span className="text-sm">
+                Last updated: {new Date(dataLoadedAt).toLocaleTimeString()}
+              </span>
+            </div>
+          )}
+        </div>
+      )}
 
       <div className="p-6">
         {/* View Toggle and Filters */}
