@@ -425,13 +425,12 @@ export class SharePointService {
 
       const headers = await this.getHeaders();
       
-      // Optimize: Only load active team members and only essential fields
+      // Optimize: Only load essential fields
       // For Lookup fields: Use ClientId to get the ID value directly (no expand needed)
       // For Person fields: Expand StaffMember to get full details
       const url = `${this.config.siteUrl}/_api/web/lists/getbytitle('ClientTeamMembers')/items?` +
         `$select=ClientId,StaffMember/Id,StaffMember/Title,StaffMember/EMail,TrainingStatus&` +
         `$expand=StaffMember&` +
-        `$filter=IsActive eq true&` +
         `$top=5000`;
 
       console.log('📋 Fetching team members from:', url);
