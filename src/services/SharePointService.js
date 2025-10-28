@@ -44,6 +44,11 @@ export class SharePointService {
     this.requestDigest = null;
     this.digestExpiry = null;
     
+    // Cache for team members data to avoid repeated API calls
+    this.teamMembersCache = null;
+    this.teamMembersCacheExpiry = null;
+    this.CACHE_DURATION = 5 * 60 * 1000; // 5 minutes
+    
     // ✅ FIXED: Use correct SharePoint domain (not site path)
     this.loginRequest = {
       scopes: ['https://evokebehavioralhealthcom.sharepoint.com/.default'],
@@ -406,19 +411,27 @@ export class SharePointService {
 
   /**
    * Load client team members from the ClientTeamMembers list
+   * Uses caching to improve performance
    */
-  async loadClientTeamMembers() {
+  async loadClientTeamMembers(forceRefresh = false) {
     try {
+      // Check cache first (unless force refresh)
+      if (!forceRefresh && this.teamMembersCache && this.teamMembersCacheExpiry && Date.now() < this.teamMembersCacheExpiry) {
+        console.log('📦 Using cached team members data');
+        return this.teamMembersCache;
+      }
+      
       console.log('🔍 Loading client team members from ClientTeamMembers list...');
 
       const headers = await this.getHeaders();
       
-      // Load all active team member assignments
+      // Optimize: Only load active team members and only essential fields
       // For Lookup fields: Use ClientId to get the ID value directly (no expand needed)
       // For Person fields: Expand StaffMember to get full details
       const url = `${this.config.siteUrl}/_api/web/lists/getbytitle('ClientTeamMembers')/items?` +
-        `$select=Id,ClientId,StaffMember/Id,StaffMember/Title,StaffMember/EMail,TrainingStatus,IsActive,DateAdded&` +
+        `$select=ClientId,StaffMember/Id,StaffMember/Title,StaffMember/EMail,TrainingStatus&` +
         `$expand=StaffMember&` +
+        `$filter=IsActive eq true&` +
         `$top=5000`;
 
       console.log('📋 Fetching team members from:', url);
@@ -464,12 +477,27 @@ export class SharePointService {
 
       console.log('📊 Team members grouped by client:', Object.keys(teamsByClient).length, 'clients have teams');
       console.log('📊 Client IDs with teams:', Object.keys(teamsByClient).sort((a, b) => a - b).join(', '));
+      
+      // Cache the result
+      this.teamMembersCache = teamsByClient;
+      this.teamMembersCacheExpiry = Date.now() + this.CACHE_DURATION;
+      
       return teamsByClient;
 
     } catch (error) {
       console.error('❌ Error loading client team members:', error);
-      return null; // ✅ CHANGED: Return null instead of empty object to signal fallback
+      return null; // Return null to signal fallback to legacy method
     }
+  }
+  
+  /**
+   * Clear the team members cache
+   * Call this after updating team data to force a refresh
+   */
+  clearTeamMembersCache() {
+    this.teamMembersCache = null;
+    this.teamMembersCacheExpiry = null;
+    console.log('🧹 Team members cache cleared');
   }
 
   /**
@@ -848,6 +876,10 @@ export class SharePointService {
       }
 
       console.log(`✅ Team sync complete for ${student.name}`);
+      
+      // Clear cache so next load gets fresh data
+      this.clearTeamMembersCache();
+      
       return true;
     } catch (error) {
       console.error('Error syncing student team to list:', error);
