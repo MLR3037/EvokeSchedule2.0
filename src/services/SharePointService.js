@@ -429,10 +429,10 @@ export class SharePointService {
         const errorText = await response.text();
         console.error('❌ SharePoint ClientTeamMembers API Error:', response.status, errorText);
         
-        // If the list doesn't exist, return empty array and log warning
+        // If the list doesn't exist, return null (not empty object) to signal fallback to legacy
         if (response.status === 404) {
           console.warn('⚠️ ClientTeamMembers list not found - using legacy Team field instead');
-          return [];
+          return null; // ✅ CHANGED: Return null instead of empty object
         }
         
         throw new Error(`Failed to load client team members: ${response.status} - ${errorText}`);
@@ -468,7 +468,7 @@ export class SharePointService {
 
     } catch (error) {
       console.error('❌ Error loading client team members:', error);
-      return {}; // Return empty object to allow fallback to legacy method
+      return null; // ✅ CHANGED: Return null instead of empty object to signal fallback
     }
   }
 
@@ -523,8 +523,11 @@ export class SharePointService {
   /**
    * Parse student items from SharePoint response
    */
-  parseStudents(studentItems, teamsByClient = {}) {
+  parseStudents(studentItems, teamsByClient = null) {
     console.log(`🔍 Parsing ${studentItems.length} students`);
+    
+    // ✅ NEW: Check if ClientTeamMembers list exists (null = doesn't exist, object = exists)
+    const useClientTeamMembersList = teamsByClient !== null;
     
     const students = studentItems.map(item => {
       console.log(`🔍 Processing student: ${item.Title}`);
@@ -533,10 +536,12 @@ export class SharePointService {
       let teamIds = [];
       let teamTrainingStatus = {};
 
-      // PRIORITY 1: Try to load from ClientTeamMembers list (new method)
-      if (teamsByClient[item.Id] && teamsByClient[item.Id].length > 0) {
+      // PRIORITY 1: If ClientTeamMembers list exists, use ONLY that data (even if empty)
+      if (useClientTeamMembersList) {
         console.log(`  📋 Using ClientTeamMembers list for ${item.Title}`);
-        team = teamsByClient[item.Id];
+        
+        // Load team from ClientTeamMembers (may be empty array if no team members)
+        team = teamsByClient[item.Id] || [];
         teamIds = team.map(member => member.id);
         
         // Build training status object from team data
@@ -544,11 +549,15 @@ export class SharePointService {
           teamTrainingStatus[member.id] = member.trainingStatus || 'solo';
         });
         
-        console.log(`  ✅ ${item.Title} has ${team.length} team members from ClientTeamMembers list`);
+        if (team.length > 0) {
+          console.log(`  ✅ ${item.Title} has ${team.length} team members from ClientTeamMembers list`);
+        } else {
+          console.log(`  ℹ️ ${item.Title} has no team members in ClientTeamMembers list`);
+        }
       }
-      // FALLBACK: Use legacy Team field if ClientTeamMembers list doesn't exist or is empty
+      // FALLBACK: Use legacy Team field ONLY if ClientTeamMembers list doesn't exist
       else if (item.Team) {
-        console.log(`  📋 Using legacy Team field for ${item.Title}`);
+        console.log(`  📋 Using legacy Team field for ${item.Title} (ClientTeamMembers list not available)`);
         
         if (item.Team.results && Array.isArray(item.Team.results)) {
           // Multi-value person picker format
