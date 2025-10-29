@@ -700,19 +700,141 @@ export class SharePointService {
    */
   async loadSchedule(date) {
     try {
-      console.log('📅 Schedule loading temporarily disabled - returning empty schedule');
+      const dateString = typeof date === 'string' ? date : date.toISOString().split('T')[0];
+      console.log('� Loading schedule for date:', dateString);
+
+      // Check authentication
+      if (!this.isAuthenticated()) {
+        console.error('❌ Cannot load schedule - not authenticated');
+        throw new Error('Authentication required');
+      }
+
+      // Step 1: Find the schedule record in ScheduleHistory for this date
+      const scheduleUrl = `${this.siteUrl}/_api/web/lists/getbytitle('ScheduleHistory')/items?` +
+        `$filter=ScheduleDate eq '${dateString}'&` +
+        `$orderby=Created desc&` +
+        `$top=1`;
+
+      console.log('🔍 Fetching schedule metadata from:', scheduleUrl);
+
+      const scheduleResponse = await this.retryFetch(scheduleUrl, {
+        method: 'GET',
+        headers: {
+          'Authorization': `Bearer ${this.accessToken}`,
+          'Accept': 'application/json;odata=verbose'
+        }
+      });
+
+      if (!scheduleResponse.ok) {
+        console.warn(`⚠️ No schedule found for ${dateString}`);
+        return new Schedule({ 
+          date: dateString, 
+          assignments: [], 
+          traineeAssignments: [],
+          lockedAssignments: new Set(),
+          isFinalized: false 
+        });
+      }
+
+      const scheduleData = await scheduleResponse.json();
       
+      if (!scheduleData.d.results || scheduleData.d.results.length === 0) {
+        console.log(`ℹ️ No schedule record found for ${dateString}`);
+        return new Schedule({ 
+          date: dateString, 
+          assignments: [], 
+          traineeAssignments: [],
+          lockedAssignments: new Set(),
+          isFinalized: false 
+        });
+      }
+
+      const scheduleRecord = scheduleData.d.results[0];
+      const scheduleId = scheduleRecord.ID;
+      console.log('✅ Found schedule record:', scheduleId, scheduleRecord);
+
+      // Step 2: Load all assignments for this schedule from DailyAssignments
+      const assignmentsUrl = `${this.siteUrl}/_api/web/lists/getbytitle('DailyAssignments')/items?` +
+        `$filter=ScheduleID eq ${scheduleId}`;
+
+      console.log('🔍 Fetching assignments from:', assignmentsUrl);
+
+      const assignmentsResponse = await this.retryFetch(assignmentsUrl, {
+        method: 'GET',
+        headers: {
+          'Authorization': `Bearer ${this.accessToken}`,
+          'Accept': 'application/json;odata=verbose'
+        }
+      });
+
+      if (!assignmentsResponse.ok) {
+        console.error('❌ Failed to load assignments');
+        throw new Error('Failed to load assignments from SharePoint');
+      }
+
+      const assignmentsData = await assignmentsResponse.json();
+      const assignmentItems = assignmentsData.d.results || [];
+
+      console.log(`✅ Loaded ${assignmentItems.length} assignments from SharePoint`);
+
+      // Step 3: Convert SharePoint items to Assignment objects
+      const assignments = assignmentItems.map(item => {
+        return new Assignment({
+          id: `${item.StaffID}_${item.StudentID}_${item.Session}_${item.Program}`,
+          staffId: item.StaffID,
+          staffName: item.StaffName,
+          studentId: item.StudentID,
+          studentName: item.StudentName,
+          session: item.Session,
+          program: item.Program,
+          date: item.ScheduleDate,
+          isLocked: item.IsLocked || false,
+          assignedBy: 'loaded'
+        });
+      });
+
+      // Step 4: Parse trainee assignments if available
+      let traineeAssignments = [];
+      if (scheduleRecord.TraineeAssignments) {
+        try {
+          traineeAssignments = JSON.parse(scheduleRecord.TraineeAssignments);
+          console.log(`✅ Loaded ${traineeAssignments.length} trainee assignments`);
+        } catch (error) {
+          console.warn('⚠️ Failed to parse trainee assignments:', error);
+        }
+      }
+
+      // Step 5: Create and return the Schedule object
+      const schedule = new Schedule({
+        date: dateString,
+        assignments: assignments,
+        traineeAssignments: traineeAssignments,
+        lockedAssignments: new Set(),
+        isFinalized: scheduleRecord.IsFinalized || false,
+        lastModified: scheduleRecord.LastModified,
+        lastModifiedBy: scheduleRecord.LastModifiedBy
+      });
+
+      console.log('✅ Schedule loaded successfully:', {
+        date: dateString,
+        assignments: assignments.length,
+        traineeAssignments: traineeAssignments.length,
+        isFinalized: schedule.isFinalized
+      });
+
+      return schedule;
+      
+    } catch (error) {
+      console.error('Error in loadSchedule:', error);
+      // Return empty schedule on error
+      const dateString = typeof date === 'string' ? date : date.toISOString().split('T')[0];
       return new Schedule({ 
-        date, 
+        date: dateString, 
         assignments: [], 
         traineeAssignments: [],
         lockedAssignments: new Set(),
         isFinalized: false 
       });
-      
-    } catch (error) {
-      console.error('Error in loadSchedule:', error);
-      return new Schedule({ date, traineeAssignments: [] });
     }
   }
 
