@@ -29,6 +29,7 @@ export const ScheduleTableView = ({
   useEffect(() => {
     console.log('🔄 Schedule changed, syncing state...');
     console.log('  Total assignments:', schedule.assignments.length);
+    console.log('  Total trainee assignments:', schedule.traineeAssignments?.length || 0);
     
     // Sync locked assignments based on actual schedule
     const newLockedAssignments = new Set();
@@ -39,6 +40,17 @@ export const ScheduleTableView = ({
     });
     
     setLockedAssignments(newLockedAssignments);
+    
+    // Sync trainee assignments from schedule
+    if (schedule.traineeAssignments && schedule.traineeAssignments.length > 0) {
+      const newTraineeAssignments = {};
+      schedule.traineeAssignments.forEach(traineeAssignment => {
+        const key = `${traineeAssignment.studentId}_${traineeAssignment.session}`;
+        newTraineeAssignments[key] = traineeAssignment.staffId;
+      });
+      setTraineeAssignments(newTraineeAssignments);
+      console.log('  ✅ Synced trainee assignments:', newTraineeAssignments);
+    }
     
     // Clear pre-assignments for students that now have real assignments
     setPreAssignments(prev => {
@@ -51,7 +63,7 @@ export const ScheduleTableView = ({
       });
       return newPre;
     });
-  }, [schedule.assignments.length]);
+  }, [schedule.assignments.length, schedule.traineeAssignments?.length]);
 
   // Get unique programs from students
   const programs = [...new Set(students.filter(s => s.isActive).map(s => s.program))];
@@ -1295,7 +1307,23 @@ export const SessionSummary = ({ schedule, staff, students, session, program }) 
       ? staffMember.primaryProgram 
       : staffMember.secondaryProgram;
     
-    return worksWithProgram && !assignedStaffIds.has(staffMember.id);
+    if (!worksWithProgram) return false;
+    
+    // Check if staff is already assigned in regular assignments
+    if (assignedStaffIds.has(staffMember.id)) return false;
+    
+    // CRITICAL: Also check if staff is assigned as a trainee
+    // Trainee assignments should NOT show in "Available Staff" list
+    const isAssignedAsTrainee = schedule.traineeAssignments && schedule.traineeAssignments.some(
+      traineeAssignment => traineeAssignment.staffId === staffMember.id && traineeAssignment.session === session
+    );
+    
+    if (isAssignedAsTrainee) {
+      console.log(`🚫 Excluding ${staffMember.name} from Available Staff - assigned as trainee in ${session}`);
+      return false;
+    }
+    
+    return true;
   });
 
   // Group unassigned staff by role

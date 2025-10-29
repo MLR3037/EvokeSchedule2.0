@@ -157,9 +157,23 @@ export class AutoAssignmentEngine {
       if (!s.canWorkProgram(targetProgram)) return false;
       if (!this.canStaffDoDirectService(s)) return false;
       if (!['RBT', 'BS'].includes(s.role)) return false;
-      if (targetStudent.teamIds.includes(s.id)) return false; // Not on Lydia's team
+      if (targetStudent.teamIds.includes(s.id)) return false; // Not on target student's team
       if (this.isStaffInTrainingForStudent(s, targetStudent)) return false; // Not in training for target student
-      return schedule.isStaffAvailable(s.id, targetSession, targetProgram);
+      
+      // Check if available in regular assignments
+      if (!schedule.isStaffAvailable(s.id, targetSession, targetProgram)) return false;
+      
+      // CRITICAL: Also check if assigned as trainee in this session
+      const isAssignedAsTrainee = schedule.traineeAssignments && schedule.traineeAssignments.some(
+        ta => ta.staffId === s.id && ta.session === targetSession
+      );
+      
+      if (isAssignedAsTrainee) {
+        console.log(`    🎓 Excluding ${s.name} - assigned as trainee in ${targetSession}`);
+        return false;
+      }
+      
+      return true;
     });
 
     console.log(`    📊 Found ${unassignedRbtBs.length} unassigned RBT/BS not on ${targetStudent.name}'s team in ${targetProgram} ${targetSession}`);
@@ -1937,12 +1951,24 @@ export class AutoAssignmentEngine {
             // Must be able to do direct sessions
             if (!this.canStaffDoDirectService(staffMember)) return false;
             
-            // Must not already be assigned in this session
+            // Must not already be assigned in this session (regular assignments)
             const alreadyAssigned = schedule.assignments.some(a => 
               a.staffId === staffMember.id && a.session === session
             );
             
-            return !alreadyAssigned;
+            if (alreadyAssigned) return false;
+            
+            // CRITICAL: Must not be assigned as a trainee in this session
+            const isAssignedAsTrainee = schedule.traineeAssignments && schedule.traineeAssignments.some(
+              ta => ta.staffId === staffMember.id && ta.session === session
+            );
+            
+            if (isAssignedAsTrainee) {
+              console.log(`   🎓 Excluding ${staffMember.name} - assigned as trainee in ${session}`);
+              return false;
+            }
+            
+            return true;
           });
 
           if (unassignedStaff.length === 0) {
