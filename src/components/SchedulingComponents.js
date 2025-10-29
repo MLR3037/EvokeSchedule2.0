@@ -915,7 +915,7 @@ export const ScheduleGrid = ({
       studentName: student.name,
       staffRole: staffMember.role,
       ratio: student.ratio,
-      isLocked: schedule.isAssignmentLocked(assignment.id),
+      isLocked: assignment.isLocked || false, // Use assignment's own isLocked property
       assignedBy: assignment.assignedBy,
       trainingStatus: trainingStatus
     };
