@@ -613,7 +613,8 @@ export const ScheduleTableView = ({
           studentId: student.id,
           session: session,
           program: student.program,
-          isTrainee: true
+          isTrainee: true,
+          isLocked: true // Manual trainee assignments are LOCKED
         };
         
         if (schedule.removeTraineeAssignment) {
@@ -643,7 +644,8 @@ export const ScheduleTableView = ({
               studentId: pairedStudent.id,
               session: session,
               program: pairedStudent.program,
-              isTrainee: true
+              isTrainee: true,
+              isLocked: true // Manual trainee assignments are LOCKED
             };
             
             if (schedule.removeTraineeAssignment) {

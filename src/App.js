@@ -18,7 +18,6 @@ import {
   Upload,
   Check,
   AlertCircle,
-  HelpCircle,
   X
 } from 'lucide-react';
 
@@ -91,12 +90,6 @@ const ABAScheduler = () => {
   const [editingStaff, setEditingStaff] = useState(null);
   const [editingStudent, setEditingStudent] = useState(null);
   const [showSettings, setShowSettings] = useState(false);
-
-  // Schedule Assistant state
-  const [showScheduleAssistant, setShowScheduleAssistant] = useState(false);
-  const [assistantQuestion, setAssistantQuestion] = useState('');
-  const [assistantResults, setAssistantResults] = useState(null);
-  const [assistantLoading, setAssistantLoading] = useState(false);
 
   // Test state
   const [testResults, setTestResults] = useState(null);
@@ -773,7 +766,7 @@ const handleManualAssignment = ({ staffId, studentId, session, program }) => {
     session,
     program,
     date: currentDate,
-    isLocked: false,
+    isLocked: true, // Manual assignments are LOCKED
     assignedBy: 'manual'
   });
 
@@ -908,13 +901,39 @@ const handleAssignmentRemove = (assignmentId) => {
 
   // Clear the schedule
   const handleClearSchedule = () => {
-    const confirmMessage = `⚠️ CLEAR SCHEDULE?\n\nThis will:\n❌ Remove all assignments and trainee assignments\n❌ Clear all manual changes\n⚠️ This action cannot be undone\n\n✅ The schedule will NOT be saved - it just clears your current view\n\nDo you want to clear the schedule?`;
+    const confirmMessage = `⚠️ CLEAR UNLOCKED ASSIGNMENTS?\n\nThis will:\n❌ Remove all AUTO-ASSIGNED staff and trainees\n✅ KEEP all MANUAL (locked) assignments\n\n💡 Manual assignments stay locked and protected.\n\nDo you want to clear unlocked assignments?`;
     
     if (!window.confirm(confirmMessage)) {
       return;
     }
 
-    // Create a new empty schedule for the current date
+    // Keep only LOCKED assignments and LOCKED trainee assignments
+    const lockedAssignments = schedule.assignments.filter(a => a.isLocked);
+    const lockedTrainees = (schedule.traineeAssignments || []).filter(t => t.isLocked);
+    
+    const clearedSchedule = new Schedule({ 
+      date: currentDate.toISOString().split('T')[0],
+      assignments: lockedAssignments,
+      traineeAssignments: lockedTrainees,
+      lockedAssignments: new Set(schedule.lockedAssignments),
+      isFinalized: false
+    });
+    
+    setSchedule(clearedSchedule);
+    const removedCount = schedule.assignments.length - lockedAssignments.length;
+    const removedTrainees = (schedule.traineeAssignments || []).length - lockedTrainees.length;
+    console.log(`🧹 Cleared ${removedCount} unlocked assignments and ${removedTrainees} unlocked trainees. Kept ${lockedAssignments.length} locked assignments and ${lockedTrainees.length} locked trainees.`);
+    alert(`Schedule cleared!\n\n✅ Kept ${lockedAssignments.length} locked assignments and ${lockedTrainees.length} locked trainees\n❌ Removed ${removedCount} auto-assigned staff and ${removedTrainees} auto-assigned trainees`);
+  };
+
+  const handleTotalClear = () => {
+    const confirmMessage = `🚨 TOTAL CLEAR - DELETE EVERYTHING?\n\nThis will:\n❌ Remove ALL assignments (manual AND auto)\n❌ Remove ALL trainees (manual AND auto)\n❌ Clear EVERYTHING including locked items\n⚠️ This action cannot be undone\n\n✅ The schedule will NOT be saved - it just clears your current view\n\nAre you SURE you want to delete everything?`;
+    
+    if (!window.confirm(confirmMessage)) {
+      return;
+    }
+
+    // Create a completely empty schedule
     const clearedSchedule = new Schedule({ 
       date: currentDate.toISOString().split('T')[0],
       assignments: [],
@@ -924,148 +943,8 @@ const handleAssignmentRemove = (assignmentId) => {
     });
     
     setSchedule(clearedSchedule);
-    console.log('🧹 Schedule cleared - assignments:', clearedSchedule.assignments.length, 'trainee assignments:', clearedSchedule.traineeAssignments.length);
-    alert('Schedule cleared successfully! Use Auto Assign or manually assign staff to rebuild the schedule.');
-  };
-
-  // Schedule Assistant - Analyze scheduling possibilities without making changes
-  const handleScheduleAssistant = () => {
-    const question = assistantQuestion.toLowerCase().trim();
-    
-    if (!question) {
-      setAssistantResults({ error: 'Please enter a question.' });
-      return;
-    }
-
-    setAssistantLoading(true);
-    
-    try {
-      // Parse the question to identify staff member and student
-      const staffMatch = staff.find(s => 
-        question.includes(s.name.toLowerCase())
-      );
-      
-      const studentMatch = students.find(s => 
-        question.includes(s.name.toLowerCase())
-      );
-
-      if (!staffMatch) {
-        setAssistantResults({
-          error: 'Could not identify a staff member in your question. Please mention a staff member by name.',
-          example: 'Example: "Where could Elise be swapped into the schedule?" or "What sessions is John available for?"'
-        });
-        setAssistantLoading(false);
-        return;
-      }
-
-      // Analyze where this staff member could be placed
-      const opportunities = [];
-      const sessions = ['AM', 'PM'];
-      const programs = ['Primary', 'Secondary'];
-
-      for (const session of sessions) {
-        for (const program of programs) {
-          // Check if staff is available for this session
-          if (!staffMatch.isAvailableForSession(session)) {
-            continue;
-          }
-
-          // Check if staff can work this program
-          if (!staffMatch.canWorkProgram(program)) {
-            continue;
-          }
-
-          // Check if staff is already assigned in this session
-          const alreadyAssigned = schedule.assignments.find(a => 
-            a.staffId === staffMatch.id && a.session === session
-          );
-
-          if (alreadyAssigned) {
-            const assignedStudent = students.find(s => s.id === alreadyAssigned.studentId);
-            opportunities.push({
-              type: 'current',
-              session,
-              program,
-              message: `Currently assigned to ${assignedStudent?.name || 'a student'} (${program} ${session})`
-            });
-            continue;
-          }
-
-          // Find students who need staff in this session/program
-          const needyStudents = students.filter(s => 
-            s.isActive &&
-            s.program === program &&
-            s.isAvailableForSession(session) &&
-            !schedule.assignments.find(a => 
-              a.studentId === s.id && 
-              a.session === session &&
-              a.program === program
-            )
-          );
-
-          // Find students who could swap with this staff
-          const swapCandidates = students.filter(s => 
-            s.isActive &&
-            s.program === program &&
-            s.isAvailableForSession(session) &&
-            s.teamIds.includes(staffMatch.id) && // Staff is on their team
-            schedule.assignments.find(a => 
-              a.studentId === s.id && 
-              a.session === session &&
-              a.program === program &&
-              !a.isLocked
-            )
-          );
-
-          if (needyStudents.length > 0) {
-            opportunities.push({
-              type: 'available',
-              session,
-              program,
-              message: `Could be assigned to: ${needyStudents.map(s => s.name).join(', ')} (${program} ${session})`,
-              students: needyStudents
-            });
-          }
-
-          if (swapCandidates.length > 0) {
-            opportunities.push({
-              type: 'swap',
-              session,
-              program,
-              message: `Could swap in for: ${swapCandidates.map(s => s.name).join(', ')} (${program} ${session})`,
-              students: swapCandidates
-            });
-          }
-        }
-      }
-
-      if (opportunities.length === 0) {
-        setAssistantResults({
-          staff: staffMatch,
-          message: `${staffMatch.name} has no available opportunities at this time.`,
-          reasons: [
-            staffMatch.absentFullDay ? '❌ Marked absent for full day' : null,
-            staffMatch.absentAM ? '❌ Marked absent AM' : null,
-            staffMatch.absentPM ? '❌ Marked absent PM' : null,
-            !staffMatch.isActive ? '❌ Inactive' : null,
-          ].filter(Boolean)
-        });
-      } else {
-        setAssistantResults({
-          staff: staffMatch,
-          student: studentMatch,
-          opportunities,
-          summary: `Found ${opportunities.length} scheduling option${opportunities.length !== 1 ? 's' : ''} for ${staffMatch.name}`
-        });
-      }
-    } catch (error) {
-      console.error('Schedule Assistant error:', error);
-      setAssistantResults({
-        error: `Error analyzing schedule: ${error.message}`
-      });
-    } finally {
-      setAssistantLoading(false);
-    }
+    console.log('🗑️ TOTAL CLEAR - All assignments and trainees removed');
+    alert('Total clear complete! Everything has been removed.');
   };
 
   // Export schedule to Excel
@@ -1645,11 +1524,21 @@ const handleAssignmentRemove = (assignmentId) => {
                 <button
                   onClick={handleClearSchedule}
                   disabled={loading || schedule.assignments.length === 0}
-                  className="bg-red-600 text-white px-4 py-2 rounded hover:bg-red-700 disabled:opacity-50 flex items-center gap-2"
-                  title="Clear all assignments from the schedule"
+                  className="bg-yellow-600 text-white px-4 py-2 rounded hover:bg-yellow-700 disabled:opacity-50 flex items-center gap-2"
+                  title="Clear unlocked (auto-assigned) items, keep manual assignments"
                 >
                   <Trash2 className="w-4 h-4" />
-                  Clear Schedule
+                  Clear Unlocked
+                </button>
+                
+                <button
+                  onClick={handleTotalClear}
+                  disabled={loading || schedule.assignments.length === 0}
+                  className="bg-red-600 text-white px-4 py-2 rounded hover:bg-red-700 disabled:opacity-50 flex items-center gap-2"
+                  title="Delete everything - all assignments and trainees (manual and auto)"
+                >
+                  <Trash2 className="w-4 h-4" />
+                  Total Clear
                 </button>
                 
                 <button
@@ -2204,153 +2093,6 @@ const handleAssignmentRemove = (assignmentId) => {
         />
       )}
 
-      {/* Schedule Assistant Modal */}
-      {showScheduleAssistant && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
-          <div className="bg-white rounded-lg shadow-xl max-w-3xl w-full max-h-[90vh] overflow-y-auto">
-            <div className="sticky top-0 bg-white border-b px-6 py-4 flex items-center justify-between">
-              <div className="flex items-center gap-3">
-                <HelpCircle className="w-6 h-6 text-cyan-600" />
-                <h2 className="text-xl font-bold text-gray-900">Schedule Assistant</h2>
-              </div>
-              <button
-                onClick={() => {
-                  setShowScheduleAssistant(false);
-                  setAssistantQuestion('');
-                  setAssistantResults(null);
-                }}
-                className="text-gray-400 hover:text-gray-600"
-              >
-                <X className="w-6 h-6" />
-              </button>
-            </div>
-
-            <div className="p-6 space-y-4">
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">
-                  Ask a scheduling question:
-                </label>
-                <input
-                  type="text"
-                  value={assistantQuestion}
-                  onChange={(e) => setAssistantQuestion(e.target.value)}
-                  onKeyPress={(e) => e.key === 'Enter' && handleScheduleAssistant()}
-                  placeholder='Example: "Where could Elise be swapped into the schedule?"'
-                  className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-cyan-500 focus:border-cyan-500"
-                  disabled={assistantLoading}
-                />
-                <p className="text-xs text-gray-500 mt-1">
-                  💡 Tip: Mention a staff member's name to see where they could be assigned or swapped
-                </p>
-              </div>
-
-              <button
-                onClick={handleScheduleAssistant}
-                disabled={assistantLoading || !assistantQuestion.trim()}
-                className="w-full bg-cyan-600 text-white px-4 py-2 rounded-lg hover:bg-cyan-700 disabled:opacity-50 flex items-center justify-center gap-2"
-              >
-                {assistantLoading ? (
-                  <>
-                    <RefreshCw className="w-4 h-4 animate-spin" />
-                    Analyzing...
-                  </>
-                ) : (
-                  <>
-                    <HelpCircle className="w-4 h-4" />
-                    Analyze
-                  </>
-                )}
-              </button>
-
-              {/* Results Display */}
-              {assistantResults && (
-                <div className="mt-6 space-y-4">
-                  {assistantResults.error ? (
-                    <div className="bg-red-50 border border-red-200 rounded-lg p-4">
-                      <p className="text-red-800 font-medium">❌ {assistantResults.error}</p>
-                      {assistantResults.example && (
-                        <p className="text-red-600 text-sm mt-2">{assistantResults.example}</p>
-                      )}
-                    </div>
-                  ) : (
-                    <>
-                      <div className="bg-cyan-50 border border-cyan-200 rounded-lg p-4">
-                        <h3 className="font-semibold text-cyan-900 mb-2">
-                          📊 {assistantResults.summary}
-                        </h3>
-                        {assistantResults.staff && (
-                          <p className="text-sm text-cyan-800">
-                            Staff: <span className="font-medium">{assistantResults.staff.name}</span> ({assistantResults.staff.role})
-                          </p>
-                        )}
-                      </div>
-
-                      {assistantResults.opportunities && assistantResults.opportunities.length > 0 ? (
-                        <div className="space-y-3">
-                          <h4 className="font-semibold text-gray-900">Available Options:</h4>
-                          {assistantResults.opportunities.map((opp, idx) => (
-                            <div
-                              key={idx}
-                              className={`border rounded-lg p-4 ${
-                                opp.type === 'current'
-                                  ? 'bg-blue-50 border-blue-200'
-                                  : opp.type === 'available'
-                                  ? 'bg-green-50 border-green-200'
-                                  : 'bg-yellow-50 border-yellow-200'
-                              }`}
-                            >
-                              <div className="flex items-start gap-2">
-                                <span className="text-lg">
-                                  {opp.type === 'current' ? '📍' : opp.type === 'available' ? '✅' : '🔄'}
-                                </span>
-                                <div className="flex-1">
-                                  <p className={`font-medium ${
-                                    opp.type === 'current'
-                                      ? 'text-blue-900'
-                                      : opp.type === 'available'
-                                      ? 'text-green-900'
-                                      : 'text-yellow-900'
-                                  }`}>
-                                    {opp.message}
-                                  </p>
-                                  {opp.students && (
-                                    <p className="text-sm text-gray-600 mt-1">
-                                      {opp.type === 'available' ? 'Can assign to:' : 'Can swap with:'}{' '}
-                                      {opp.students.map(s => `${s.name} (${s.ratioAM === '2:1' || s.ratioPM === '2:1' ? '2:1' : '1:1'})`).join(', ')}
-                                    </p>
-                                  )}
-                                </div>
-                              </div>
-                            </div>
-                          ))}
-                        </div>
-                      ) : (
-                        <div className="bg-gray-50 border border-gray-200 rounded-lg p-4">
-                          <p className="text-gray-800 font-medium">{assistantResults.message}</p>
-                          {assistantResults.reasons && assistantResults.reasons.length > 0 && (
-                            <ul className="mt-2 space-y-1">
-                              {assistantResults.reasons.map((reason, idx) => (
-                                <li key={idx} className="text-sm text-gray-600">{reason}</li>
-                              ))}
-                            </ul>
-                          )}
-                        </div>
-                      )}
-
-                      <div className="bg-amber-50 border border-amber-200 rounded-lg p-3 mt-4">
-                        <p className="text-xs text-amber-800">
-                          ℹ️ <strong>Note:</strong> This is an analysis only - no changes have been made to the schedule.
-                          To make changes, use the assignment dropdowns or Auto Assign/Smart Swap buttons.
-                        </p>
-                      </div>
-                    </>
-                  )}
-                </div>
-              )}
-            </div>
-          </div>
-        </div>
-      )}
     </div>
   );
 };
