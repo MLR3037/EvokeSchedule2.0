@@ -820,6 +820,28 @@ const handleAssignmentRemove = (assignmentId) => {
     }
   };
 
+  // Clear the schedule
+  const handleClearSchedule = () => {
+    const confirmMessage = `⚠️ CLEAR SCHEDULE?\n\nThis will:\n❌ Remove all assignments and trainee assignments\n❌ Clear all manual changes\n⚠️ This action cannot be undone\n\n✅ The schedule will NOT be saved - it just clears your current view\n\nDo you want to clear the schedule?`;
+    
+    if (!window.confirm(confirmMessage)) {
+      return;
+    }
+
+    // Create a new empty schedule for the current date
+    const clearedSchedule = new Schedule({ 
+      date: currentDate,
+      assignments: [],
+      traineeAssignments: [],
+      lockedAssignments: new Set(),
+      isFinalized: false
+    });
+    
+    setSchedule(clearedSchedule);
+    console.log('🧹 Schedule cleared');
+    alert('Schedule cleared successfully! Use Auto Assign or manually assign staff to rebuild the schedule.');
+  };
+
   // Export schedule to Excel
   const handleExportToExcel = () => {
     try {
@@ -1385,8 +1407,18 @@ const handleAssignmentRemove = (assignmentId) => {
                 </button>
                 
                 <button
+                  onClick={handleClearSchedule}
+                  disabled={loading || schedule.assignments.length === 0}
+                  className="bg-red-600 text-white px-4 py-2 rounded hover:bg-red-700 disabled:opacity-50 flex items-center gap-2"
+                  title="Clear all assignments from the schedule"
+                >
+                  <Trash2 className="w-4 h-4" />
+                  Clear Schedule
+                </button>
+                
+                <button
                   onClick={clearAuthentication}
-                  className="bg-red-600 text-white px-4 py-2 rounded hover:bg-red-700 flex items-center gap-2"
+                  className="bg-orange-600 text-white px-4 py-2 rounded hover:bg-orange-700 flex items-center gap-2"
                   title="Clear authentication cache to fix 401 errors"
                 >
                   🔄 Clear Auth
