@@ -15,6 +15,7 @@ import {
   Clock,
   GraduationCap,
   Download,
+  Upload,
   Check,
   AlertCircle
 } from 'lucide-react';
@@ -745,6 +746,38 @@ const handleAssignmentRemove = (assignmentId) => {
     }
   };
 
+  // Load previously saved schedule for the selected date
+  const handleLoadSchedule = async () => {
+    // Confirm with user before loading
+    const confirmMessage = `📅 Load Previously Saved Schedule?\n\nThis will:\n✅ Load the saved schedule for ${currentDate.toLocaleDateString()}\n⚠️ Replace any unsaved changes in the current view\n\nDo you want to proceed?`;
+    
+    if (!window.confirm(confirmMessage)) {
+      return;
+    }
+
+    setLoading(true);
+    try {
+      console.log('📥 Loading saved schedule for:', currentDate);
+      
+      const scheduleData = await sharePointService.loadSchedule(currentDate);
+      
+      if (scheduleData && scheduleData.assignments && scheduleData.assignments.length > 0) {
+        setSchedule(scheduleData);
+        setDataLoadedAt(new Date());
+        console.log('✅ Schedule loaded successfully:', scheduleData.assignments.length, 'assignments');
+        alert(`✅ Schedule loaded successfully!\n\n${scheduleData.assignments.length} assignments loaded from ${currentDate.toLocaleDateString()}`);
+      } else {
+        console.log('ℹ️ No saved schedule found for this date');
+        alert(`ℹ️ No saved schedule found for ${currentDate.toLocaleDateString()}.\n\nThis might mean:\n• No schedule has been saved for this date yet\n• The schedule was saved but contains no assignments\n\nYou can create a new schedule using Auto Assign.`);
+      }
+    } catch (error) {
+      console.error('❌ Error loading schedule:', error);
+      alert(`Error loading schedule: ${error.message}\n\nPlease check the browser console (F12) for more details.`);
+    } finally {
+      setLoading(false);
+    }
+  };
+
   // Export schedule to Excel
   const handleExportToExcel = () => {
     try {
@@ -1278,6 +1311,16 @@ const handleAssignmentRemove = (assignmentId) => {
                 >
                   {saving ? <RefreshCw className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
                   Save
+                </button>
+                
+                <button
+                  onClick={handleLoadSchedule}
+                  disabled={loading}
+                  className="bg-indigo-600 text-white px-4 py-2 rounded hover:bg-indigo-700 disabled:opacity-50 flex items-center gap-2"
+                  title="Load previously saved schedule for this date"
+                >
+                  <Upload className="w-4 h-4" />
+                  Load Saved
                 </button>
                 
                 <button
