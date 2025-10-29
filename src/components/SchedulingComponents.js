@@ -42,15 +42,17 @@ export const ScheduleTableView = ({
     setLockedAssignments(newLockedAssignments);
     
     // Sync trainee assignments from schedule
+    const newTraineeAssignments = {};
     if (schedule.traineeAssignments && schedule.traineeAssignments.length > 0) {
-      const newTraineeAssignments = {};
       schedule.traineeAssignments.forEach(traineeAssignment => {
         const key = `${traineeAssignment.studentId}_${traineeAssignment.session}`;
         newTraineeAssignments[key] = traineeAssignment.staffId;
       });
-      setTraineeAssignments(newTraineeAssignments);
       console.log('  ✅ Synced trainee assignments:', newTraineeAssignments);
+    } else {
+      console.log('  ✅ Cleared trainee assignments (empty schedule)');
     }
+    setTraineeAssignments(newTraineeAssignments);
     
     // Clear pre-assignments for students that now have real assignments
     setPreAssignments(prev => {

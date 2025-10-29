@@ -916,7 +916,7 @@ const handleAssignmentRemove = (assignmentId) => {
 
     // Create a new empty schedule for the current date
     const clearedSchedule = new Schedule({ 
-      date: currentDate,
+      date: currentDate.toISOString().split('T')[0],
       assignments: [],
       traineeAssignments: [],
       lockedAssignments: new Set(),
@@ -924,7 +924,7 @@ const handleAssignmentRemove = (assignmentId) => {
     });
     
     setSchedule(clearedSchedule);
-    console.log('🧹 Schedule cleared');
+    console.log('🧹 Schedule cleared - assignments:', clearedSchedule.assignments.length, 'trainee assignments:', clearedSchedule.traineeAssignments.length);
     alert('Schedule cleared successfully! Use Auto Assign or manually assign staff to rebuild the schedule.');
   };
 
