@@ -909,7 +909,7 @@ export const ScheduleGrid = ({
     // Get training status for this staff member on this student
     const trainingStatus = student.getStaffTrainingStatus ? student.getStaffTrainingStatus(staffMember.id) : TRAINING_STATUS.SOLO;
 
-    return {
+    const displayData = {
       id: assignment.id,
       staffName: staffMember.name,
       studentName: student.name,
@@ -919,6 +919,13 @@ export const ScheduleGrid = ({
       assignedBy: assignment.assignedBy,
       trainingStatus: trainingStatus
     };
+    
+    // Debug logging to verify isLocked values
+    if (assignment.assignedBy === 'auto' || assignment.assignedBy === 'auto-swap') {
+      console.log(`🔓 Auto-assigned: ${staffMember.name} → ${student.name}, isLocked=${displayData.isLocked}`);
+    }
+    
+    return displayData;
   };
 
   const handleCellClick = (session, program) => {
