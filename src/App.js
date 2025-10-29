@@ -116,7 +116,7 @@ const ABAScheduler = () => {
       }
       
       if (isAuth) {
-        await loadData(true); // Skip confirmation on initial load
+        await refreshDataOnly(); // Load staff/students only, start with blank schedule
       }
     } catch (error) {
       console.error('Error initializing app:', error);
