@@ -63,7 +63,7 @@ export const ScheduleTableView = ({
       });
       return newPre;
     });
-  }, [schedule.assignments.length, schedule.traineeAssignments?.length]);
+  }, [schedule.assignments.length, schedule.traineeAssignments?.length, staff.length, students.length]);
 
   // Get unique programs from students
   const programs = [...new Set(students.filter(s => s.isActive).map(s => s.program))];

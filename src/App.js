@@ -17,7 +17,9 @@ import {
   Download,
   Upload,
   Check,
-  AlertCircle
+  AlertCircle,
+  HelpCircle,
+  X
 } from 'lucide-react';
 
 // Import our new components and services
@@ -89,6 +91,12 @@ const ABAScheduler = () => {
   const [editingStaff, setEditingStaff] = useState(null);
   const [editingStudent, setEditingStudent] = useState(null);
   const [showSettings, setShowSettings] = useState(false);
+
+  // Schedule Assistant state
+  const [showScheduleAssistant, setShowScheduleAssistant] = useState(false);
+  const [assistantQuestion, setAssistantQuestion] = useState('');
+  const [assistantResults, setAssistantResults] = useState(null);
+  const [assistantLoading, setAssistantLoading] = useState(false);
 
   // Test state
   const [testResults, setTestResults] = useState(null);
@@ -842,6 +850,146 @@ const handleAssignmentRemove = (assignmentId) => {
     alert('Schedule cleared successfully! Use Auto Assign or manually assign staff to rebuild the schedule.');
   };
 
+  // Schedule Assistant - Analyze scheduling possibilities without making changes
+  const handleScheduleAssistant = () => {
+    const question = assistantQuestion.toLowerCase().trim();
+    
+    if (!question) {
+      setAssistantResults({ error: 'Please enter a question.' });
+      return;
+    }
+
+    setAssistantLoading(true);
+    
+    try {
+      // Parse the question to identify staff member and student
+      const staffMatch = staff.find(s => 
+        question.includes(s.name.toLowerCase())
+      );
+      
+      const studentMatch = students.find(s => 
+        question.includes(s.name.toLowerCase())
+      );
+
+      if (!staffMatch) {
+        setAssistantResults({
+          error: 'Could not identify a staff member in your question. Please mention a staff member by name.',
+          example: 'Example: "Where could Elise be swapped into the schedule?" or "What sessions is John available for?"'
+        });
+        setAssistantLoading(false);
+        return;
+      }
+
+      // Analyze where this staff member could be placed
+      const opportunities = [];
+      const sessions = ['AM', 'PM'];
+      const programs = ['Primary', 'Secondary'];
+
+      for (const session of sessions) {
+        for (const program of programs) {
+          // Check if staff is available for this session
+          if (!staffMatch.isAvailableForSession(session)) {
+            continue;
+          }
+
+          // Check if staff can work this program
+          if (!staffMatch.canWorkProgram(program)) {
+            continue;
+          }
+
+          // Check if staff is already assigned in this session
+          const alreadyAssigned = schedule.assignments.find(a => 
+            a.staffId === staffMatch.id && a.session === session
+          );
+
+          if (alreadyAssigned) {
+            const assignedStudent = students.find(s => s.id === alreadyAssigned.studentId);
+            opportunities.push({
+              type: 'current',
+              session,
+              program,
+              message: `Currently assigned to ${assignedStudent?.name || 'a student'} (${program} ${session})`
+            });
+            continue;
+          }
+
+          // Find students who need staff in this session/program
+          const needyStudents = students.filter(s => 
+            s.isActive &&
+            s.program === program &&
+            s.isAvailableForSession(session) &&
+            !schedule.assignments.find(a => 
+              a.studentId === s.id && 
+              a.session === session &&
+              a.program === program
+            )
+          );
+
+          // Find students who could swap with this staff
+          const swapCandidates = students.filter(s => 
+            s.isActive &&
+            s.program === program &&
+            s.isAvailableForSession(session) &&
+            s.teamIds.includes(staffMatch.id) && // Staff is on their team
+            schedule.assignments.find(a => 
+              a.studentId === s.id && 
+              a.session === session &&
+              a.program === program &&
+              !a.isLocked
+            )
+          );
+
+          if (needyStudents.length > 0) {
+            opportunities.push({
+              type: 'available',
+              session,
+              program,
+              message: `Could be assigned to: ${needyStudents.map(s => s.name).join(', ')} (${program} ${session})`,
+              students: needyStudents
+            });
+          }
+
+          if (swapCandidates.length > 0) {
+            opportunities.push({
+              type: 'swap',
+              session,
+              program,
+              message: `Could swap in for: ${swapCandidates.map(s => s.name).join(', ')} (${program} ${session})`,
+              students: swapCandidates
+            });
+          }
+        }
+      }
+
+      if (opportunities.length === 0) {
+        setAssistantResults({
+          staff: staffMatch,
+          message: `${staffMatch.name} has no available opportunities at this time.`,
+          reasons: [
+            staffMatch.absentFullDay ? '❌ Marked absent for full day' : null,
+            staffMatch.absentAM ? '❌ Marked absent AM' : null,
+            staffMatch.absentPM ? '❌ Marked absent PM' : null,
+            !staffMatch.isActive ? '❌ Inactive' : null,
+          ].filter(Boolean)
+        });
+      } else {
+        setAssistantResults({
+          staff: staffMatch,
+          student: studentMatch,
+          opportunities,
+          summary: `Found ${opportunities.length} scheduling option${opportunities.length !== 1 ? 's' : ''} for ${staffMatch.name}`
+        });
+      }
+    } catch (error) {
+      console.error('Schedule Assistant error:', error);
+      setAssistantResults({
+        error: `Error analyzing schedule: ${error.message}`
+      });
+    } finally {
+      setAssistantLoading(false);
+    }
+  };
+
   // Export schedule to Excel
   const handleExportToExcel = () => {
     try {
@@ -1366,6 +1514,16 @@ const handleAssignmentRemove = (assignmentId) => {
                 >
                   {autoAssigning ? <RefreshCw className="w-4 h-4 animate-spin" /> : '🔀'}
                   Smart Swap
+                </button>
+                
+                <button
+                  onClick={() => setShowScheduleAssistant(true)}
+                  disabled={loading}
+                  className="bg-cyan-600 text-white px-4 py-2 rounded hover:bg-cyan-700 disabled:opacity-50 flex items-center gap-2"
+                  title="Ask questions about scheduling possibilities (view-only, no changes)"
+                >
+                  <HelpCircle className="w-4 h-4" />
+                  Assistant
                 </button>
                 
                 <button
@@ -1966,6 +2124,154 @@ const handleAssignmentRemove = (assignmentId) => {
           allStaff={staff}
           peoplePickerService={peoplePickerService}
         />
+      )}
+
+      {/* Schedule Assistant Modal */}
+      {showScheduleAssistant && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-lg shadow-xl max-w-3xl w-full max-h-[90vh] overflow-y-auto">
+            <div className="sticky top-0 bg-white border-b px-6 py-4 flex items-center justify-between">
+              <div className="flex items-center gap-3">
+                <HelpCircle className="w-6 h-6 text-cyan-600" />
+                <h2 className="text-xl font-bold text-gray-900">Schedule Assistant</h2>
+              </div>
+              <button
+                onClick={() => {
+                  setShowScheduleAssistant(false);
+                  setAssistantQuestion('');
+                  setAssistantResults(null);
+                }}
+                className="text-gray-400 hover:text-gray-600"
+              >
+                <X className="w-6 h-6" />
+              </button>
+            </div>
+
+            <div className="p-6 space-y-4">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">
+                  Ask a scheduling question:
+                </label>
+                <input
+                  type="text"
+                  value={assistantQuestion}
+                  onChange={(e) => setAssistantQuestion(e.target.value)}
+                  onKeyPress={(e) => e.key === 'Enter' && handleScheduleAssistant()}
+                  placeholder='Example: "Where could Elise be swapped into the schedule?"'
+                  className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-cyan-500 focus:border-cyan-500"
+                  disabled={assistantLoading}
+                />
+                <p className="text-xs text-gray-500 mt-1">
+                  💡 Tip: Mention a staff member's name to see where they could be assigned or swapped
+                </p>
+              </div>
+
+              <button
+                onClick={handleScheduleAssistant}
+                disabled={assistantLoading || !assistantQuestion.trim()}
+                className="w-full bg-cyan-600 text-white px-4 py-2 rounded-lg hover:bg-cyan-700 disabled:opacity-50 flex items-center justify-center gap-2"
+              >
+                {assistantLoading ? (
+                  <>
+                    <RefreshCw className="w-4 h-4 animate-spin" />
+                    Analyzing...
+                  </>
+                ) : (
+                  <>
+                    <HelpCircle className="w-4 h-4" />
+                    Analyze
+                  </>
+                )}
+              </button>
+
+              {/* Results Display */}
+              {assistantResults && (
+                <div className="mt-6 space-y-4">
+                  {assistantResults.error ? (
+                    <div className="bg-red-50 border border-red-200 rounded-lg p-4">
+                      <p className="text-red-800 font-medium">❌ {assistantResults.error}</p>
+                      {assistantResults.example && (
+                        <p className="text-red-600 text-sm mt-2">{assistantResults.example}</p>
+                      )}
+                    </div>
+                  ) : (
+                    <>
+                      <div className="bg-cyan-50 border border-cyan-200 rounded-lg p-4">
+                        <h3 className="font-semibold text-cyan-900 mb-2">
+                          📊 {assistantResults.summary}
+                        </h3>
+                        {assistantResults.staff && (
+                          <p className="text-sm text-cyan-800">
+                            Staff: <span className="font-medium">{assistantResults.staff.name}</span> ({assistantResults.staff.role})
+                          </p>
+                        )}
+                      </div>
+
+                      {assistantResults.opportunities && assistantResults.opportunities.length > 0 ? (
+                        <div className="space-y-3">
+                          <h4 className="font-semibold text-gray-900">Available Options:</h4>
+                          {assistantResults.opportunities.map((opp, idx) => (
+                            <div
+                              key={idx}
+                              className={`border rounded-lg p-4 ${
+                                opp.type === 'current'
+                                  ? 'bg-blue-50 border-blue-200'
+                                  : opp.type === 'available'
+                                  ? 'bg-green-50 border-green-200'
+                                  : 'bg-yellow-50 border-yellow-200'
+                              }`}
+                            >
+                              <div className="flex items-start gap-2">
+                                <span className="text-lg">
+                                  {opp.type === 'current' ? '📍' : opp.type === 'available' ? '✅' : '🔄'}
+                                </span>
+                                <div className="flex-1">
+                                  <p className={`font-medium ${
+                                    opp.type === 'current'
+                                      ? 'text-blue-900'
+                                      : opp.type === 'available'
+                                      ? 'text-green-900'
+                                      : 'text-yellow-900'
+                                  }`}>
+                                    {opp.message}
+                                  </p>
+                                  {opp.students && (
+                                    <p className="text-sm text-gray-600 mt-1">
+                                      {opp.type === 'available' ? 'Can assign to:' : 'Can swap with:'}{' '}
+                                      {opp.students.map(s => `${s.name} (${s.ratioAM === '2:1' || s.ratioPM === '2:1' ? '2:1' : '1:1'})`).join(', ')}
+                                    </p>
+                                  )}
+                                </div>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      ) : (
+                        <div className="bg-gray-50 border border-gray-200 rounded-lg p-4">
+                          <p className="text-gray-800 font-medium">{assistantResults.message}</p>
+                          {assistantResults.reasons && assistantResults.reasons.length > 0 && (
+                            <ul className="mt-2 space-y-1">
+                              {assistantResults.reasons.map((reason, idx) => (
+                                <li key={idx} className="text-sm text-gray-600">{reason}</li>
+                              ))}
+                            </ul>
+                          )}
+                        </div>
+                      )}
+
+                      <div className="bg-amber-50 border border-amber-200 rounded-lg p-3 mt-4">
+                        <p className="text-xs text-amber-800">
+                          ℹ️ <strong>Note:</strong> This is an analysis only - no changes have been made to the schedule.
+                          To make changes, use the assignment dropdowns or Auto Assign/Smart Swap buttons.
+                        </p>
+                      </div>
+                    </>
+                  )}
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );
