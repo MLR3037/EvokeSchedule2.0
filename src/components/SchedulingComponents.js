@@ -527,14 +527,22 @@ export const ScheduleTableView = ({
             <span className="text-xs text-gray-500">#{staffIndex + 1}</span>
           )}
           
-          {/* Show lock button if there's a current assignment (auto-locked on selection) */}
+          {/* Show lock/unlock icon based on assignment status */}
           {currentAssignment && (
             <button
               onClick={() => handleUnlockAssignment(student.id, session, staffIndex)}
-              className="p-1 text-red-600 hover:text-red-800 hover:bg-red-50 rounded"
+              className={`p-1 rounded ${
+                currentAssignment.isLocked 
+                  ? 'text-red-600 hover:text-red-800 hover:bg-red-50' 
+                  : 'text-green-600 hover:text-green-800 hover:bg-green-50'
+              }`}
               title="Remove this assignment"
             >
-              <Lock className="w-4 h-4" />
+              {currentAssignment.isLocked ? (
+                <Lock className="w-4 h-4" />
+              ) : (
+                <Unlock className="w-4 h-4" />
+              )}
             </button>
           )}
         </div>
