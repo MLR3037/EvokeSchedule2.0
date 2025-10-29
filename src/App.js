@@ -183,6 +183,48 @@ const ABAScheduler = () => {
     }
   };
 
+  // Smart refresh: Update staff/students without clearing schedule
+  const refreshDataOnly = async () => {
+    console.log('🔄 Smart refresh: Updating data without clearing schedule...');
+    setLoading(true);
+    try {
+      // Load staff and students in parallel
+      const [staffData, studentsData] = await Promise.all([
+        sharePointService.loadStaff().catch(err => {
+          console.error('Failed to load staff:', err);
+          return [];
+        }),
+        sharePointService.loadStudents().catch(err => {
+          console.error('Failed to load students:', err);
+          return [];
+        })
+      ]);
+
+      // Update staff and students, but preserve the current schedule
+      setStaff(staffData);
+      setStudents(studentsData);
+      setDataLoadedAt(new Date()); // Track when data was loaded
+      
+      console.log(`✅ Smart refresh complete: ${staffData.length} staff, ${studentsData.length} students loaded. Schedule preserved.`);
+      
+      // Log attendance status after refresh
+      const absentStaff = staffData.filter(s => s.absentAM || s.absentPM || s.absentFullDay);
+      const absentStudents = studentsData.filter(s => s.absentAM || s.absentPM || s.absentFullDay);
+      if (absentStaff.length > 0 || absentStudents.length > 0) {
+        console.log(`📊 Attendance after refresh: ${absentStaff.length} staff absent, ${absentStudents.length} students absent`);
+      }
+      
+      if (staffData.length === 0 && studentsData.length === 0) {
+        console.warn('⚠️ No data loaded. Check authentication and SharePoint list names.');
+      }
+    } catch (error) {
+      console.error('💥 Error refreshing data:', error);
+      alert(`Error refreshing data: ${error.message}`);
+    } finally {
+      setLoading(false);
+    }
+  };
+
   // Handle date change
   const handleDateChange = async (newDate) => {
     if (isAuthenticated) {
@@ -795,7 +837,7 @@ const handleAssignmentRemove = (assignmentId) => {
     try {
       const newStaff = new Staff(staffData);
       await sharePointService.saveStaff(newStaff);
-      await loadData(true); // Reload data to get updated list (skip confirmation)
+      await refreshDataOnly(); // Smart refresh: Update data without clearing schedule
       setShowAddStaff(false);
       alert('Staff member added successfully!');
     } catch (error) {
@@ -811,7 +853,7 @@ const handleAssignmentRemove = (assignmentId) => {
     try {
       const updatedStaff = new Staff({ ...staffData, id: editingStaff.id });
       await sharePointService.saveStaff(updatedStaff, true);
-      await loadData(true); // Reload data (skip confirmation)
+      await refreshDataOnly(); // Smart refresh: Update data without clearing schedule
       setEditingStaff(null);
       setShowAddStaff(false);
       alert('Staff member updated successfully!');
@@ -879,7 +921,7 @@ const handleAssignmentRemove = (assignmentId) => {
         console.log('✅ Staff member deleted');
         
         // Reload all data to reflect changes
-        await loadData(true); // Skip confirmation
+        await refreshDataOnly(); // Smart refresh: Update data without clearing schedule
       } catch (error) {
         console.error('Error deleting staff:', error);
         alert(`Failed to delete staff: ${error.message}`);
@@ -893,7 +935,7 @@ const handleAssignmentRemove = (assignmentId) => {
     try {
       const newStudent = new Student(studentData);
       await sharePointService.saveStudent(newStudent);
-      await loadData(true); // Skip confirmation
+      await refreshDataOnly(); // Smart refresh: Update data without clearing schedule
       setShowAddStudent(false);
       alert('Student added successfully!');
     } catch (error) {
@@ -909,7 +951,7 @@ const handleAssignmentRemove = (assignmentId) => {
     try {
       const updatedStudent = new Student({ ...studentData, id: editingStudent.id });
       await sharePointService.saveStudent(updatedStudent, true);
-      await loadData(true); // Skip confirmation
+      await refreshDataOnly(); // Smart refresh: Update data without clearing schedule
       setEditingStudent(null);
       setShowAddStudent(false);
       alert('Student updated successfully!');
@@ -925,7 +967,7 @@ const handleAssignmentRemove = (assignmentId) => {
     if (window.confirm('Are you sure you want to delete this student?')) {
       try {
         await sharePointService.deleteStudent(studentId);
-        await loadData(true); // Skip confirmation
+        await refreshDataOnly(); // Smart refresh: Update data without clearing schedule
       } catch (error) {
         console.error('Error deleting student:', error);
       }
@@ -1146,7 +1188,7 @@ const handleAssignmentRemove = (assignmentId) => {
       }
 
       // Reload data to reflect changes
-      await loadData(true); // Skip confirmation
+      await refreshDataOnly(); // Smart refresh: Update data without clearing schedule
       
       alert(`Successfully cleaned up ${totalCleaned} deleted staff member(s) from ${updatedStudents.length} student team(s)!`);
       console.log(`✅ Cleanup complete: ${totalCleaned} deleted staff removed from ${updatedStudents.length} student teams`);

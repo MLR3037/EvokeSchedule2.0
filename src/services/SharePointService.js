@@ -795,9 +795,9 @@ export class SharePointService {
 
       // Step 4: Parse trainee assignments if available
       let traineeAssignments = [];
-      if (scheduleRecord.TraineeAssignments) {
+      if (scheduleRecord.traineeAssignments) {
         try {
-          traineeAssignments = JSON.parse(scheduleRecord.TraineeAssignments);
+          traineeAssignments = JSON.parse(scheduleRecord.traineeAssignments);
           console.log(`✅ Loaded ${traineeAssignments.length} trainee assignments`);
         } catch (error) {
           console.warn('⚠️ Failed to parse trainee assignments:', error);
@@ -1265,7 +1265,7 @@ export class SharePointService {
         LastModified: new Date().toISOString(),
         LastModifiedBy: this.currentUser?.displayName || 'System',
         AssignmentsSummary: this.generateAssignmentsSummary(schedule.assignments),
-        TraineeAssignments: schedule.traineeAssignments ? JSON.stringify(schedule.traineeAssignments) : '[]'
+        traineeAssignments: schedule.traineeAssignments ? JSON.stringify(schedule.traineeAssignments) : '[]'
       };
       
       console.log('💾 Prepared schedule data for SharePoint:', scheduleData);
