@@ -18,7 +18,8 @@ import {
   Upload,
   Check,
   AlertCircle,
-  X
+  X,
+  Unlock
 } from 'lucide-react';
 
 // Import our new components and services
@@ -1514,10 +1515,10 @@ const handleAssignmentRemove = (assignmentId) => {
                 <button
                   onClick={handleClearSchedule}
                   disabled={loading || schedule.assignments.length === 0}
-                  className="bg-yellow-600 text-white px-4 py-2 rounded hover:bg-yellow-700 disabled:opacity-50 flex items-center gap-2"
+                  className="bg-green-600 text-white px-4 py-2 rounded hover:bg-green-700 disabled:opacity-50 flex items-center gap-2"
                   title="Clear unlocked (auto-assigned) items, keep manual assignments"
                 >
-                  <Trash2 className="w-4 h-4" />
+                  <Unlock className="w-4 h-4" />
                   Clear Unlocked
                 </button>
                 
