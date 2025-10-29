@@ -1260,10 +1260,6 @@ export class SharePointService {
         ScheduleDate: schedule.date,
         IsFinalized: schedule.isFinalized || false,
         TotalAssignments: schedule.assignments.length,
-        CreatedDate: new Date().toISOString(),
-        CreatedBy: this.currentUser?.displayName || 'System',
-        LastModified: new Date().toISOString(),
-        LastModifiedBy: this.currentUser?.displayName || 'System',
         AssignmentsSummary: this.generateAssignmentsSummary(schedule.assignments),
         traineeAssignments: schedule.traineeAssignments ? JSON.stringify(schedule.traineeAssignments) : '[]'
       };
@@ -1351,7 +1347,6 @@ export class SharePointService {
         Session: assignment.session,
         Program: assignment.program,
         AssignmentType: assignment.type || 'Standard',
-        CreatedDate: new Date().toISOString(),
         IsLocked: assignment.isLocked || false
       };
 
