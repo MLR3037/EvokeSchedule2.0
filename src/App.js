@@ -1474,16 +1474,6 @@ const handleAssignmentRemove = (assignmentId) => {
                 </button>
                 
                 <button
-                  onClick={() => setShowScheduleAssistant(true)}
-                  disabled={loading}
-                  className="bg-cyan-600 text-white px-4 py-2 rounded hover:bg-cyan-700 disabled:opacity-50 flex items-center gap-2"
-                  title="Ask questions about scheduling possibilities (view-only, no changes)"
-                >
-                  <HelpCircle className="w-4 h-4" />
-                  Assistant
-                </button>
-                
-                <button
                   onClick={handleSaveSchedule}
                   disabled={saving || loading}
                   className="bg-blue-600 text-white px-4 py-2 rounded hover:bg-blue-700 disabled:opacity-50 flex items-center gap-2"
