@@ -139,15 +139,39 @@ export class ExcelExportService {
       const isAbsentAM = !student.isAvailableForSession('AM');
       const isAbsentPM = !student.isAvailableForSession('PM');
 
-      // Add main row for student
-      if (!isAbsentAM || !isAbsentPM) {
-        data.push([
-          student.name,
-          student.program,
-          isAbsentAM ? 'ABSENT' : uniqueAmStaff || '',
-          isAbsentPM ? 'ABSENT' : uniquePmStaff || ''
-        ]);
+      // Determine absence status text
+      let amStatus = '';
+      let pmStatus = '';
+      
+      if (isAbsentAM) {
+        // Check if out of session or absent
+        if (student.outOfSessionAM || student.outOfSessionFullDay) {
+          amStatus = 'OUT';
+        } else {
+          amStatus = 'ABSENT';
+        }
+      } else {
+        amStatus = uniqueAmStaff || '';
       }
+      
+      if (isAbsentPM) {
+        // Check if out of session or absent
+        if (student.outOfSessionPM || student.outOfSessionFullDay) {
+          pmStatus = 'OUT';
+        } else {
+          pmStatus = 'ABSENT';
+        }
+      } else {
+        pmStatus = uniquePmStaff || '';
+      }
+
+      // Always add row for student (show ABSENT/OUT even if no assignments)
+      data.push([
+        student.name,
+        student.program,
+        amStatus,
+        pmStatus
+      ]);
 
       // Add trainee rows if applicable - ALWAYS add as separate row
       if (amTrainee && !isAbsentAM) {
