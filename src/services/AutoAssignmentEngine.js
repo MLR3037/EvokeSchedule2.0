@@ -158,6 +158,7 @@ export class AutoAssignmentEngine {
       if (!this.canStaffDoDirectService(s)) return false;
       if (!['RBT', 'BS'].includes(s.role)) return false;
       if (targetStudent.teamIds.includes(s.id)) return false; // Not on Lydia's team
+      if (this.isStaffInTrainingForStudent(s, targetStudent)) return false; // Not in training for target student
       return schedule.isStaffAvailable(s.id, targetSession, targetProgram);
     });
 
@@ -166,7 +167,8 @@ export class AutoAssignmentEngine {
     // For each of target student's busy team members
     const targetTeam = staff.filter(s =>
       targetStudent.teamIds.includes(s.id) &&
-      this.canStaffDoDirectService(s)
+      this.canStaffDoDirectService(s) &&
+      !this.isStaffInTrainingForStudent(s, targetStudent) // Don't try to free staff who are in training
     );
 
 
@@ -190,6 +192,12 @@ export class AutoAssignmentEngine {
       }
 
       for (const currentAssignment of currentAssignments) {
+        // CRITICAL CHECK: Skip locked assignments - they should NOT be swapped
+        if (currentAssignment.isLocked || schedule.isAssignmentLocked(currentAssignment.id)) {
+          console.log(`    🔒 BLOCKED - Assignment is locked, skipping ${busyTeamMember.name} with student ID ${currentAssignment.studentId}`);
+          continue;
+        }
+
         const currentStudent = students.find(s => s.id === currentAssignment.studentId);
         if (!currentStudent) {
           console.log(`    ⚠️ Could not find student with id ${currentAssignment.studentId}`);
@@ -1950,6 +1958,13 @@ export class AutoAssignmentEngine {
           for (const unassignedStaffMember of unassignedStaff) {
             console.log(`\n   🔍 Checking if ${unassignedStaffMember.name} can enable a swap...`);
 
+            // CRITICAL CHECK: Don't use staff who are in training for gap student
+            // They should only be assigned as trainees, not primary staff
+            if (this.isStaffInTrainingForStudent(unassignedStaffMember, gapStudent)) {
+              console.log(`   🚫 EXCLUDING ${unassignedStaffMember.name} - in training for ${gapStudent.name} (trainee only)`);
+              continue;
+            }
+
             // Find students who have staff members on the gap student's team
             for (const otherStudent of programStudents) {
               if (otherStudent.id === gapStudent.id) continue;
@@ -1967,6 +1982,13 @@ export class AutoAssignmentEngine {
 
               const currentStaff = activeStaff.find(s => s.id === currentAssignment.staffId);
               if (!currentStaff) continue;
+
+              // CRITICAL CHECK: Don't swap staff who are in training for gap student
+              // They should only be assigned as trainees, not primary staff
+              if (this.isStaffInTrainingForStudent(currentStaff, gapStudent)) {
+                console.log(`      🚫 EXCLUDING ${currentStaff.name} - in training for ${gapStudent.name} (trainee only)`);
+                continue;
+              }
 
               // CRITICAL CHECK: Is the current staff on the gap student's team?
               const isCurrentStaffOnGapTeam = gapStudent.teamIds.includes(currentStaff.id);
@@ -1996,6 +2018,12 @@ export class AutoAssignmentEngine {
               }
 
               if (isCurrentStaffOnGapTeam && canUnassignedWorkWithOther) {
+                // FINAL SAFETY CHECK: Ensure assignment is not locked before swapping
+                if (currentAssignment.isLocked || schedule.isAssignmentLocked(currentAssignment.id)) {
+                  console.log(`      🔒 BLOCKED - Assignment is locked, cannot swap ${currentStaff.name} from ${otherStudent.name}`);
+                  continue;
+                }
+
                 // SWAP OPPORTUNITY FOUND!
                 console.log(`\n   ✅ SWAP OPPORTUNITY:`);
                 console.log(`      • ${unassignedStaffMember.name} can work with ${otherStudent.name}`);
