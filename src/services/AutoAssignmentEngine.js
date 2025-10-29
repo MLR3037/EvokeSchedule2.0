@@ -1978,7 +1978,49 @@ export class AutoAssignmentEngine {
 
           console.log(`   ✓ Found ${unassignedStaff.length} unassigned staff:`, unassignedStaff.map(s => s.name).join(', '));
 
-          // STEP 2: For each unassigned staff, look for swap opportunities
+          // STEP 2: First try DIRECT ASSIGNMENT (no swap needed)
+          let gapFilled = false;
+          
+          for (const unassignedStaffMember of unassignedStaff) {
+            // Check if this unassigned staff is on the gap student's team
+            const isOnGapTeam = gapStudent.teamIds.includes(unassignedStaffMember.id);
+            
+            if (isOnGapTeam) {
+              // CRITICAL CHECK: Don't use staff who are in training for gap student
+              if (this.isStaffInTrainingForStudent(unassignedStaffMember, gapStudent)) {
+                console.log(`   🚫 EXCLUDING ${unassignedStaffMember.name} - in training for ${gapStudent.name} (trainee only)`);
+                continue;
+              }
+              
+              // DIRECT ASSIGNMENT - no swap needed!
+              console.log(`\n   ✅ DIRECT ASSIGNMENT: ${unassignedStaffMember.name} → ${gapStudent.name} (on team, available)`);
+              
+              const newAssignment = new Assignment({
+                id: SchedulingUtils.generateAssignmentId(),
+                staffId: unassignedStaffMember.id,
+                staffName: unassignedStaffMember.name,
+                studentId: gapStudent.id,
+                studentName: gapStudent.name,
+                session: session,
+                program: program,
+                date: schedule.date,
+                isLocked: false,
+                assignedBy: 'auto-swap'
+              });
+              
+              schedule.addAssignment(newAssignment);
+              newAssignments.push(newAssignment);
+              gapsFilled++;
+              gapFilled = true;
+              break; // Move to next gap
+            }
+          }
+          
+          if (gapFilled) {
+            continue; // Move to next gap student
+          }
+
+          // STEP 3: If direct assignment not possible, look for swap opportunities
           let swapFound = false;
           
           for (const unassignedStaffMember of unassignedStaff) {

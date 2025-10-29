@@ -165,7 +165,46 @@ const ABAScheduler = () => {
 
       setStaff(staffData);
       setStudents(studentsData);
-      setSchedule(scheduleData);
+      
+      // CRITICAL: Clean up schedule by removing assignments for absent staff/students
+      let cleanedSchedule = scheduleData;
+      let removedCount = 0;
+      
+      if (scheduleData && scheduleData.assignments && scheduleData.assignments.length > 0) {
+        const originalCount = scheduleData.assignments.length;
+        
+        // Filter out assignments where staff or student is unavailable
+        const validAssignments = scheduleData.assignments.filter(assignment => {
+          const staffMember = staffData.find(s => s.id === assignment.staffId);
+          const student = studentsData.find(s => s.id === assignment.studentId);
+          
+          // Remove if staff doesn't exist or is unavailable for this session
+          if (!staffMember || !staffMember.isAvailableForSession(assignment.session)) {
+            console.log(`🗑️ Removing assignment: ${assignment.staffName || 'Staff'} (unavailable) → ${assignment.studentName || 'Student'} ${assignment.session}`);
+            return false;
+          }
+          
+          // Remove if student doesn't exist or is unavailable for this session
+          if (!student || !student.isAvailableForSession(assignment.session)) {
+            console.log(`🗑️ Removing assignment: ${assignment.staffName || 'Staff'} → ${assignment.studentName || 'Student'} (unavailable) ${assignment.session}`);
+            return false;
+          }
+          
+          return true;
+        });
+        
+        removedCount = originalCount - validAssignments.length;
+        
+        if (removedCount > 0) {
+          console.log(`🧹 Cleaned up ${removedCount} invalid assignment(s) based on current attendance`);
+          cleanedSchedule = new Schedule({
+            ...scheduleData,
+            assignments: validAssignments
+          });
+        }
+      }
+      
+      setSchedule(cleanedSchedule);
       setDataLoadedAt(new Date()); // Track when data was loaded
       
       console.log(`✅ Loaded ${staffData.length} staff, ${studentsData.length} students at ${new Date().toLocaleTimeString()}`);
@@ -208,12 +247,51 @@ const ABAScheduler = () => {
         })
       ]);
 
-      // Update staff and students, but preserve the current schedule
+      // Update staff and students
       setStaff(staffData);
       setStudents(studentsData);
+      
+      // CRITICAL: Clean up schedule by removing assignments for absent staff/students
+      let removedCount = 0;
+      
+      if (schedule && schedule.assignments && schedule.assignments.length > 0) {
+        const originalCount = schedule.assignments.length;
+        
+        // Filter out assignments where staff or student is unavailable
+        const validAssignments = schedule.assignments.filter(assignment => {
+          const staffMember = staffData.find(s => s.id === assignment.staffId);
+          const student = studentsData.find(s => s.id === assignment.studentId);
+          
+          // Remove if staff doesn't exist or is unavailable for this session
+          if (!staffMember || !staffMember.isAvailableForSession(assignment.session)) {
+            console.log(`🗑️ Removing assignment: ${assignment.staffName || 'Staff'} (unavailable) → ${assignment.studentName || 'Student'} ${assignment.session}`);
+            return false;
+          }
+          
+          // Remove if student doesn't exist or is unavailable for this session
+          if (!student || !student.isAvailableForSession(assignment.session)) {
+            console.log(`🗑️ Removing assignment: ${assignment.staffName || 'Staff'} → ${assignment.studentName || 'Student'} (unavailable) ${assignment.session}`);
+            return false;
+          }
+          
+          return true;
+        });
+        
+        removedCount = originalCount - validAssignments.length;
+        
+        if (removedCount > 0) {
+          console.log(`🧹 Cleaned up ${removedCount} invalid assignment(s) based on current attendance`);
+          const cleanedSchedule = new Schedule({
+            ...schedule,
+            assignments: validAssignments
+          });
+          setSchedule(cleanedSchedule);
+        }
+      }
+      
       setDataLoadedAt(new Date()); // Track when data was loaded
       
-      console.log(`✅ Smart refresh complete: ${staffData.length} staff, ${studentsData.length} students loaded. Schedule preserved.`);
+      console.log(`✅ Smart refresh complete: ${staffData.length} staff, ${studentsData.length} students loaded. ${removedCount > 0 ? removedCount + ' assignments removed.' : 'Schedule preserved.'}`);
       
       // Log attendance status after refresh
       const absentStaff = staffData.filter(s => s.absentAM || s.absentPM || s.absentFullDay);
