@@ -55,6 +55,7 @@ export class AutoAssignmentEngine {
    */
   isStaffInTrainingForStudent(staffMember, student) {
     if (!student.getStaffTrainingStatus) {
+      console.log(`  ⚠️ No getStaffTrainingStatus method for ${student.name} - cannot check training status for ${staffMember.name}`);
       return false; // No training status tracking for this student
     }
     
@@ -63,7 +64,7 @@ export class AutoAssignmentEngine {
                          trainingStatus === TRAINING_STATUS.OVERLAP_BCBA;
     
     if (isInTraining) {
-      console.log(`  🎓 ${staffMember.name} is in training for ${student.name} (${trainingStatus}) - excluding from main assignment`);
+      console.log(`  🎓 BLOCKING: ${staffMember.name} is in training for ${student.name} (${trainingStatus}) - CANNOT be main staff`);
     }
     
     return isInTraining;

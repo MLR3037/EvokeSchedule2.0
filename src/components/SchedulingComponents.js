@@ -1089,8 +1089,8 @@ const AssignmentCard = ({ assignment, onLock, onUnlock, onRemove }) => {
             onClick={assignment.isLocked ? onUnlock : onLock}
             className={`p-1 rounded ${
               assignment.isLocked 
-                ? 'text-yellow-600 hover:bg-yellow-100' 
-                : 'text-gray-400 hover:bg-gray-100'
+                ? 'text-red-600 hover:bg-red-100' 
+                : 'text-green-600 hover:bg-green-100'
             }`}
             title={assignment.isLocked ? 'Unlock assignment' : 'Lock assignment'}
           >
