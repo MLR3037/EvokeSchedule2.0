@@ -157,6 +157,22 @@ export const ScheduleTableView = ({
         onAssignmentRemove(assignmentToRemove.id);
       }
       
+      // If this student is paired, also remove the paired partner's assignment
+      if (student && student.isPaired && student.isPaired()) {
+        const pairedStudent = student.getPairedStudent(students);
+        if (pairedStudent) {
+          const pairedRatio = session === 'AM' ? pairedStudent.ratioAM : pairedStudent.ratioPM;
+          if (pairedRatio === '1:2') {
+            const pairedAssignments = getStudentAssignments(pairedStudent, session);
+            if (pairedAssignments.length > staffIndex) {
+              const pairedAssignmentToRemove = pairedAssignments[staffIndex];
+              console.log(`🔗 Also removing paired partner's assignment: ${pairedStudent.name}`);
+              onAssignmentRemove(pairedAssignmentToRemove.id);
+            }
+          }
+        }
+      }
+      
       setPreAssignments(prev => ({
         ...prev,
         [key]: null
