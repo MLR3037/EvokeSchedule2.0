@@ -1361,7 +1361,7 @@ export class SharePointService {
 
       // Save individual assignments to DailyAssignments list
       const assignmentPromises = schedule.assignments.map(assignment => 
-        this.saveAssignmentToHistory(assignment, scheduleId)
+        this.saveAssignmentToHistory(assignment, scheduleId, schedule.date)
       );
 
       const assignmentResults = await Promise.allSettled(assignmentPromises);
@@ -1405,13 +1405,13 @@ export class SharePointService {
     return JSON.stringify(summary);
   }
 
-  async saveAssignmentToHistory(assignment, scheduleId) {
+  async saveAssignmentToHistory(assignment, scheduleId, scheduleDate) {
     try {
       const assignmentData = {
         __metadata: { type: this.dailyAssignmentsEntityType || 'SP.Data.DailyAssignmentsListItem' },
         Title: `Assignment_${assignment.staffId}_${assignment.studentId}_${assignment.session}`,
         ScheduleID: scheduleId,
-        ScheduleDate: assignment.date || new Date().toISOString().split('T')[0],
+        ScheduleDate: scheduleDate,
         StaffID: assignment.staffId,
         StaffName: assignment.staffName || '',
         StudentID: assignment.studentId,
