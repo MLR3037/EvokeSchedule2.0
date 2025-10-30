@@ -1520,7 +1520,8 @@ export class SharePointService {
         return false;
       }
 
-      const dateStr = typeof date === 'string' ? date : date.toISOString().split('T')[0];
+      // Use date string as-is (already formatted in local timezone from App.js)
+      const dateStr = typeof date === 'string' ? date : `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
       console.log(`💾 Saving attendance for ${dateStr}...`);
 
       // First, delete existing attendance records for this date
@@ -1673,7 +1674,8 @@ export class SharePointService {
    */
   async deleteAttendanceForDate(date) {
     try {
-      const dateStr = typeof date === 'string' ? date : date.toISOString().split('T')[0];
+      // Use date string as-is (already formatted in local timezone from App.js)
+      const dateStr = typeof date === 'string' ? date : `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
       console.log('🔍 Finding attendance records to delete for', dateStr);
       
       const attendanceUrl = `${this.siteUrl}/_api/web/lists/getbytitle('DailyAttendance')/items?` +
@@ -1739,7 +1741,8 @@ export class SharePointService {
         return null;
       }
 
-      const dateStr = typeof date === 'string' ? date : date.toISOString().split('T')[0];
+      // Use date string as-is (already formatted in local timezone from App.js)
+      const dateStr = typeof date === 'string' ? date : `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
       console.log(`📥 Loading attendance for ${dateStr}...`);
 
       const attendanceUrl = `${this.siteUrl}/_api/web/lists/getbytitle('DailyAttendance')/items?` +
