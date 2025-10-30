@@ -1284,6 +1284,13 @@ export class SharePointService {
           scheduleId = existingData.d.results[0].ID;
           isUpdate = true;
           console.log('📝 Found existing schedule record, will UPDATE ID:', scheduleId);
+          console.log('📝 Existing record details:', {
+            Created: existingData.d.results[0].Created,
+            Modified: existingData.d.results[0].Modified,
+            TotalAssignments: existingData.d.results[0].TotalAssignments
+          });
+        } else {
+          console.log('✨ No existing schedule found - will CREATE new record');
         }
       }
 
@@ -1325,7 +1332,8 @@ export class SharePointService {
           return false;
         }
 
-        console.log('✅ Schedule metadata updated for ID:', scheduleId);
+        console.log('✅ Schedule metadata UPDATED for ID:', scheduleId);
+        console.log('✅ Check the "Modified" column in ScheduleHistory to see the update timestamp');
       } else {
         // CREATE new record
         const scheduleResponse = await fetch(
@@ -1700,33 +1708,57 @@ export class SharePointService {
       
       console.log(`🗑️ Found ${records.length} attendance records to delete`);
 
-      if (records.length === 0) return;
+      if (records.length === 0) {
+        console.log('✅ No existing attendance records to delete');
+        return;
+      }
 
       // Get digest once for all deletes
       const digest = await this.getRequestDigest();
 
-      // Delete each record
-      const deletePromises = records.map(record =>
-        fetch(
-          `${this.siteUrl}/_api/web/lists/getbytitle('DailyAttendance')/items(${record.ID})`,
-          {
-            method: 'POST',
-            headers: {
-              'Authorization': `Bearer ${this.accessToken}`,
-              'X-RequestDigest': digest,
-              'X-HTTP-Method': 'DELETE',
-              'If-Match': '*'
+      // Delete each record with better error handling
+      const deletePromises = records.map(async record => {
+        try {
+          const deleteResponse = await fetch(
+            `${this.siteUrl}/_api/web/lists/getbytitle('DailyAttendance')/items(${record.ID})`,
+            {
+              method: 'POST',
+              headers: {
+                'Authorization': `Bearer ${this.accessToken}`,
+                'X-RequestDigest': digest,
+                'X-HTTP-Method': 'DELETE',
+                'If-Match': '*'
+              }
             }
+          );
+          
+          if (!deleteResponse.ok) {
+            const errorText = await deleteResponse.text();
+            console.error(`❌ Failed to delete attendance record ${record.ID}:`, errorText);
+            return { success: false, id: record.ID, error: errorText };
           }
-        )
-      );
+          
+          console.log(`✅ Deleted attendance record ${record.ID}`);
+          return { success: true, id: record.ID };
+        } catch (error) {
+          console.error(`❌ Error deleting attendance record ${record.ID}:`, error);
+          return { success: false, id: record.ID, error: error.message };
+        }
+      });
 
-      await Promise.all(deletePromises);
-      console.log(`✅ Deleted ${records.length} old attendance records`);
+      const results = await Promise.all(deletePromises);
+      const successCount = results.filter(r => r.success).length;
+      const failCount = results.filter(r => !r.success).length;
+      
+      console.log(`✅ Deleted ${successCount}/${records.length} attendance records (${failCount} failed)`);
+      
+      if (failCount > 0) {
+        console.warn(`⚠️ ${failCount} attendance records failed to delete - duplicates may occur`);
+      }
     } catch (error) {
-      // Silently fail if CORS blocks the delete - old records will accumulate but won't break functionality
-      console.warn('⚠️ Could not delete old attendance records (likely CORS issue) - continuing anyway');
-      // Don't fail the save if delete fails
+      console.error('❌ Error in deleteAttendanceForDate:', error);
+      console.warn('⚠️ Could not delete old attendance records - duplicates may occur');
+      // Don't throw - allow save to continue even if delete fails
     }
   }
 
