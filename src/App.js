@@ -46,6 +46,11 @@ import { runTests } from './tests/SchedulingTestSuite.js';
 import ErrorBoundary from './components/ErrorBoundary.js';
 
 const ABAScheduler = () => {
+  // Helper function to format date in local timezone (avoids UTC conversion issues)
+  const formatDateLocal = (date) => {
+    return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
+  };
+
   // SharePoint configuration
   const [spConfig] = useState({
     siteUrl: 'https://evokebehavioralhealthcom.sharepoint.com/sites/Clinistrators',
@@ -878,7 +883,7 @@ const handleAssignmentRemove = (assignmentId) => {
       // Update schedule with metadata before saving
       const scheduleToSave = new Schedule({
         ...schedule,
-        date: currentDate.toISOString().split('T')[0],
+        date: `${currentDate.getFullYear()}-${String(currentDate.getMonth() + 1).padStart(2, '0')}-${String(currentDate.getDate()).padStart(2, '0')}`,
         lastModified: timestamp,
         lastModifiedBy: currentUser
       });
@@ -961,7 +966,7 @@ const handleAssignmentRemove = (assignmentId) => {
     const lockedTrainees = (schedule.traineeAssignments || []).filter(t => t.isLocked);
     
     const clearedSchedule = new Schedule({ 
-      date: currentDate.toISOString().split('T')[0],
+      date: formatDateLocal(currentDate),
       assignments: lockedAssignments,
       traineeAssignments: lockedTrainees,
       lockedAssignments: new Set(schedule.lockedAssignments),
@@ -984,7 +989,7 @@ const handleAssignmentRemove = (assignmentId) => {
 
     // Create a completely empty schedule
     const clearedSchedule = new Schedule({ 
-      date: currentDate.toISOString().split('T')[0],
+      date: formatDateLocal(currentDate),
       assignments: [],
       traineeAssignments: [],
       lockedAssignments: new Set(),
@@ -1494,7 +1499,7 @@ const handleAssignmentRemove = (assignmentId) => {
                 <Calendar className="w-5 h-5 text-gray-500" />
                 <input
                   type="date"
-                  value={currentDate.toISOString().split('T')[0]}
+                  value={formatDateLocal(currentDate)}
                   onChange={(e) => handleDateChange(new Date(e.target.value))}
                   className="border border-gray-300 rounded px-3 py-1 text-sm"
                 />
