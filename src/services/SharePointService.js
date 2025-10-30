@@ -1715,9 +1715,34 @@ export class SharePointService {
       const dateStr = typeof date === 'string' ? date : `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
       console.log('🔍 Finding attendance records to delete for', dateStr);
       
+      // First, let's see what dates are actually in the list to debug the filter
+      const debugUrl = `${this.siteUrl}/_api/web/lists/getbytitle('DailyAttendance')/items?` +
+        `$select=ID,AttendanceDate,PersonName&$top=100&$orderby=Created desc`;
+      
+      try {
+        const debugResponse = await this.retryFetch(debugUrl, {
+          method: 'GET',
+          headers: {
+            'Authorization': `Bearer ${this.accessToken}`,
+            'Accept': 'application/json;odata=verbose'
+          }
+        });
+        
+        if (debugResponse.ok) {
+          const debugData = await debugResponse.json();
+          const recentRecords = debugData.d.results.slice(0, 5);
+          console.log('📋 Recent attendance records in list:', recentRecords.map(r => 
+            `${r.PersonName}: ${r.AttendanceDate} (ID: ${r.ID})`
+          ));
+          console.log('🔍 Looking for records matching:', dateStr);
+        }
+      } catch (debugError) {
+        console.warn('Could not fetch debug info:', debugError);
+      }
+      
       const attendanceUrl = `${this.siteUrl}/_api/web/lists/getbytitle('DailyAttendance')/items?` +
         `$filter=AttendanceDate eq '${dateStr}'&` +
-        `$select=ID`;
+        `$select=ID,PersonName,AttendanceDate`;
 
       const response = await this.retryFetch(attendanceUrl, {
         method: 'GET',
@@ -1736,6 +1761,9 @@ export class SharePointService {
       const records = data.d.results || [];
       
       console.log(`🗑️ Found ${records.length} attendance records to delete`);
+      if (records.length > 0) {
+        console.log('   Records to delete:', records.map(r => `${r.PersonName} (ID: ${r.ID}, Date: ${r.AttendanceDate})`));
+      }
 
       if (records.length === 0) {
         console.log('✅ No existing attendance records to delete');
