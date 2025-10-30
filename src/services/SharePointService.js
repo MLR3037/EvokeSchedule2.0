@@ -1470,7 +1470,7 @@ export class SharePointService {
       
       const assignmentsUrl = `${this.siteUrl}/_api/web/lists/getbytitle('DailyAssignments')/items?` +
         `$filter=ScheduleID eq ${scheduleId}&` +
-        `$select=ID`;
+        `$select=ID,Title,StaffName,StudentName`;
 
       const response = await this.retryFetch(assignmentsUrl, {
         method: 'GET',
@@ -1488,32 +1488,61 @@ export class SharePointService {
       const data = await response.json();
       const assignments = data.d.results || [];
       
-      console.log(`🗑️ Found ${assignments.length} assignments to delete`);
+      console.log(`🗑️ Found ${assignments.length} assignments to delete for schedule ${scheduleId}`);
+      if (assignments.length > 0) {
+        console.log('   Assignments to delete:', assignments.map(a => `${a.StaffName} → ${a.StudentName} (ID: ${a.ID})`));
+      }
+
+      if (assignments.length === 0) {
+        console.log('✅ No existing assignments to delete');
+        return;
+      }
 
       // Get digest once for all deletes
       const digest = await this.getRequestDigest();
 
-      // Delete each assignment
-      const deletePromises = assignments.map(assignment =>
-        fetch(
-          `${this.siteUrl}/_api/web/lists/getbytitle('DailyAssignments')/items(${assignment.ID})`,
-          {
-            method: 'POST',
-            headers: {
-              'Authorization': `Bearer ${this.accessToken}`,
-              'X-RequestDigest': digest,
-              'X-HTTP-Method': 'DELETE',
-              'If-Match': '*'
+      // Delete each assignment with better error handling
+      const deletePromises = assignments.map(async assignment => {
+        try {
+          const deleteResponse = await fetch(
+            `${this.siteUrl}/_api/web/lists/getbytitle('DailyAssignments')/items(${assignment.ID})`,
+            {
+              method: 'POST',
+              headers: {
+                'Authorization': `Bearer ${this.accessToken}`,
+                'X-RequestDigest': digest,
+                'X-HTTP-Method': 'DELETE',
+                'If-Match': '*'
+              }
             }
+          );
+          
+          if (!deleteResponse.ok) {
+            const errorText = await deleteResponse.text();
+            console.error(`❌ Failed to delete assignment ${assignment.ID} (${assignment.StaffName} → ${assignment.StudentName}):`, errorText);
+            return { success: false, id: assignment.ID, error: errorText };
           }
-        )
-      );
+          
+          console.log(`✅ Deleted assignment ${assignment.ID} (${assignment.StaffName} → ${assignment.StudentName})`);
+          return { success: true, id: assignment.ID };
+        } catch (error) {
+          console.error(`❌ Error deleting assignment ${assignment.ID}:`, error);
+          return { success: false, id: assignment.ID, error: error.message };
+        }
+      });
 
-      await Promise.all(deletePromises);
-      console.log(`✅ Deleted ${assignments.length} old assignments`);
+      const results = await Promise.all(deletePromises);
+      const successCount = results.filter(r => r.success).length;
+      const failCount = results.filter(r => !r.success).length;
+      
+      console.log(`✅ Deleted ${successCount}/${assignments.length} assignments (${failCount} failed)`);
+      
+      if (failCount > 0) {
+        console.warn(`⚠️ ${failCount} assignments failed to delete - duplicates may occur`);
+      }
     } catch (error) {
-      console.error('Error deleting assignments:', error);
-      // Don't fail the save if delete fails
+      console.error('❌ Error in deleteAssignmentsForSchedule:', error);
+      // Don't throw - allow save to continue even if delete fails
     }
   }
 
