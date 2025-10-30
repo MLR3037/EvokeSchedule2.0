@@ -1240,6 +1240,13 @@ export class SharePointService {
           }          // If both lists exist, continue with save operation
           if (scheduleHistoryList && dailyAssignmentsList) {
             console.log('✅ Both required lists found! Proceeding with schedule save...');
+            
+            // Store entity type names for use in save operations
+            this.scheduleHistoryEntityType = scheduleHistoryList.ListItemEntityTypeFullName;
+            this.dailyAssignmentsEntityType = dailyAssignmentsList.ListItemEntityTypeFullName;
+            
+            console.log('📋 ScheduleHistory EntityType:', this.scheduleHistoryEntityType);
+            console.log('📋 DailyAssignments EntityType:', this.dailyAssignmentsEntityType);
           } else {
             console.log('❌ Required lists not found. Cannot save schedule history.');
             return false;
@@ -1253,9 +1260,36 @@ export class SharePointService {
         return false;
       }
 
+      // ✅ NEW: Check if schedule already exists for this date
+      console.log('🔍 Checking for existing schedule record for', schedule.date);
+      const existingScheduleUrl = `${this.siteUrl}/_api/web/lists/getbytitle('ScheduleHistory')/items?` +
+        `$filter=ScheduleDate eq '${schedule.date}'&` +
+        `$orderby=Created desc&` +
+        `$top=1`;
+
+      const existingScheduleResponse = await this.retryFetch(existingScheduleUrl, {
+        method: 'GET',
+        headers: {
+          'Authorization': `Bearer ${this.accessToken}`,
+          'Accept': 'application/json;odata=verbose'
+        }
+      });
+
+      let scheduleId = null;
+      let isUpdate = false;
+
+      if (existingScheduleResponse.ok) {
+        const existingData = await existingScheduleResponse.json();
+        if (existingData.d.results && existingData.d.results.length > 0) {
+          scheduleId = existingData.d.results[0].ID;
+          isUpdate = true;
+          console.log('📝 Found existing schedule record, will UPDATE ID:', scheduleId);
+        }
+      }
+
       // Prepare schedule metadata with proper SharePoint REST API format
       const scheduleData = {
-        __metadata: { type: 'SP.Data.ABASchedulesListItem' },
+        __metadata: { type: this.scheduleHistoryEntityType },
         Title: `Schedule_${schedule.date}`,
         ScheduleDate: schedule.date,
         IsFinalized: schedule.isFinalized || false,
@@ -1266,32 +1300,66 @@ export class SharePointService {
       
       console.log('💾 Prepared schedule data for SharePoint:', scheduleData);
 
-      // Save schedule record to ScheduleHistory list
-      const scheduleResponse = await fetch(
-        `${this.siteUrl}/_api/web/lists/getbytitle('ScheduleHistory')/items`,
-        {
-          method: 'POST',
-          headers: {
-            'Authorization': `Bearer ${this.accessToken}`,
-            'Accept': 'application/json;odata=verbose',
-            'Content-Type': 'application/json;odata=verbose',
-            'X-RequestDigest': await this.getRequestDigest()
-          },
-          body: JSON.stringify(scheduleData)
-        }
-      );
+      // Save or update schedule record in ScheduleHistory list
+      if (isUpdate) {
+        // UPDATE existing record
+        const updateResponse = await fetch(
+          `${this.siteUrl}/_api/web/lists/getbytitle('ScheduleHistory')/items(${scheduleId})`,
+          {
+            method: 'POST',
+            headers: {
+              'Authorization': `Bearer ${this.accessToken}`,
+              'Accept': 'application/json;odata=verbose',
+              'Content-Type': 'application/json;odata=verbose',
+              'X-RequestDigest': await this.getRequestDigest(),
+              'X-HTTP-Method': 'MERGE',
+              'If-Match': '*'
+            },
+            body: JSON.stringify(scheduleData)
+          }
+        );
 
-      if (!scheduleResponse.ok) {
-        const errorText = await scheduleResponse.text();
-        console.error('Failed to save schedule metadata:', errorText);
-        return false;
+        if (!updateResponse.ok) {
+          const errorText = await updateResponse.text();
+          console.error('Failed to update schedule metadata:', errorText);
+          return false;
+        }
+
+        console.log('✅ Schedule metadata updated for ID:', scheduleId);
+      } else {
+        // CREATE new record
+        const scheduleResponse = await fetch(
+          `${this.siteUrl}/_api/web/lists/getbytitle('ScheduleHistory')/items`,
+          {
+            method: 'POST',
+            headers: {
+              'Authorization': `Bearer ${this.accessToken}`,
+              'Accept': 'application/json;odata=verbose',
+              'Content-Type': 'application/json;odata=verbose',
+              'X-RequestDigest': await this.getRequestDigest()
+            },
+            body: JSON.stringify(scheduleData)
+          }
+        );
+
+        if (!scheduleResponse.ok) {
+          const errorText = await scheduleResponse.text();
+          console.error('Failed to save schedule metadata:', errorText);
+          return false;
+        }
+
+        const scheduleResult = await scheduleResponse.json();
+        scheduleId = scheduleResult.d.ID;
+        console.log('✅ Schedule metadata saved with ID:', scheduleId);
       }
 
-      const scheduleResult = await scheduleResponse.json();
-      const scheduleId = scheduleResult.d.ID;
-      console.log('✅ Schedule metadata saved with ID:', scheduleId);
+      // ✅ NEW: Delete existing assignments for this schedule before saving new ones
+      if (isUpdate) {
+        console.log('🗑️ Deleting existing assignments for schedule ID:', scheduleId);
+        await this.deleteAssignmentsForSchedule(scheduleId);
+      }
 
-      // Save individual assignments to ABAAssignments list
+      // Save individual assignments to DailyAssignments list
       const assignmentPromises = schedule.assignments.map(assignment => 
         this.saveAssignmentToHistory(assignment, scheduleId)
       );
@@ -1305,6 +1373,10 @@ export class SharePointService {
       if (failedAssignments.length > 0) {
         console.warn('Some assignments failed to save:', failedAssignments);
       }
+
+      // ✅ NEW: Save attendance data to DailyAttendance
+      console.log('💾 Saving attendance data for', schedule.date);
+      await this.saveAttendanceForDate(schedule.date);
 
       return true;
     } catch (error) {
@@ -1336,7 +1408,7 @@ export class SharePointService {
   async saveAssignmentToHistory(assignment, scheduleId) {
     try {
       const assignmentData = {
-        __metadata: { type: 'SP.Data.ABAAssignmentsListItem' },
+        __metadata: { type: this.dailyAssignmentsEntityType || 'SP.Data.DailyAssignmentsListItem' },
         Title: `Assignment_${assignment.staffId}_${assignment.studentId}_${assignment.session}`,
         ScheduleID: scheduleId,
         ScheduleDate: assignment.date || new Date().toISOString().split('T')[0],
@@ -1368,7 +1440,7 @@ export class SharePointService {
 
       if (!response.ok) {
         const errorText = await response.text();
-        console.error('❌ Failed to save assignment to ABAAssignments list:', response.status, errorText);
+        console.error('❌ Failed to save assignment to DailyAssignments list:', response.status, errorText);
         return { success: false, assignment, error: errorText };
       }
 
@@ -1378,6 +1450,349 @@ export class SharePointService {
     } catch (error) {
       console.error('❌ Error saving assignment:', error);
       return { success: false, assignment, error: error.message };
+    }
+  }
+
+  /**
+   * Delete all assignments for a specific schedule ID
+   */
+  async deleteAssignmentsForSchedule(scheduleId) {
+    try {
+      console.log('🔍 Finding assignments to delete for schedule ID:', scheduleId);
+      
+      const assignmentsUrl = `${this.siteUrl}/_api/web/lists/getbytitle('DailyAssignments')/items?` +
+        `$filter=ScheduleID eq ${scheduleId}&` +
+        `$select=ID`;
+
+      const response = await this.retryFetch(assignmentsUrl, {
+        method: 'GET',
+        headers: {
+          'Authorization': `Bearer ${this.accessToken}`,
+          'Accept': 'application/json;odata=verbose'
+        }
+      });
+
+      if (!response.ok) {
+        console.warn('Could not find assignments to delete');
+        return;
+      }
+
+      const data = await response.json();
+      const assignments = data.d.results || [];
+      
+      console.log(`🗑️ Found ${assignments.length} assignments to delete`);
+
+      // Get digest once for all deletes
+      const digest = await this.getRequestDigest();
+
+      // Delete each assignment
+      const deletePromises = assignments.map(assignment =>
+        fetch(
+          `${this.siteUrl}/_api/web/lists/getbytitle('DailyAssignments')/items(${assignment.ID})`,
+          {
+            method: 'POST',
+            headers: {
+              'Authorization': `Bearer ${this.accessToken}`,
+              'X-RequestDigest': digest,
+              'X-HTTP-Method': 'DELETE',
+              'If-Match': '*'
+            }
+          }
+        )
+      );
+
+      await Promise.all(deletePromises);
+      console.log(`✅ Deleted ${assignments.length} old assignments`);
+    } catch (error) {
+      console.error('Error deleting assignments:', error);
+      // Don't fail the save if delete fails
+    }
+  }
+
+  /**
+   * Save attendance data for all staff and students for a specific date
+   * This replaces the old saveAttendanceHistory method
+   */
+  async saveAttendanceForDate(date) {
+    try {
+      if (!this.isAuthenticated()) {
+        console.error('Cannot save attendance - not authenticated');
+        return false;
+      }
+
+      const dateStr = typeof date === 'string' ? date : date.toISOString().split('T')[0];
+      console.log(`💾 Saving attendance for ${dateStr}...`);
+
+      // First, delete existing attendance records for this date
+      await this.deleteAttendanceForDate(dateStr);
+
+      // Get current staff and students from App state
+      // We need to pass these from the saveSchedule call
+      // For now, we'll load them fresh
+      const staff = await this.loadStaff();
+      const students = await this.loadStudents();
+
+      const attendanceRecords = [];
+
+      // Create records for ALL staff (not just absent)
+      staff.forEach(staffMember => {
+        if (!staffMember.isActive) return;
+        
+        let status = 'Present';
+        
+        if (staffMember.absentFullDay) {
+          status = 'Absent Full Day';
+        } else if (staffMember.absentAM && staffMember.absentPM) {
+          status = 'Absent Full Day';
+        } else if (staffMember.outOfSessionFullDay) {
+          status = 'Out Session Full Day';
+        } else if (staffMember.outOfSessionAM && staffMember.outOfSessionPM) {
+          status = 'Out Session Full Day';
+        } else if (staffMember.absentAM && staffMember.outOfSessionPM) {
+          status = 'Absent AM / Out Session PM';
+        } else if (staffMember.outOfSessionAM && staffMember.absentPM) {
+          status = 'Out Session AM / Absent PM';
+        } else if (staffMember.absentAM) {
+          status = 'Absent AM';
+        } else if (staffMember.absentPM) {
+          status = 'Absent PM';
+        } else if (staffMember.outOfSessionAM) {
+          status = 'Out Session AM';
+        } else if (staffMember.outOfSessionPM) {
+          status = 'Out Session PM';
+        }
+
+        attendanceRecords.push({
+          __metadata: { type: 'SP.Data.DailyAttendanceListItem' },
+          Title: `${staffMember.name}_${dateStr}`,
+          AttendanceDate: dateStr,
+          PersonType: 'Staff',
+          PersonID: staffMember.id,
+          PersonName: staffMember.name,
+          Status: status,
+          AbsentAM: staffMember.absentAM || false,
+          AbsentPM: staffMember.absentPM || false,
+          AbsentFullDay: staffMember.absentFullDay || false,
+          OutOfSessionAM: staffMember.outOfSessionAM || false,
+          OutOfSessionPM: staffMember.outOfSessionPM || false,
+          OutOfSessionFullDay: staffMember.outOfSessionFullDay || false,
+          CreatedDate: new Date().toISOString()
+        });
+      });
+
+      // Create records for ALL students (not just absent)
+      students.forEach(student => {
+        if (!student.isActive) return;
+
+        let status = 'Present';
+        
+        if (student.absentFullDay) {
+          status = 'Absent Full Day';
+        } else if (student.absentAM && student.absentPM) {
+          status = 'Absent Full Day';
+        } else if (student.outOfSessionFullDay) {
+          status = 'Out Session Full Day';
+        } else if (student.outOfSessionAM && student.outOfSessionPM) {
+          status = 'Out Session Full Day';
+        } else if (student.absentAM && student.outOfSessionPM) {
+          status = 'Absent AM / Out Session PM';
+        } else if (student.outOfSessionAM && student.absentPM) {
+          status = 'Out Session AM / Absent PM';
+        } else if (student.absentAM) {
+          status = 'Absent AM';
+        } else if (student.absentPM) {
+          status = 'Absent PM';
+        } else if (student.outOfSessionAM) {
+          status = 'Out Session AM';
+        } else if (student.outOfSessionPM) {
+          status = 'Out Session PM';
+        }
+
+        attendanceRecords.push({
+          __metadata: { type: 'SP.Data.DailyAttendanceListItem' },
+          Title: `${student.name}_${dateStr}`,
+          AttendanceDate: dateStr,
+          PersonType: 'Client',
+          PersonID: student.id,
+          PersonName: student.name,
+          Status: status,
+          AbsentAM: student.absentAM || false,
+          AbsentPM: student.absentPM || false,
+          AbsentFullDay: student.absentFullDay || false,
+          OutOfSessionAM: student.outOfSessionAM || false,
+          OutOfSessionPM: student.outOfSessionPM || false,
+          OutOfSessionFullDay: student.outOfSessionFullDay || false,
+          CreatedDate: new Date().toISOString()
+        });
+      });
+
+      console.log(`📝 Saving ${attendanceRecords.length} attendance records...`);
+
+      // Get request digest once
+      const digest = await this.getRequestDigest();
+
+      // Save all records
+      const savePromises = attendanceRecords.map(record =>
+        fetch(
+          `${this.siteUrl}/_api/web/lists/getbytitle('DailyAttendance')/items`,
+          {
+            method: 'POST',
+            headers: {
+              'Authorization': `Bearer ${this.accessToken}`,
+              'Accept': 'application/json;odata=verbose',
+              'Content-Type': 'application/json;odata=verbose',
+              'X-RequestDigest': digest
+            },
+            body: JSON.stringify(record)
+          }
+        ).then(response => {
+          if (!response.ok) {
+            console.error(`Failed to save attendance record for ${record.PersonName}`);
+            return { success: false };
+          }
+          return { success: true };
+        }).catch(error => {
+          console.error(`Error saving attendance for ${record.PersonName}:`, error);
+          return { success: false };
+        })
+      );
+
+      const results = await Promise.all(savePromises);
+      const successCount = results.filter(r => r.success).length;
+      
+      console.log(`✅ Saved ${successCount}/${attendanceRecords.length} attendance records`);
+      return successCount === attendanceRecords.length;
+    } catch (error) {
+      console.error('Error saving attendance:', error);
+      return false;
+    }
+  }
+
+  /**
+   * Delete attendance records for a specific date
+   */
+  async deleteAttendanceForDate(date) {
+    try {
+      const dateStr = typeof date === 'string' ? date : date.toISOString().split('T')[0];
+      console.log('🔍 Finding attendance records to delete for', dateStr);
+      
+      const attendanceUrl = `${this.siteUrl}/_api/web/lists/getbytitle('DailyAttendance')/items?` +
+        `$filter=AttendanceDate eq '${dateStr}'&` +
+        `$select=ID`;
+
+      const response = await this.retryFetch(attendanceUrl, {
+        method: 'GET',
+        headers: {
+          'Authorization': `Bearer ${this.accessToken}`,
+          'Accept': 'application/json;odata=verbose'
+        }
+      });
+
+      if (!response.ok) {
+        console.warn('Could not find attendance records to delete');
+        return;
+      }
+
+      const data = await response.json();
+      const records = data.d.results || [];
+      
+      console.log(`🗑️ Found ${records.length} attendance records to delete`);
+
+      if (records.length === 0) return;
+
+      // Get digest once for all deletes
+      const digest = await this.getRequestDigest();
+
+      // Delete each record
+      const deletePromises = records.map(record =>
+        fetch(
+          `${this.siteUrl}/_api/web/lists/getbytitle('DailyAttendance')/items(${record.ID})`,
+          {
+            method: 'POST',
+            headers: {
+              'Authorization': `Bearer ${this.accessToken}`,
+              'X-RequestDigest': digest,
+              'X-HTTP-Method': 'DELETE',
+              'If-Match': '*'
+            }
+          }
+        )
+      );
+
+      await Promise.all(deletePromises);
+      console.log(`✅ Deleted ${records.length} old attendance records`);
+    } catch (error) {
+      // Silently fail if CORS blocks the delete - old records will accumulate but won't break functionality
+      console.warn('⚠️ Could not delete old attendance records (likely CORS issue) - continuing anyway');
+      // Don't fail the save if delete fails
+    }
+  }
+
+  /**
+   * Load attendance data for a specific date
+   * Returns attendance records grouped by person type
+   */
+  async loadAttendanceForDate(date) {
+    try {
+      if (!this.isAuthenticated()) {
+        console.error('Cannot load attendance - not authenticated');
+        return null;
+      }
+
+      const dateStr = typeof date === 'string' ? date : date.toISOString().split('T')[0];
+      console.log(`📥 Loading attendance for ${dateStr}...`);
+
+      const attendanceUrl = `${this.siteUrl}/_api/web/lists/getbytitle('DailyAttendance')/items?` +
+        `$filter=AttendanceDate eq '${dateStr}'&` +
+        `$select=PersonType,PersonID,PersonName,Status,AbsentAM,AbsentPM,AbsentFullDay,OutOfSessionAM,OutOfSessionPM,OutOfSessionFullDay`;
+
+      const response = await this.retryFetch(attendanceUrl, {
+        method: 'GET',
+        headers: {
+          'Authorization': `Bearer ${this.accessToken}`,
+          'Accept': 'application/json;odata=verbose'
+        }
+      });
+
+      if (!response.ok) {
+        console.warn(`No attendance records found for ${dateStr}`);
+        return null;
+      }
+
+      const data = await response.json();
+      const records = data.d.results || [];
+      
+      console.log(`✅ Found ${records.length} attendance records for ${dateStr}`);
+
+      // Group by person type
+      const attendance = {
+        staff: {},
+        students: {}
+      };
+
+      records.forEach(record => {
+        const personData = {
+          absentAM: record.AbsentAM || false,
+          absentPM: record.AbsentPM || false,
+          absentFullDay: record.AbsentFullDay || false,
+          outOfSessionAM: record.OutOfSessionAM || false,
+          outOfSessionPM: record.OutOfSessionPM || false,
+          outOfSessionFullDay: record.OutOfSessionFullDay || false,
+          status: record.Status
+        };
+
+        if (record.PersonType === 'Staff') {
+          attendance.staff[record.PersonID] = personData;
+        } else if (record.PersonType === 'Client') {
+          attendance.students[record.PersonID] = personData;
+        }
+      });
+
+      console.log(`📊 Loaded attendance: ${Object.keys(attendance.staff).length} staff, ${Object.keys(attendance.students).length} clients`);
+      return attendance;
+    } catch (error) {
+      console.error('Error loading attendance:', error);
+      return null;
     }
   }
 

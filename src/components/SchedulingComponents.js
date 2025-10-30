@@ -148,7 +148,15 @@ export const ScheduleTableView = ({
     console.log(`📝 Staff selected: Student ${studentId}, Session ${session}, Staff ${staffId}, Index ${staffIndex}`);
     
     if (!staffId) {
-      // If clearing the selection, just update pre-assignments
+      // If clearing the selection, remove existing assignment
+      const student = students.find(s => s.id === studentId);
+      const studentAssignments = getStudentAssignments(student, session);
+      
+      if (studentAssignments.length > staffIndex) {
+        const assignmentToRemove = studentAssignments[staffIndex];
+        onAssignmentRemove(assignmentToRemove.id);
+      }
+      
       setPreAssignments(prev => ({
         ...prev,
         [key]: null
@@ -156,12 +164,22 @@ export const ScheduleTableView = ({
       return;
     }
     
-    // AUTO-LOCK: Immediately lock the assignment when staff is selected
-    const parsedStaffId = parseInt(staffId);
+    // Check if there's an existing assignment for this position
     const student = students.find(s => s.id === studentId);
+    const studentAssignments = getStudentAssignments(student, session);
+    
+    if (studentAssignments.length > staffIndex) {
+      // Remove existing assignment before creating new one
+      const existingAssignment = studentAssignments[staffIndex];
+      console.log(`🔄 Replacing existing assignment ${existingAssignment.staffName} with new selection`);
+      onAssignmentRemove(existingAssignment.id);
+    }
+    
+    // Create assignment but DO NOT auto-lock (user must click lock icon to lock)
+    const parsedStaffId = parseInt(staffId);
     
     if (student && onManualAssignment) {
-      console.log(`🔒 AUTO-LOCKING assignment: ${parsedStaffId} → ${student.name} (${session})`);
+      console.log(`� Creating unlocked assignment: ${parsedStaffId} → ${student.name} (${session})`);
       
       onManualAssignment({
         staffId: parsedStaffId,
@@ -170,10 +188,10 @@ export const ScheduleTableView = ({
         program: student.program
       });
       
-      // Add to locked assignments
-      setLockedAssignments(prev => new Set([...prev, key]));
+      // DO NOT add to locked assignments - let user lock it by clicking the lock icon
+      // setLockedAssignments(prev => new Set([...prev, key]));
       
-      console.log(`✅ Assignment auto-locked successfully`);
+      console.log(`✅ Assignment created (unlocked - click lock icon to protect from Clear Unlocked)`);
       
       // If this student is paired, also create the assignment for their pair partner
       if (student.isPaired && student.isPaired()) {
@@ -186,6 +204,14 @@ export const ScheduleTableView = ({
           
           // Only auto-assign if the paired student also has a 1:2 ratio for this session
           if (pairedRatio === '1:2') {
+            // Remove paired partner's existing assignment first if exists
+            const pairedAssignments = getStudentAssignments(pairedStudent, session);
+            if (pairedAssignments.length > staffIndex) {
+              const pairedExisting = pairedAssignments[staffIndex];
+              console.log(`🔄 Removing paired partner's existing assignment before reassigning`);
+              onAssignmentRemove(pairedExisting.id);
+            }
+            
             onManualAssignment({
               staffId: parsedStaffId,
               studentId: pairedStudent.id,
@@ -193,11 +219,11 @@ export const ScheduleTableView = ({
               program: pairedStudent.program
             });
             
-            // Mark the paired student's assignment as locked too
-            const pairedKey = getPreAssignmentKey(pairedStudent.id, session, staffIndex);
-            setLockedAssignments(prev => new Set([...prev, pairedKey]));
+            // DO NOT auto-lock paired partner either
+            // const pairedKey = getPreAssignmentKey(pairedStudent.id, session, staffIndex);
+            // setLockedAssignments(prev => new Set([...prev, pairedKey]));
             
-            console.log(`✅ Pair partner assignment auto-locked: ${pairedStudent.name} with same staff`);
+            console.log(`✅ Pair partner assignment created (unlocked): ${pairedStudent.name} with same staff`);
           } else {
             console.log(`⚠️ Pair partner ${pairedStudent.name} has ratio ${pairedRatio}, not auto-assigning`);
           }
@@ -490,7 +516,7 @@ export const ScheduleTableView = ({
           <select
             value={selectedStaffId}
             onChange={(e) => handleStaffSelection(student.id, session, e.target.value, staffIndex)}
-            disabled={!!currentAssignment}
+            disabled={false}
             className={`text-sm border rounded px-2 py-1 min-w-[160px] ${
               currentAssignment 
                 ? (() => {
@@ -530,13 +556,35 @@ export const ScheduleTableView = ({
           {/* Show lock/unlock icon based on assignment status */}
           {currentAssignment && (
             <button
-              onClick={() => handleUnlockAssignment(student.id, session, staffIndex)}
+              onClick={() => {
+                console.log('Lock button clicked!', {
+                  assignmentId: currentAssignment.id,
+                  isLocked: currentAssignment.isLocked,
+                  studentId: student.id,
+                  session,
+                  staffIndex
+                });
+                
+                if (currentAssignment.isLocked) {
+                  // If locked, unlock and remove assignment
+                  console.log('Unlocking assignment...');
+                  handleUnlockAssignment(student.id, session, staffIndex);
+                } else {
+                  // If unlocked (auto-assigned), lock it to protect from Clear Unlocked
+                  console.log('Locking assignment...', 'onAssignmentLock:', typeof onAssignmentLock);
+                  if (onAssignmentLock) {
+                    onAssignmentLock(currentAssignment.id);
+                  } else {
+                    console.error('onAssignmentLock is not defined!');
+                  }
+                }
+              }}
               className={`p-1 rounded ${
                 currentAssignment.isLocked 
                   ? 'text-red-600 hover:text-red-800 hover:bg-red-50' 
                   : 'text-green-600 hover:text-green-800 hover:bg-green-50'
               }`}
-              title="Remove this assignment"
+              title={currentAssignment.isLocked ? 'Unlock and remove assignment' : 'Lock assignment (protect from Clear Unlocked)'}
             >
               {currentAssignment.isLocked ? (
                 <Lock className="w-4 h-4" />

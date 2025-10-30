@@ -348,14 +348,63 @@ const ABAScheduler = () => {
             console.error('⚠️ Error clearing SharePoint attendance:', err);
             // Continue anyway - local state is already cleared
           }
+          
+          // Update the date state
+          setCurrentDate(newDate);
+          
+          // Load schedule for new date
+          const scheduleData = await sharePointService.loadSchedule(newDate);
+          setSchedule(scheduleData);
+          
+          // Load attendance data for the new date
+          console.log('📥 Loading attendance data for', newDateStr);
+          const attendanceData = await sharePointService.loadAttendanceForDate(newDate);
+          
+          if (attendanceData) {
+            console.log('✅ Attendance data loaded, applying to staff and students');
+            
+            // Apply attendance data to staff (using the already cleared staff)
+            const staffWithAttendance = clearedStaff.map(s => {
+              const attendance = attendanceData.staff[s.id];
+              if (attendance) {
+                return new Staff({
+                  ...s,
+                  absentAM: attendance.absentAM,
+                  absentPM: attendance.absentPM,
+                  absentFullDay: attendance.absentFullDay,
+                  outOfSessionAM: attendance.outOfSessionAM,
+                  outOfSessionPM: attendance.outOfSessionPM,
+                  outOfSessionFullDay: attendance.outOfSessionFullDay
+                });
+              }
+              return s;
+            });
+            
+            // Apply attendance data to students (using the already cleared students)
+            const studentsWithAttendance = clearedStudents.map(s => {
+              const attendance = attendanceData.students[s.id];
+              if (attendance) {
+                return new Student({
+                  ...s,
+                  absentAM: attendance.absentAM,
+                  absentPM: attendance.absentPM,
+                  absentFullDay: attendance.absentFullDay,
+                  outOfSessionAM: attendance.outOfSessionAM,
+                  outOfSessionPM: attendance.outOfSessionPM,
+                  outOfSessionFullDay: attendance.outOfSessionFullDay
+                });
+              }
+              return s;
+            });
+            
+            setStaff(staffWithAttendance);
+            setStudents(studentsWithAttendance);
+            
+            console.log('✅ Attendance data applied to UI');
+          } else {
+            console.log('ℹ️ No attendance data found for this date - all marked as present');
+          }
         }
-        
-        // Update the date state
-        setCurrentDate(newDate);
-        
-        // Load schedule for new date
-        const scheduleData = await sharePointService.loadSchedule(newDate);
-        setSchedule(scheduleData);
       } catch (error) {
         console.error('Error loading schedule for new date:', error);
       }
@@ -766,7 +815,7 @@ const handleManualAssignment = ({ staffId, studentId, session, program }) => {
     session,
     program,
     date: currentDate,
-    isLocked: true, // Manual assignments are LOCKED
+    isLocked: false, // Manual assignments start UNLOCKED - user must click lock icon to lock
     assignedBy: 'manual'
   });
 

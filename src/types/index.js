@@ -468,10 +468,20 @@ export class Schedule {
 
   lockAssignment(assignmentId) {
     this.lockedAssignments.add(assignmentId);
+    // Also update the isLocked property on the assignment object itself
+    const assignment = this.assignments.find(a => a.id === assignmentId);
+    if (assignment) {
+      assignment.isLocked = true;
+    }
   }
 
   unlockAssignment(assignmentId) {
     this.lockedAssignments.delete(assignmentId);
+    // Also update the isLocked property on the assignment object itself
+    const assignment = this.assignments.find(a => a.id === assignmentId);
+    if (assignment) {
+      assignment.isLocked = false;
+    }
   }
 
   isAssignmentLocked(assignmentId) {

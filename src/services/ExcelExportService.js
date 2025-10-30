@@ -22,10 +22,14 @@ export class ExcelExportService {
       
       // Generate absences data
       const absencesData = this.generateAbsencesData(students, staff);
+      
+      // Generate client attendance data
+      const clientAttendanceData = this.generateClientAttendanceData(students);
 
       // Create worksheets
       const scheduleSheet = XLSX.utils.aoa_to_sheet(scheduleData);
       const absencesSheet = XLSX.utils.aoa_to_sheet(absencesData);
+      const clientAttendanceSheet = XLSX.utils.aoa_to_sheet(clientAttendanceData);
 
       // Set column widths for better readability
       scheduleSheet['!cols'] = [
@@ -41,9 +45,16 @@ export class ExcelExportService {
         { wch: 20 }  // Status
       ];
 
+      clientAttendanceSheet['!cols'] = [
+        { wch: 25 }, // Name
+        { wch: 15 }, // Program
+        { wch: 20 }  // Status
+      ];
+
       // Add worksheets to workbook
       XLSX.utils.book_append_sheet(workbook, scheduleSheet, 'Schedule');
       XLSX.utils.book_append_sheet(workbook, absencesSheet, 'Staff Attendance');
+      XLSX.utils.book_append_sheet(workbook, clientAttendanceSheet, 'Client Attendance');
 
       // Format the date for filename
       const dateStr = date.toLocaleDateString('en-US', { 
@@ -268,6 +279,90 @@ export class ExcelExportService {
     // Add a row if no staff
     if (staffList.length === 0) {
       data.push(['No active staff found', '', '']);
+    }
+
+    return data;
+  }
+
+  /**
+   * Generate client attendance data array for Excel
+   * @param {Array} students - Array of students
+   * @returns {Array} 2D array for Excel sheet
+   */
+  static generateClientAttendanceData(students) {
+    const data = [];
+    
+    // Header row
+    data.push([
+      'Name',
+      'Program',
+      'Status'
+    ]);
+
+    // Collect all students with their status
+    const clientList = [];
+
+    // Process all active students
+    students.forEach(student => {
+      if (!student.isActive) return;
+      
+      // Determine status based on attendance flags
+      let status = 'Present';
+      
+      // Check for absences first
+      const isAbsentAM = student.absentAM;
+      const isAbsentPM = student.absentPM;
+      const isAbsentFullDay = student.absentFullDay;
+      
+      // Check for out of session
+      const outOfSessionAM = student.outOfSessionAM;
+      const outOfSessionPM = student.outOfSessionPM;
+      const outOfSessionFullDay = student.outOfSessionFullDay;
+      
+      if (isAbsentFullDay) {
+        status = 'Absent Full Day';
+      } else if (isAbsentAM && isAbsentPM) {
+        status = 'Absent Full Day';
+      } else if (outOfSessionFullDay) {
+        status = 'Out Session Full Day';
+      } else if (outOfSessionAM && outOfSessionPM) {
+        status = 'Out Session Full Day';
+      } else if (isAbsentAM && outOfSessionPM) {
+        status = 'Absent AM / Out Session PM';
+      } else if (outOfSessionAM && isAbsentPM) {
+        status = 'Out Session AM / Absent PM';
+      } else if (isAbsentAM) {
+        status = 'Absent AM';
+      } else if (isAbsentPM) {
+        status = 'Absent PM';
+      } else if (outOfSessionAM) {
+        status = 'Out Session AM';
+      } else if (outOfSessionPM) {
+        status = 'Out Session PM';
+      }
+      
+      clientList.push({
+        name: student.name,
+        program: student.program,
+        status: status
+      });
+    });
+
+    // Sort clients by name
+    clientList.sort((a, b) => a.name.localeCompare(b.name));
+
+    // Add to data array
+    clientList.forEach(client => {
+      data.push([
+        client.name,
+        client.program,
+        client.status
+      ]);
+    });
+
+    // Add a row if no clients
+    if (clientList.length === 0) {
+      data.push(['No active clients found', '', '']);
     }
 
     return data;
