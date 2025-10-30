@@ -57,7 +57,7 @@ const ABAScheduler = () => {
     tenantId: 'a4adcc38-7b4e-485c-80f9-7d9ca4e83d64',
     redirectUri: window.location.hostname === 'localhost' 
       ? 'http://localhost:3000' 
-      : 'https://mlr3037.github.io/EvokeSchedule2.0'
+      : 'https://schedule.evokebehavioralhealth.com'
   });
 
   // Services
