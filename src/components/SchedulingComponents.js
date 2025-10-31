@@ -29,6 +29,7 @@ export const ScheduleTableView = ({
   const [tempTeamAdditions, setTempTeamAdditions] = useState({});
 
   // Sync component state when schedule changes
+  // NOTE: Preserve tempTeamAdditions - they should NOT be cleared when schedule updates
   useEffect(() => {
     console.log('🔄 Schedule changed, syncing state...');
     console.log('  Total assignments:', schedule.assignments.length);
@@ -56,6 +57,8 @@ export const ScheduleTableView = ({
       console.log('  ✅ Cleared trainee assignments (empty schedule)');
     }
     setTraineeAssignments(newTraineeAssignments);
+    
+    // DO NOT clear tempTeamAdditions here - they persist across schedule updates
     
     // Clear pre-assignments for students that now have real assignments
     setPreAssignments(prev => {

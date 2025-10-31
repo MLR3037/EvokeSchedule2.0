@@ -650,12 +650,22 @@ const ABAScheduler = () => {
       for (let pass = 1; pass <= maxPasses; pass++) {
         passNumber = pass;
         console.log(`\n🔄 === PASS ${pass}/${maxPasses} ===`);
+        console.log(`   Current schedule has ${currentSchedule.assignments.length} assignments`);
+        console.log(`   Available staff: ${staff.filter(s => s.isActive).length}`);
+        console.log(`   Active students: ${students.filter(s => s.isActive).length}`);
         
         // Use the AutoAssignmentEngine's swap optimization
         const result = await autoAssignEngine.performSwapOptimization(currentSchedule, staff, students);
         
+        console.log(`   Result:`, {
+          swapsMade: result.swapsMade,
+          gapsFilled: result.gapsFilled,
+          newAssignmentsCount: result.newAssignments.length,
+          swapsCount: result.swaps?.length || 0
+        });
+        
         if (result.swapsMade === 0 && result.newAssignments.length === 0) {
-          console.log(`ℹ️ Pass ${pass}: No more improvements found`);
+          console.log(`ℹ️ Pass ${pass}: No more improvements found - stopping`);
           break; // No more improvements possible
         }
         
