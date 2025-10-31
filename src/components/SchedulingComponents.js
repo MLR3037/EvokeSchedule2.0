@@ -24,6 +24,9 @@ export const ScheduleTableView = ({
   const [preAssignments, setPreAssignments] = useState({});
   const [lockedAssignments, setLockedAssignments] = useState(new Set());
   const [traineeAssignments, setTraineeAssignments] = useState({});
+  
+  // NEW: Temporary team overrides for today only (not saved to SharePoint)
+  const [tempTeamAdditions, setTempTeamAdditions] = useState({});
 
   // Sync component state when schedule changes
   useEffect(() => {
@@ -124,6 +127,21 @@ export const ScheduleTableView = ({
         };
       }).filter(Boolean);
     }
+    
+    // NEW: Add temporary team members for today only (not saved to SharePoint)
+    const tempStaffIds = tempTeamAdditions[student.id] || [];
+    tempStaffIds.forEach(staffId => {
+      const staffMember = staff.find(s => s.id === staffId);
+      if (staffMember && !team.find(t => t.id === staffId)) {
+        team.push({
+          id: staffMember.id,
+          name: staffMember.name,
+          role: staffMember.role,
+          email: staffMember.email,
+          isTemp: true // Mark as temporary
+        });
+      }
+    });
     
     return team;
   };
@@ -833,8 +851,57 @@ export const ScheduleTableView = ({
     );
   };
 
+  const [showQuickAddModal, setShowQuickAddModal] = useState(false);
+  const [quickAddStudent, setQuickAddStudent] = useState(null);
+
+  const handleQuickAddStaff = (studentId, staffId) => {
+    setTempTeamAdditions(prev => {
+      const current = prev[studentId] || [];
+      if (current.includes(staffId)) {
+        return prev; // Already added
+      }
+      return {
+        ...prev,
+        [studentId]: [...current, staffId]
+      };
+    });
+    console.log(`✨ Temporarily added staff ${staffId} to student ${studentId}'s team for today`);
+  };
+
+  const handleRemoveTempStaff = (studentId, staffId) => {
+    setTempTeamAdditions(prev => {
+      const current = prev[studentId] || [];
+      return {
+        ...prev,
+        [studentId]: current.filter(id => id !== staffId)
+      };
+    });
+    console.log(`🗑️ Removed temporary staff ${staffId} from student ${studentId}'s team`);
+  };
+
   return (
     <div className="space-y-6">
+      {/* Info banner about temporary assignments */}
+      {Object.keys(tempTeamAdditions).some(key => tempTeamAdditions[key].length > 0) && (
+        <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-4">
+          <div className="flex items-start gap-2">
+            <Clock className="w-5 h-5 text-yellow-600 flex-shrink-0 mt-0.5" />
+            <div>
+              <h4 className="font-medium text-yellow-900">Temporary Staff Assignments Active</h4>
+              <p className="text-sm text-yellow-700 mt-1">
+                You have temporary staff additions for today only. These changes are NOT saved to SharePoint and will be cleared when you refresh the page.
+              </p>
+              <button
+                onClick={() => setTempTeamAdditions({})}
+                className="mt-2 text-sm text-yellow-700 underline hover:text-yellow-900"
+              >
+                Clear all temporary assignments
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {programs.map(program => {
         const programStudents = students
           .filter(s => s.program === program && s.isActive)
@@ -901,32 +968,57 @@ export const ScheduleTableView = ({
                         </td>
                         
                         <td className="px-6 py-4">
-                          <div className="flex flex-wrap gap-1">
-                            {team.length > 0 ? (
-                              team.map((teamMember, idx) => {
-                                const trainingStatus = student.getStaffTrainingStatus ? student.getStaffTrainingStatus(teamMember.id) : TRAINING_STATUS.SOLO;
-                                return (
-                                  <div key={idx} className="flex items-center gap-1">
-                                    {trainingStatus === TRAINING_STATUS.TRAINER && (
-                                      <Star className="w-3.5 h-3.5 text-yellow-500 fill-yellow-500 flex-shrink-0" title="Trainer" />
-                                    )}
-                                    {trainingStatus === TRAINING_STATUS.OVERLAP_STAFF && (
-                                      <GraduationCap className="w-3.5 h-3.5 text-red-600 flex-shrink-0" title="Needs Staff Overlap" />
-                                    )}
-                                    {trainingStatus === TRAINING_STATUS.OVERLAP_BCBA && (
-                                      <GraduationCap className="w-3.5 h-3.5 text-yellow-600 flex-shrink-0" title="Needs BCBA Overlap" />
-                                    )}
-                                    <span 
-                                      className={`px-2 py-1 rounded text-xs font-medium ${getRoleColor(teamMember.role)}`}
-                                    >
-                                      {teamMember.name}
-                                    </span>
-                                  </div>
-                                );
-                              })
-                            ) : (
-                              <span className="text-gray-400 text-sm">No team assigned</span>
-                            )}
+                          <div className="space-y-2">
+                            <div className="flex flex-wrap gap-1">
+                              {team.length > 0 ? (
+                                team.map((teamMember, idx) => {
+                                  const trainingStatus = student.getStaffTrainingStatus ? student.getStaffTrainingStatus(teamMember.id) : TRAINING_STATUS.SOLO;
+                                  const isTemp = teamMember.isTemp;
+                                  return (
+                                    <div key={idx} className="flex items-center gap-1">
+                                      {trainingStatus === TRAINING_STATUS.TRAINER && (
+                                        <Star className="w-3.5 h-3.5 text-yellow-500 fill-yellow-500 flex-shrink-0" title="Trainer" />
+                                      )}
+                                      {trainingStatus === TRAINING_STATUS.OVERLAP_STAFF && (
+                                        <GraduationCap className="w-3.5 h-3.5 text-red-600 flex-shrink-0" title="Needs Staff Overlap" />
+                                      )}
+                                      {trainingStatus === TRAINING_STATUS.OVERLAP_BCBA && (
+                                        <GraduationCap className="w-3.5 h-3.5 text-yellow-600 flex-shrink-0" title="Needs BCBA Overlap" />
+                                      )}
+                                      <span 
+                                        className={`px-2 py-1 rounded text-xs font-medium ${
+                                          isTemp ? 'bg-yellow-100 text-yellow-700 border border-yellow-300' : getRoleColor(teamMember.role)
+                                        }`}
+                                      >
+                                        {isTemp && <Clock className="w-3 h-3 inline mr-1" />}
+                                        {teamMember.name}
+                                      </span>
+                                      {isTemp && (
+                                        <button
+                                          onClick={() => handleRemoveTempStaff(student.id, teamMember.id)}
+                                          className="text-xs text-red-600 hover:text-red-800"
+                                          title="Remove temporary assignment"
+                                        >
+                                          ×
+                                        </button>
+                                      )}
+                                    </div>
+                                  );
+                                })
+                              ) : (
+                                <span className="text-gray-400 text-sm">No team assigned</span>
+                              )}
+                            </div>
+                            <button
+                              onClick={() => {
+                                setQuickAddStudent(student);
+                                setShowQuickAddModal(true);
+                              }}
+                              className="text-xs text-blue-600 hover:text-blue-800 hover:bg-blue-50 px-2 py-1 rounded flex items-center gap-1"
+                            >
+                              <Users className="w-3 h-3" />
+                              Quick Add Staff (Today Only)
+                            </button>
                           </div>
                         </td>
                       </tr>
@@ -938,6 +1030,93 @@ export const ScheduleTableView = ({
           </div>
         );
       })}
+
+      {/* Quick Add Staff Modal */}
+      {showQuickAddModal && quickAddStudent && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+          <div className="bg-white rounded-lg shadow-xl max-w-2xl w-full max-h-[80vh] overflow-hidden">
+            <div className="bg-blue-600 text-white px-6 py-4 flex justify-between items-center">
+              <h3 className="text-lg font-bold">Quick Add Staff to {quickAddStudent.name} (Today Only)</h3>
+              <button
+                onClick={() => {
+                  setShowQuickAddModal(false);
+                  setQuickAddStudent(null);
+                }}
+                className="text-white hover:bg-blue-700 rounded p-1"
+              >
+                ×
+              </button>
+            </div>
+            
+            <div className="p-6 overflow-y-auto max-h-[60vh]">
+              <div className="mb-4 bg-yellow-50 border border-yellow-200 rounded p-3">
+                <p className="text-sm text-yellow-800">
+                  <strong>Temporary Assignment:</strong> Staff added here will be available in the schedule dropdowns for today only.
+                  These changes are NOT saved to SharePoint and will be cleared when you refresh the page.
+                </p>
+              </div>
+
+              <div className="space-y-2">
+                {staff
+                  .filter(s => s.isActive)
+                  .filter(s => {
+                    // Filter out staff already on the permanent team
+                    const permanentTeam = quickAddStudent.team || [];
+                    const isOnPermanentTeam = permanentTeam.some(t => 
+                      t.id === s.id || t.email?.toLowerCase() === s.email?.toLowerCase()
+                    );
+                    return !isOnPermanentTeam;
+                  })
+                  .sort((a, b) => a.name.localeCompare(b.name))
+                  .map(staffMember => {
+                    const tempStaff = tempTeamAdditions[quickAddStudent.id] || [];
+                    const isAdded = tempStaff.includes(staffMember.id);
+                    
+                    return (
+                      <div key={staffMember.id} className="flex items-center justify-between p-3 border rounded hover:bg-gray-50">
+                        <div>
+                          <div className="font-medium">{staffMember.name}</div>
+                          <div className="text-sm text-gray-600">
+                            <span className={`px-2 py-0.5 rounded text-xs ${getRoleColor(staffMember.role)}`}>
+                              {staffMember.role}
+                            </span>
+                          </div>
+                        </div>
+                        {isAdded ? (
+                          <button
+                            onClick={() => handleRemoveTempStaff(quickAddStudent.id, staffMember.id)}
+                            className="px-3 py-1 bg-red-100 text-red-700 rounded hover:bg-red-200 text-sm"
+                          >
+                            Remove
+                          </button>
+                        ) : (
+                          <button
+                            onClick={() => handleQuickAddStaff(quickAddStudent.id, staffMember.id)}
+                            className="px-3 py-1 bg-blue-600 text-white rounded hover:bg-blue-700 text-sm"
+                          >
+                            Add for Today
+                          </button>
+                        )}
+                      </div>
+                    );
+                  })}
+              </div>
+            </div>
+
+            <div className="bg-gray-50 px-6 py-4 flex justify-end">
+              <button
+                onClick={() => {
+                  setShowQuickAddModal(false);
+                  setQuickAddStudent(null);
+                }}
+                className="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700"
+              >
+                Done
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };
