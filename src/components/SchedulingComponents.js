@@ -219,7 +219,8 @@ export const ScheduleTableView = ({
         staffId: parsedStaffId,
         studentId: studentId,
         session: session,
-        program: student.program
+        program: student.program,
+        bypassTeamCheck: true // Allow temp team members
       });
       
       // DO NOT add to locked assignments - let user lock it by clicking the lock icon
@@ -250,7 +251,8 @@ export const ScheduleTableView = ({
               staffId: parsedStaffId,
               studentId: pairedStudent.id,
               session: session,
-              program: pairedStudent.program
+              program: pairedStudent.program,
+              bypassTeamCheck: true // Allow temp team members
             });
             
             // DO NOT auto-lock paired partner either
@@ -287,7 +289,8 @@ export const ScheduleTableView = ({
           staffId: staffId,
           studentId: studentId,
           session: session,
-          program: student.program
+          program: student.program,
+          bypassTeamCheck: true // Allow temp team members
         });
         
         // Add to locked assignments
@@ -317,7 +320,8 @@ export const ScheduleTableView = ({
                 staffId: staffId,
                 studentId: pairedStudent.id,
                 session: session,
-                program: pairedStudent.program
+                program: pairedStudent.program,
+                bypassTeamCheck: true // Allow temp team members
               });
               
               // Mark the paired student's assignment as locked too

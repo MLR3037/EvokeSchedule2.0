@@ -773,7 +773,7 @@ const handleAssignmentUnlock = (assignmentId) => {
   setSchedule(newSchedule);
 };
 
-const handleManualAssignment = ({ staffId, studentId, session, program }) => {
+const handleManualAssignment = ({ staffId, studentId, session, program, bypassTeamCheck = false }) => {
   // Get staff and student names
   const staffMember = staff.find(s => s.id === staffId);
   const student = students.find(s => s.id === studentId);
@@ -783,8 +783,8 @@ const handleManualAssignment = ({ staffId, studentId, session, program }) => {
     return;
   }
 
-  // CRITICAL CHECK 1: Staff must be on student's team
-  if (!student.teamIds.includes(staffId)) {
+  // CRITICAL CHECK 1: Staff must be on student's team (unless bypassed for temp assignments)
+  if (!bypassTeamCheck && !student.teamIds.includes(staffId)) {
     alert(`❌ Cannot assign ${staffMember.name} to ${student.name}.\n\n${staffMember.name} is not on ${student.name}'s team.\n\nOnly team members can be assigned to a student.`);
     console.warn(`⚠️ Blocked assignment: ${staffMember.name} is not on ${student.name}'s team`);
     return;
