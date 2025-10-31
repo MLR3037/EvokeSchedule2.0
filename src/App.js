@@ -635,46 +635,20 @@ const ABAScheduler = () => {
   };
 
   // Smart Swap Optimization - Fill gaps by finding beneficial swaps
-  const handleSmartSwap = async (multiPass = false) => {
+  const handleSmartSwap = async () => {
     setAutoAssigning(true);
     
     try {
-      const maxPasses = multiPass ? 5 : 1; // Multi-pass runs up to 5 times
-      let totalSwaps = 0;
-      let totalGapsFilled = 0;
-      let currentSchedule = schedule;
-      let passNumber = 0;
+      console.log('🔀 Starting Smart Swap Optimization...');
       
-      console.log(`🔀 Starting ${multiPass ? 'Multi-Pass' : 'Single-Pass'} Smart Swap Optimization...`);
+      // Use the AutoAssignmentEngine's swap optimization
+      const result = await autoAssignEngine.performSwapOptimization(schedule, staff, students);
       
-      for (let pass = 1; pass <= maxPasses; pass++) {
-        passNumber = pass;
-        console.log(`\n🔄 === PASS ${pass}/${maxPasses} ===`);
-        console.log(`   Current schedule has ${currentSchedule.assignments.length} assignments`);
-        console.log(`   Available staff: ${staff.filter(s => s.isActive).length}`);
-        console.log(`   Active students: ${students.filter(s => s.isActive).length}`);
-        
-        // Use the AutoAssignmentEngine's swap optimization
-        const result = await autoAssignEngine.performSwapOptimization(currentSchedule, staff, students);
-        
-        console.log(`   Result:`, {
-          swapsMade: result.swapsMade,
-          gapsFilled: result.gapsFilled,
-          newAssignmentsCount: result.newAssignments.length,
-          swapsCount: result.swaps?.length || 0
-        });
-        
-        if (result.swapsMade === 0 && result.newAssignments.length === 0) {
-          console.log(`ℹ️ Pass ${pass}: No more improvements found - stopping`);
-          break; // No more improvements possible
-        }
-        
-        console.log(`✅ Pass ${pass} Results: ${result.swapsMade} swaps, ${result.gapsFilled} gaps filled`);
-        totalSwaps += result.swapsMade;
-        totalGapsFilled += result.gapsFilled;
+      if (result.swapsMade > 0 || result.newAssignments.length > 0) {
+        console.log(`✅ Smart Swap Results: ${result.swapsMade} swaps, ${result.gapsFilled} gaps filled`);
         
         // Apply swaps and new assignments
-        let updatedAssignments = [...currentSchedule.assignments];
+        let updatedAssignments = [...schedule.assignments];
         
         // Remove swapped assignments
         for (const swap of result.swaps) {
@@ -716,7 +690,7 @@ const ABAScheduler = () => {
           validAssignments.push(...sorted.slice(0, maxStaff));
           
           if (sorted.length > maxStaff) {
-            console.warn(`⚠️ SMART SWAP PASS ${pass}: ${student.name} ${session}: Trimmed ${sorted.length} assignments to ${maxStaff} (ratio: ${ratio})`);
+            console.warn(`⚠️ SMART SWAP: ${student.name} ${session}: Trimmed ${sorted.length} assignments to ${maxStaff} (ratio: ${ratio})`);
           }
         });
 
@@ -737,7 +711,7 @@ const ABAScheduler = () => {
             
             if (!arePaired) {
               const staffMember = staff.find(s => s.id === assignment.staffId);
-              console.warn(`⚠️ SMART SWAP PASS ${pass} BLOCKED DOUBLE-BOOKING: ${staffMember?.name || 'Staff'} cannot be assigned to ${currentStudent?.name || 'student'} - already assigned to ${existingStudent?.name || 'another student'} in ${assignment.session}`);
+              console.warn(`⚠️ SMART SWAP BLOCKED DOUBLE-BOOKING: ${staffMember?.name || 'Staff'} cannot be assigned to ${currentStudent?.name || 'student'} - already assigned to ${existingStudent?.name || 'another student'} in ${assignment.session}`);
               return false;
             }
           }
@@ -746,20 +720,17 @@ const ABAScheduler = () => {
           return true;
         });
         
-        // Create new schedule instance for next pass
-        currentSchedule = new Schedule({
-          date: currentSchedule.date,
+        // Create new schedule instance
+        const newSchedule = new Schedule({
+          date: schedule.date,
           assignments: validAssignments,
-          traineeAssignments: [...(currentSchedule.traineeAssignments || [])],
-          lockedAssignments: currentSchedule.lockedAssignments,
-          isFinalized: currentSchedule.isFinalized
+          traineeAssignments: [...(schedule.traineeAssignments || [])],
+          lockedAssignments: schedule.lockedAssignments,
+          isFinalized: schedule.isFinalized
         });
-      }
-      
-      // After all passes, update the schedule
-      if (totalSwaps > 0 || totalGapsFilled > 0) {
-        setSchedule(currentSchedule);
-        alert(`✅ ${multiPass ? 'Multi-Pass' : ''} Smart Swap Complete!\n\n${passNumber} pass${passNumber > 1 ? 'es' : ''} completed\n${totalSwaps} total swaps made\n${totalGapsFilled} gaps filled\n\nCheck the schedule for improvements.`);
+        
+        setSchedule(newSchedule);
+        alert(`✅ Smart Swap Complete!\n\n${result.swapsMade} swaps made\n${result.gapsFilled} gaps filled\n\nCheck the schedule for improvements.`);
       } else {
         alert('ℹ️ No beneficial swaps found.\n\nAll gaps may require staff who are already assigned or unavailable.');
       }
@@ -1547,23 +1518,13 @@ const handleAssignmentRemove = (assignmentId) => {
                 </button>
                 
                 <button
-                  onClick={() => handleSmartSwap(false)}
+                  onClick={handleSmartSwap}
                   disabled={autoAssigning || loading || schedule.assignments.length === 0}
                   className="bg-purple-600 text-white px-4 py-2 rounded hover:bg-purple-700 disabled:opacity-50 flex items-center gap-2"
-                  title="Fill gaps by swapping staff to enable team member assignments (single pass)"
+                  title="Fill gaps by swapping staff to enable team member assignments"
                 >
                   {autoAssigning ? <RefreshCw className="w-4 h-4 animate-spin" /> : '🔀'}
                   Smart Swap
-                </button>
-                
-                <button
-                  onClick={() => handleSmartSwap(true)}
-                  disabled={autoAssigning || loading || schedule.assignments.length === 0}
-                  className="bg-purple-700 text-white px-4 py-2 rounded hover:bg-purple-800 disabled:opacity-50 flex items-center gap-2"
-                  title="Run multiple swap passes to fill remaining gaps (up to 5 passes)"
-                >
-                  {autoAssigning ? <RefreshCw className="w-4 h-4 animate-spin" /> : '🔀🔀'}
-                  Multi-Pass Swap
                 </button>
                 
                 <button
