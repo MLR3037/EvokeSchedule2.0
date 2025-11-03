@@ -415,7 +415,10 @@ export class SharePointService {
    * App expects: "solo", "trainer", "overlap-bcba", "overlap-staff"
    */
   normalizeTrainingStatus(spValue) {
-    if (!spValue) return 'solo';
+    if (!spValue) {
+      console.warn(`⚠️ Training status is empty/null - defaulting to 'solo'. This may cause staff in training to be incorrectly assigned!`);
+      return 'solo';
+    }
     
     const normalized = spValue.toLowerCase().trim();
     
@@ -429,7 +432,13 @@ export class SharePointService {
       'overlap-staff': 'overlap-staff'
     };
     
-    return mappings[normalized] || 'solo';
+    const result = mappings[normalized];
+    if (!result) {
+      console.warn(`⚠️ Unknown training status '${spValue}' - defaulting to 'solo'. This may cause issues!`);
+      return 'solo';
+    }
+    
+    return result;
   }
 
   /**
@@ -502,6 +511,9 @@ export class SharePointService {
           if (!teamsByClient[clientId]) {
             teamsByClient[clientId] = [];
           }
+          
+          // Log raw SharePoint training status value for debugging
+          console.log(`  📋 Staff ${item.StaffMember.Title} (ID: ${item.StaffMember.Id}) for Client ${clientId}: TrainingStatus = '${item.TrainingStatus}'`);
           
           teamsByClient[clientId].push({
             id: item.StaffMember.Id,
@@ -612,7 +624,15 @@ export class SharePointService {
         
         // Build training status object from team data
         team.forEach(member => {
-          teamTrainingStatus[member.id] = member.trainingStatus || 'solo';
+          const status = member.trainingStatus || 'solo';
+          teamTrainingStatus[member.id] = status;
+          
+          // Log when defaulting to 'solo' for missing training status
+          if (!member.trainingStatus) {
+            console.warn(`  ⚠️ ${member.name} (ID: ${member.id}) on ${item.Title}'s team has NO training status - defaulting to 'solo'`);
+          } else {
+            console.log(`  ✅ ${member.name} (ID: ${member.id}) training status: ${status}`);
+          }
         });
         
         if (team.length > 0) {
