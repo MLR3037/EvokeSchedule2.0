@@ -1532,8 +1532,34 @@ export const SessionSummary = ({ schedule, staff, students, session, program }) 
   
   // Filter out absent students when counting - only count present students
   const presentProgramStudents = programStudents.filter(s => s.isAvailableForSession(session));
-  const assignedStudents = new Set(assignments.map(a => a.studentId));
-  const unassignedCount = presentProgramStudents.length - assignedStudents.size;
+  
+  // Calculate required vs actual assignments, accounting for 2:1 students
+  const studentAssignmentCounts = {}; // Track how many assignments each student has
+  assignments.forEach(a => {
+    studentAssignmentCounts[a.studentId] = (studentAssignmentCounts[a.studentId] || 0) + 1;
+  });
+  
+  // Calculate total assignments needed vs actual
+  let totalAssignmentsNeeded = 0;
+  let totalAssignmentsActual = 0;
+  const fullyAssignedStudents = new Set();
+  
+  presentProgramStudents.forEach(student => {
+    const ratio = session === 'AM' ? student.ratioAM : student.ratioPM;
+    const required = ratio === '2:1' ? 2 : 1;
+    const actual = studentAssignmentCounts[student.id] || 0;
+    
+    totalAssignmentsNeeded += required;
+    totalAssignmentsActual += actual;
+    
+    // Only consider student fully assigned if they have all required staff
+    if (actual >= required) {
+      fullyAssignedStudents.add(student.id);
+    }
+  });
+  
+  const assignedStudents = fullyAssignedStudents;
+  const unassignedCount = totalAssignmentsNeeded - totalAssignmentsActual;
   
   // Calculate staff utilization by role
   const staffByRole = {};
@@ -1556,10 +1582,17 @@ export const SessionSummary = ({ schedule, staff, students, session, program }) 
     staffRoleCounts[role] = staffByRole[role].size;
   });
 
-  // Find unassigned students (exclude absent students)
-  const unassignedStudents = programStudents.filter(student => 
-    !assignedStudents.has(student.id) && student.isAvailableForSession(session)
-  );
+  // Find unassigned or partially assigned students (exclude absent students)
+  const unassignedStudents = programStudents.filter(student => {
+    if (!student.isAvailableForSession(session)) return false;
+    
+    const ratio = session === 'AM' ? student.ratioAM : student.ratioPM;
+    const required = ratio === '2:1' ? 2 : 1;
+    const actual = studentAssignmentCounts[student.id] || 0;
+    
+    // Include students who are completely unassigned OR partially assigned (e.g., 2:1 with only 1 staff)
+    return actual < required;
+  });
 
   // Find unassigned staff for this program and session
   const availableStaff = staff.filter(staffMember => {
@@ -1743,14 +1776,19 @@ export const SessionSummary = ({ schedule, staff, students, session, program }) 
         <div className="mt-3 border-t pt-3">
           <div className="text-xs font-medium text-gray-600 mb-2">Unassigned Students:</div>
           <div className="space-y-1 max-h-20 overflow-y-auto">
-            {unassignedStudents.map(student => (
-              <div key={student.id} className="text-xs text-gray-700 flex justify-between">
-                <span>{student.name}</span>
-                <span className="text-gray-500">
-                  {session === 'AM' ? student.ratioAM : student.ratioPM}
-                </span>
-              </div>
-            ))}
+            {unassignedStudents.map(student => {
+              const ratio = session === 'AM' ? student.ratioAM : student.ratioPM;
+              const required = ratio === '2:1' ? 2 : 1;
+              const actual = studentAssignmentCounts[student.id] || 0;
+              return (
+                <div key={student.id} className="text-xs text-gray-700 flex justify-between">
+                  <span>{student.name}</span>
+                  <span className="text-gray-500">
+                    {actual}:{required}
+                  </span>
+                </div>
+              );
+            })}
           </div>
         </div>
       )}
