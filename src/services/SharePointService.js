@@ -424,7 +424,7 @@ export class SharePointService {
       'solo': 'solo',
       'trainer': 'trainer',
       'overlap bcba': 'overlap-bcba',
-      'overlap staff': 'overlap-staff',why 
+      'overlap staff': 'overlap-staff',
       'overlap-bcba': 'overlap-bcba',
       'overlap-staff': 'overlap-staff'
     };
