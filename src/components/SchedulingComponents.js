@@ -1592,6 +1592,25 @@ export const SessionSummary = ({ schedule, staff, students, session, program }) 
     return true;
   });
 
+  // Calculate total direct staff (RBT and BS) available for this program/session
+  const directStaff = staff.filter(staffMember => {
+    if (!staffMember.isActive) return false;
+    if (!staffMember.isAvailableForSession(session)) return false;
+    
+    // Check if staff works with this program
+    const worksWithProgram = program === 'Primary' 
+      ? staffMember.primaryProgram 
+      : staffMember.secondaryProgram;
+    
+    if (!worksWithProgram) return false;
+    
+    // Only count RBT and BS (direct staff roles)
+    return staffMember.role === 'RBT' || staffMember.role === 'BS';
+  });
+  
+  const directStaffCount = directStaff.length;
+  const hasStaffShortage = presentProgramStudents.length > directStaffCount;
+
   // Group unassigned staff by role
   const unassignedStaffByRole = {};
   availableStaff.forEach(staffMember => {
@@ -1633,6 +1652,13 @@ export const SessionSummary = ({ schedule, staff, students, session, program }) 
         <div className="flex justify-between">
           <span>Total Students:</span>
           <span className="font-medium">{programStudents.length}</span>
+        </div>
+        <div className="flex justify-between">
+          <span>Direct Staff (RBT/BS):</span>
+          <span className={`font-medium flex items-center gap-1 ${hasStaffShortage ? 'text-red-600' : ''}`}>
+            {hasStaffShortage && <span title="More students than direct staff - may need BCBAs or temp staff">⚠️</span>}
+            {directStaffCount}
+          </span>
         </div>
         <div className="flex justify-between">
           <span>Assigned:</span>
