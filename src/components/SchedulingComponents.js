@@ -1675,8 +1675,8 @@ export const SessionSummary = ({ schedule, staff, students, session, program }) 
   });
   
   const directStaffCount = directStaff.length;
-  // Check staff shortage against PRESENT students only (excluding absent)
-  const hasStaffShortage = presentProgramStudents.length > directStaffCount;
+  // Check staff shortage: compare total spots needed (including 2:1) vs available direct staff
+  const hasStaffShortage = totalAssignmentsNeeded > directStaffCount;
 
   // Group unassigned staff by role
   const unassignedStaffByRole = {};
@@ -1717,12 +1717,12 @@ export const SessionSummary = ({ schedule, staff, students, session, program }) 
       
       <div className="space-y-2 text-sm">
         <div className="flex justify-between">
-          <span>Total Students:</span>
+          <span>Total Student Spots:</span>
           <span className="font-medium">
-            {presentProgramStudents.length}
+            {totalAssignmentsNeeded}
             {absentStudents.length > 0 && (
               <span className="text-xs text-gray-500 ml-1">
-                ({absentStudents.length} absent)
+                ({presentProgramStudents.length} students, {absentStudents.length} absent)
               </span>
             )}
           </span>
