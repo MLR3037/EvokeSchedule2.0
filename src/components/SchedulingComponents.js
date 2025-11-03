@@ -1642,6 +1642,7 @@ export const SessionSummary = ({ schedule, staff, students, session, program }) 
   });
   
   const directStaffCount = directStaff.length;
+  // Check staff shortage against PRESENT students only (excluding absent)
   const hasStaffShortage = presentProgramStudents.length > directStaffCount;
 
   // Group unassigned staff by role
@@ -1684,13 +1685,25 @@ export const SessionSummary = ({ schedule, staff, students, session, program }) 
       <div className="space-y-2 text-sm">
         <div className="flex justify-between">
           <span>Total Students:</span>
-          <span className="font-medium">{programStudents.length}</span>
+          <span className="font-medium">
+            {presentProgramStudents.length}
+            {absentStudents.length > 0 && (
+              <span className="text-xs text-gray-500 ml-1">
+                ({absentStudents.length} absent)
+              </span>
+            )}
+          </span>
         </div>
         <div className="flex justify-between">
           <span>Direct Staff (RBT/BS):</span>
           <span className={`font-medium flex items-center gap-1 ${hasStaffShortage ? 'text-red-600' : ''}`}>
             {hasStaffShortage && <span title="More students than direct staff - may need BCBAs or temp staff">⚠️</span>}
             {directStaffCount}
+            {absentStaff.filter(s => s.role === 'RBT' || s.role === 'BS').length > 0 && (
+              <span className="text-xs text-gray-500 ml-1">
+                ({absentStaff.filter(s => s.role === 'RBT' || s.role === 'BS').length} absent)
+              </span>
+            )}
           </span>
         </div>
         <div className="flex justify-between">
