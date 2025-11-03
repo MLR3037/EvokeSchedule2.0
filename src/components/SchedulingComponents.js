@@ -1643,14 +1643,35 @@ export const SessionSummary = ({ schedule, staff, students, session, program }) 
     
     // CRITICAL: Check if this staff member is certified (solo) on at least one client
     // If they are ONLY a trainee (overlap-staff/overlap-bcba on all cases), exclude them
-    const isCertifiedOnAnyClient = presentProgramStudents.some(student => {
-      const trainingStatus = student.getStaffTrainingStatus ? 
-        student.getStaffTrainingStatus(staffMember.id) : 'solo';
-      // Consider them certified if they have 'solo', 'trainer', or no specific training status
-      return trainingStatus === 'solo' || trainingStatus === 'trainer' || !trainingStatus;
+    let hasSoloCase = false;
+    let hasAnyCase = false;
+    
+    presentProgramStudents.forEach(student => {
+      // Check if staff is on this student's team
+      if (student.teamIds && student.teamIds.includes(staffMember.id)) {
+        hasAnyCase = true;
+        const trainingStatus = student.getStaffTrainingStatus ? 
+          student.getStaffTrainingStatus(staffMember.id) : 'solo';
+        
+        // Log for debugging
+        if (staffMember.name.toLowerCase().includes('mya')) {
+          console.log(`🔍 ${staffMember.name} on ${student.name}: status = ${trainingStatus}`);
+        }
+        
+        // They have a solo case if status is 'solo' or 'trainer'
+        if (trainingStatus === 'solo' || trainingStatus === 'trainer') {
+          hasSoloCase = true;
+        }
+      }
     });
     
-    return isCertifiedOnAnyClient;
+    // If they have no cases at all, count them (available for assignment)
+    // If they have cases but no solo cases, exclude them (trainee-only)
+    if (!hasAnyCase) {
+      return true; // No cases yet, available for assignment
+    }
+    
+    return hasSoloCase; // Only count if they have at least one solo case
   });
   
   const directStaffCount = directStaff.length;
