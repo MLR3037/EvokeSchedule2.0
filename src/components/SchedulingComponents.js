@@ -1626,6 +1626,7 @@ export const SessionSummary = ({ schedule, staff, students, session, program }) 
   });
 
   // Calculate total direct staff (RBT and BS) available for this program/session
+  // EXCLUDE staff who are ONLY trainees (not certified solo on any client)
   const directStaff = staff.filter(staffMember => {
     if (!staffMember.isActive) return false;
     if (!staffMember.isAvailableForSession(session)) return false;
@@ -1638,7 +1639,18 @@ export const SessionSummary = ({ schedule, staff, students, session, program }) 
     if (!worksWithProgram) return false;
     
     // Only count RBT and BS (direct staff roles)
-    return staffMember.role === 'RBT' || staffMember.role === 'BS';
+    if (staffMember.role !== 'RBT' && staffMember.role !== 'BS') return false;
+    
+    // CRITICAL: Check if this staff member is certified (solo) on at least one client
+    // If they are ONLY a trainee (overlap-staff/overlap-bcba on all cases), exclude them
+    const isCertifiedOnAnyClient = presentProgramStudents.some(student => {
+      const trainingStatus = student.getStaffTrainingStatus ? 
+        student.getStaffTrainingStatus(staffMember.id) : 'solo';
+      // Consider them certified if they have 'solo', 'trainer', or no specific training status
+      return trainingStatus === 'solo' || trainingStatus === 'trainer' || !trainingStatus;
+    });
+    
+    return isCertifiedOnAnyClient;
   });
   
   const directStaffCount = directStaff.length;
