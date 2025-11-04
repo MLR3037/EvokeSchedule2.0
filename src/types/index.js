@@ -593,7 +593,7 @@ export class SchedulingUtils {
     return [...staff].sort((a, b) => a.getRoleLevel() - b.getRoleLevel());
   }
 
-  static getAvailableStaffForStudent(student, session, program, staff, schedule) {
+  static getAvailableStaffForStudent(student, session, program, staff, schedule, allStudents = null) {
     return staff.filter(staffMember => {
       // Must be active
       if (!staffMember.isActive) return false;
@@ -619,6 +619,30 @@ export class SchedulingUtils {
       if (trainingStatus === TRAINING_STATUS.OVERLAP_STAFF || trainingStatus === TRAINING_STATUS.OVERLAP_BCBA) {
         // This staff member is in training with this student - don't auto-assign them
         return false;
+      }
+      
+      // CRITICAL: EXCLUDE staff who have NO solo cases at all (training-only staff)
+      // They can ONLY be manually assigned via the trainee dropdown
+      if (allStudents) {
+        let hasAnySoloCase = false;
+        const activeStudents = allStudents.filter(s => s.isActive);
+        
+        for (const checkStudent of activeStudents) {
+          if (checkStudent.teamIds && checkStudent.teamIds.includes(staffMember.id)) {
+            const checkTrainingStatus = checkStudent.getStaffTrainingStatus ? 
+              checkStudent.getStaffTrainingStatus(staffMember.id) : TRAINING_STATUS.SOLO;
+            
+            if (checkTrainingStatus === TRAINING_STATUS.SOLO || checkTrainingStatus === TRAINING_STATUS.TRAINER) {
+              hasAnySoloCase = true;
+              break;
+            }
+          }
+        }
+        
+        if (!hasAnySoloCase) {
+          // This staff member has NO solo cases with ANY student - they are training-only
+          return false;
+        }
       }
       
       // Check direct session eligibility - supervisory roles can't do direct sessions

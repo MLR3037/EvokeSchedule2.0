@@ -42,6 +42,7 @@ import {
 } from './components/DataManagementComponents.js';
 import TeamManagement from './components/TeamManagement.js';
 import AttendanceManagement from './components/AttendanceManagement.js';
+import { TrainingTracker } from './components/TrainingTracker.js';
 import { runTests } from './tests/SchedulingTestSuite.js';
 import ErrorBoundary from './components/ErrorBoundary.js';
 
@@ -1448,8 +1449,7 @@ const handleAssignmentRemove = (assignmentId) => {
         <div className="bg-white p-8 rounded-lg shadow-lg max-w-md w-full mx-4">
           <div className="text-center mb-6">
             <Users className="w-12 h-12 text-blue-600 mx-auto mb-4" />
-            <h1 className="text-2xl font-bold text-gray-900 mb-2">ABA Scheduler</h1>
-            <p className="text-gray-600">Staff & Student Scheduling System</p>
+            <h1 className="text-2xl font-bold text-gray-900 mb-2">Evoke Daily Schedule</h1>
           </div>
           
           <button
@@ -1485,11 +1485,10 @@ const handleAssignmentRemove = (assignmentId) => {
       <header className="bg-white shadow-sm border-b border-gray-200">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           <div className="flex justify-between items-center h-16">
-            <div className="flex items-center gap-3">
-              <Users className="w-8 h-8 text-blue-600" />
+            <div className="flex items-center gap-2">
+              <Users className="w-6 h-6 text-blue-600" />
               <div>
-                <h1 className="text-xl font-bold text-gray-900">ABA Scheduler</h1>
-                <p className="text-sm text-gray-500">Staff & Student Scheduling</p>
+                <h1 className="text-lg font-bold text-gray-900">Evoke Daily Schedule</h1>
               </div>
             </div>
             
@@ -1510,84 +1509,84 @@ const handleAssignmentRemove = (assignmentId) => {
                 <button
                   onClick={handleAutoAssign}
                   disabled={autoAssigning || loading}
-                  className="bg-green-600 text-white px-4 py-2 rounded hover:bg-green-700 disabled:opacity-50 flex items-center gap-2"
+                  className="bg-green-600 text-white px-3 py-1.5 rounded hover:bg-green-700 disabled:opacity-50 flex items-center gap-1.5 text-sm"
                   title="Automatically assign staff to students (includes smart swap optimization)"
                 >
-                  {autoAssigning ? <RefreshCw className="w-4 h-4 animate-spin" /> : <Play className="w-4 h-4" />}
+                  {autoAssigning ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <Play className="w-3.5 h-3.5" />}
                   Auto Assign
                 </button>
                 
                 <button
                   onClick={handleSmartSwap}
                   disabled={autoAssigning || loading || schedule.assignments.length === 0}
-                  className="bg-purple-600 text-white px-4 py-2 rounded hover:bg-purple-700 disabled:opacity-50 flex items-center gap-2"
+                  className="bg-purple-600 text-white px-3 py-1.5 rounded hover:bg-purple-700 disabled:opacity-50 flex items-center gap-1.5 text-sm"
                   title="Fill gaps by swapping staff to enable team member assignments"
                 >
-                  {autoAssigning ? <RefreshCw className="w-4 h-4 animate-spin" /> : '🔀'}
+                  {autoAssigning ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : '🔀'}
                   Smart Swap
                 </button>
                 
                 <button
                   onClick={handleSaveSchedule}
                   disabled={saving || loading}
-                  className="bg-blue-600 text-white px-4 py-2 rounded hover:bg-blue-700 disabled:opacity-50 flex items-center gap-2"
+                  className="bg-blue-600 text-white px-3 py-1.5 rounded hover:bg-blue-700 disabled:opacity-50 flex items-center gap-1.5 text-sm"
                 >
-                  {saving ? <RefreshCw className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
+                  {saving ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <Save className="w-3.5 h-3.5" />}
                   Save
                 </button>
                 
                 <button
                   onClick={handleLoadSchedule}
                   disabled={loading}
-                  className="bg-indigo-600 text-white px-4 py-2 rounded hover:bg-indigo-700 disabled:opacity-50 flex items-center gap-2"
+                  className="bg-indigo-600 text-white px-3 py-1.5 rounded hover:bg-indigo-700 disabled:opacity-50 flex items-center gap-1.5 text-sm"
                   title="Load previously saved schedule for this date"
                 >
-                  <Upload className="w-4 h-4" />
+                  <Upload className="w-3.5 h-3.5" />
                   Load Saved
                 </button>
                 
                 <button
                   onClick={handleExportToExcel}
                   disabled={loading || schedule.assignments.length === 0}
-                  className="bg-emerald-600 text-white px-4 py-2 rounded hover:bg-emerald-700 disabled:opacity-50 flex items-center gap-2"
+                  className="bg-emerald-600 text-white px-3 py-1.5 rounded hover:bg-emerald-700 disabled:opacity-50 flex items-center gap-1.5 text-sm"
                   title="Export schedule to Excel"
                 >
-                  <Download className="w-4 h-4" />
+                  <Download className="w-3.5 h-3.5" />
                   Export
                 </button>
                 
                 <button
                   onClick={refreshDataOnly}
                   disabled={loading}
-                  className="bg-gray-600 text-white px-4 py-2 rounded hover:bg-gray-700 disabled:opacity-50 flex items-center gap-2"
+                  className="bg-gray-600 text-white px-3 py-1.5 rounded hover:bg-gray-700 disabled:opacity-50 flex items-center gap-1.5 text-sm"
                 >
-                  <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
+                  <RefreshCw className={`w-3.5 h-3.5 ${loading ? 'animate-spin' : ''}`} />
                   Refresh
                 </button>
                 
                 <button
                   onClick={handleClearSchedule}
                   disabled={loading || schedule.assignments.length === 0}
-                  className="bg-yellow-600 text-white px-4 py-2 rounded hover:bg-yellow-700 disabled:opacity-50 flex items-center gap-2"
+                  className="bg-yellow-600 text-white px-3 py-1.5 rounded hover:bg-yellow-700 disabled:opacity-50 flex items-center gap-1.5 text-sm"
                   title="Clear unlocked (auto-assigned) items, keep manual assignments"
                 >
-                  <Trash2 className="w-4 h-4" />
+                  <Trash2 className="w-3.5 h-3.5" />
                   Clear Unlocked
                 </button>
                 
                 <button
                   onClick={handleTotalClear}
                   disabled={loading || schedule.assignments.length === 0}
-                  className="bg-red-600 text-white px-4 py-2 rounded hover:bg-red-700 disabled:opacity-50 flex items-center gap-2"
+                  className="bg-red-600 text-white px-3 py-1.5 rounded hover:bg-red-700 disabled:opacity-50 flex items-center gap-1.5 text-sm"
                   title="Delete everything - all assignments and trainees (manual and auto)"
                 >
-                  <Trash2 className="w-4 h-4" />
+                  <Trash2 className="w-3.5 h-3.5" />
                   Total Clear
                 </button>
                 
                 <button
                   onClick={clearAuthentication}
-                  className="bg-orange-600 text-white px-4 py-2 rounded hover:bg-orange-700 flex items-center gap-2"
+                  className="bg-orange-600 text-white px-3 py-1.5 rounded hover:bg-orange-700 flex items-center gap-1.5 text-sm"
                   title="Clear authentication cache to fix 401 errors"
                 >
                   🔄 Clear Auth
@@ -1619,6 +1618,7 @@ const handleAssignmentRemove = (assignmentId) => {
               { id: 'students', label: 'Students', icon: Users },
               { id: 'teams', label: 'Teams', icon: Users },
               { id: 'attendance', label: 'Attendance', icon: Calendar },
+              { id: 'training', label: 'Training', icon: GraduationCap },
               { id: 'validation', label: 'Validation', icon: BarChart3 },
               { id: 'rules', label: 'Rules', icon: Settings },
               { id: 'tests', label: 'Tests', icon: Play }
@@ -1971,6 +1971,15 @@ const handleAssignmentRemove = (assignmentId) => {
                 onUpdateStaffAttendance={handleUpdateStaffAttendance}
                 onUpdateStudentAttendance={handleUpdateStudentAttendance}
                 onResetAllAttendance={clearAllAttendance}
+              />
+            )}
+
+            {/* Training Tab */}
+            {activeTab === 'training' && (
+              <TrainingTracker
+                staff={staff}
+                students={students}
+                sharePointService={sharePointService}
               />
             )}
 

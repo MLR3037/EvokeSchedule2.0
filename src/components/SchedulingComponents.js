@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Lock, Unlock, Users, Clock, AlertTriangle, CheckCircle, GraduationCap, Star } from 'lucide-react';
+import { Lock, Unlock, Users, Clock, AlertTriangle, CheckCircle, GraduationCap, Star, ChevronDown, ChevronUp } from 'lucide-react';
 import { SESSION_TIMES, RATIOS, TRAINING_STATUS } from '../types/index.js';
 
 /**
@@ -25,8 +25,72 @@ export const ScheduleTableView = ({
   const [lockedAssignments, setLockedAssignments] = useState(new Set());
   const [traineeAssignments, setTraineeAssignments] = useState({});
   
-  // NEW: Temporary team overrides for today only (not saved to SharePoint)
-  const [tempTeamAdditions, setTempTeamAdditions] = useState({});
+  // NEW: Temporary team overrides - persist in localStorage until cleared or date changes
+  const getTempTeamStorageKey = () => {
+    const dateKey = selectedDate ? selectedDate.toISOString().split('T')[0] : new Date().toISOString().split('T')[0];
+    return `tempTeamAdditions_${dateKey}`;
+  };
+
+  const loadTempTeamAdditions = () => {
+    try {
+      const storageKey = getTempTeamStorageKey();
+      const stored = localStorage.getItem(storageKey);
+      if (stored) {
+        const parsed = JSON.parse(stored);
+        console.log('📥 Loaded temp team additions from localStorage:', parsed);
+        return parsed;
+      }
+    } catch (error) {
+      console.error('Error loading temp team additions:', error);
+    }
+    return {};
+  };
+
+  const saveTempTeamAdditions = (additions) => {
+    try {
+      const storageKey = getTempTeamStorageKey();
+      localStorage.setItem(storageKey, JSON.stringify(additions));
+      console.log('💾 Saved temp team additions to localStorage:', additions);
+    } catch (error) {
+      console.error('Error saving temp team additions:', error);
+    }
+  };
+
+  const [tempTeamAdditions, setTempTeamAdditions] = useState(loadTempTeamAdditions);
+
+  // Load temp team additions on mount and when date changes
+  useEffect(() => {
+    const loaded = loadTempTeamAdditions();
+    setTempTeamAdditions(loaded);
+    console.log('🔄 Date changed, reloaded temp team additions:', loaded);
+    
+    // Cleanup old temp team additions from localStorage (older than 7 days)
+    try {
+      const currentDate = new Date();
+      const sevenDaysAgo = new Date(currentDate);
+      sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
+      
+      for (let i = 0; i < localStorage.length; i++) {
+        const key = localStorage.key(i);
+        if (key && key.startsWith('tempTeamAdditions_')) {
+          const dateStr = key.replace('tempTeamAdditions_', '');
+          const itemDate = new Date(dateStr);
+          
+          if (itemDate < sevenDaysAgo) {
+            localStorage.removeItem(key);
+            console.log(`🧹 Cleaned up old temp team additions for ${dateStr}`);
+          }
+        }
+      }
+    } catch (error) {
+      console.error('Error cleaning up old temp team additions:', error);
+    }
+  }, [selectedDate]);
+
+  // Save temp team additions whenever they change
+  useEffect(() => {
+    saveTempTeamAdditions(tempTeamAdditions);
+  }, [tempTeamAdditions]);
 
   // Sync component state when schedule changes
   useEffect(() => {
@@ -890,16 +954,26 @@ export const ScheduleTableView = ({
         <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-4">
           <div className="flex items-start gap-2">
             <Clock className="w-5 h-5 text-yellow-600 flex-shrink-0 mt-0.5" />
-            <div>
+            <div className="flex-1">
               <h4 className="font-medium text-yellow-900">Temporary Staff Assignments Active</h4>
               <p className="text-sm text-yellow-700 mt-1">
-                You have temporary staff additions for today only. These changes are NOT saved to SharePoint and will be cleared when you refresh the page.
+                You have temporary staff additions for today only. These persist while navigating between pages but are NOT saved to SharePoint. They will automatically clear when the date changes.
               </p>
               <button
-                onClick={() => setTempTeamAdditions({})}
-                className="mt-2 text-sm text-yellow-700 underline hover:text-yellow-900"
+                onClick={() => {
+                  setTempTeamAdditions({});
+                  // Also clear from localStorage
+                  try {
+                    const storageKey = getTempTeamStorageKey();
+                    localStorage.removeItem(storageKey);
+                    console.log('🗑️ Cleared all temp team additions from localStorage');
+                  } catch (error) {
+                    console.error('Error clearing temp team additions:', error);
+                  }
+                }}
+                className="mt-2 px-3 py-1 text-sm bg-yellow-600 text-white rounded hover:bg-yellow-700 transition-colors"
               >
-                Clear all temporary assignments
+                Clear All Temporary Assignments
               </button>
             </div>
           </div>
@@ -1521,6 +1595,11 @@ const ManualAssignmentModal = ({
  * Session Summary Component - Shows summary statistics for a session
  */
 export const SessionSummary = ({ schedule, staff, students, session, program }) => {
+  // State for collapsible sections
+  const [isAbsentStaffOpen, setIsAbsentStaffOpen] = useState(false);
+  const [isAbsentStudentsOpen, setIsAbsentStudentsOpen] = useState(false);
+  const [isAvailableStaffOpen, setIsAvailableStaffOpen] = useState(false);
+  
   const assignments = schedule.getAssignmentsForSession(session, program);
   const programStudents = students
     .filter(s => s.program === program && s.isActive)
@@ -1557,9 +1636,77 @@ export const SessionSummary = ({ schedule, staff, students, session, program }) 
       fullyAssignedStudents.add(student.id);
     }
   });
+
+  // Calculate TOTAL SESSIONS (different from staff spots)
+  // - 1:1 students = 1 session each
+  // - 2:1 students = 2 sessions each (they need 2 staff)
+  // - 1:2 students (paired) = 1 session per pair (even if one partner is absent)
+  let totalSessions = 0;
+  let assignedSessions = 0;
+  const processedPairs = new Set();
+  
+  programStudents.forEach(student => {
+    // Skip if already processed as part of a pair
+    if (processedPairs.has(student.id)) return;
+    
+    const ratio = session === 'AM' ? student.ratioAM : student.ratioPM;
+    
+    // Check if student is present for this session
+    const isPresent = student.isAvailableForSession(session);
+    
+    if (ratio === '1:2') {
+      // For 1:2 students, count as 1 session per pair
+      // Even if one is absent, the pair still needs 1 session
+      if (student.pairedWith) {
+        const partner = students.find(s => s.id === student.pairedWith);
+        if (partner) {
+          processedPairs.add(student.id);
+          processedPairs.add(partner.id);
+          // Only count if at least one of the pair is present
+          const partnerPresent = partner.isAvailableForSession(session);
+          if (isPresent || partnerPresent) {
+            totalSessions += 1; // One session for the pair
+            // Check if assigned (if either student has an assignment, count as assigned)
+            const studentAssigned = studentAssignmentCounts[student.id] || 0;
+            const partnerAssigned = studentAssignmentCounts[partner.id] || 0;
+            if (studentAssigned >= 1 || partnerAssigned >= 1) {
+              assignedSessions += 1;
+            }
+          }
+        } else if (isPresent) {
+          // Paired but partner not found, count as individual if present
+          totalSessions += 1;
+          const studentAssigned = studentAssignmentCounts[student.id] || 0;
+          if (studentAssigned >= 1) {
+            assignedSessions += 1;
+          }
+        }
+      } else if (isPresent) {
+        // 1:2 but not paired yet, count as 1 if present
+        totalSessions += 1;
+        const studentAssigned = studentAssignmentCounts[student.id] || 0;
+        if (studentAssigned >= 1) {
+          assignedSessions += 1;
+        }
+      }
+    } else if (isPresent) {
+      // For 1:1 and 2:1, only count if present
+      if (ratio === '2:1') {
+        totalSessions += 2; // 2:1 students need 2 sessions (2 staff)
+        const studentAssigned = studentAssignmentCounts[student.id] || 0;
+        assignedSessions += studentAssigned; // Count how many staff are actually assigned
+      } else {
+        totalSessions += 1; // 1:1 students need 1 session
+        const studentAssigned = studentAssignmentCounts[student.id] || 0;
+        if (studentAssigned >= 1) {
+          assignedSessions += 1;
+        }
+      }
+    }
+  });
   
   const assignedStudents = fullyAssignedStudents;
-  const unassignedCount = totalAssignmentsNeeded - totalAssignmentsActual;
+  const unassignedCount = totalSessions - assignedSessions;
   
   // Calculate staff utilization by role
   const staffByRole = {};
@@ -1625,11 +1772,10 @@ export const SessionSummary = ({ schedule, staff, students, session, program }) 
     return true;
   });
 
-  // Calculate total direct staff (RBT and BS) available for this program/session
-  // EXCLUDE staff who are ONLY trainees (not certified solo on any client)
-  const directStaff = staff.filter(staffMember => {
+  // Calculate total direct staff (RBT and BS) for this program/session
+  // Start with ALL RBT/BS staff for this program
+  const allDirectStaffForProgram = staff.filter(staffMember => {
     if (!staffMember.isActive) return false;
-    if (!staffMember.isAvailableForSession(session)) return false;
     
     // Check if staff works with this program
     const worksWithProgram = program === 'Primary' 
@@ -1641,8 +1787,37 @@ export const SessionSummary = ({ schedule, staff, students, session, program }) 
     // Only count RBT and BS (direct staff roles)
     if (staffMember.role !== 'RBT' && staffMember.role !== 'BS') return false;
     
-    // CRITICAL: Check if this staff member is certified (solo) on at least one client
-    // If they are ONLY a trainee (overlap-staff/overlap-bcba on all cases), exclude them
+    return true;
+  });
+
+  // Count absent direct staff
+  const absentDirectStaffCount = allDirectStaffForProgram.filter(
+    s => !s.isAvailableForSession(session)
+  ).length;
+
+  // Count 'out' direct staff (in out-of-session assignments for this session)
+  const outDirectStaffCount = allDirectStaffForProgram.filter(staffMember => {
+    if (!staffMember.isAvailableForSession(session)) return false; // Don't double count absent
+    
+    // Check if staff has an out-of-session assignment for this session
+    const hasOutAssignment = schedule.outOfSessionAssignments && schedule.outOfSessionAssignments.some(
+      outAssignment => outAssignment.staffId === staffMember.id && outAssignment.session === session
+    );
+    
+    return hasOutAssignment;
+  }).length;
+
+  // Count training-only direct staff (only have training cases, no solo cases)
+  const trainingOnlyDirectStaffCount = allDirectStaffForProgram.filter(staffMember => {
+    if (!staffMember.isAvailableForSession(session)) return false; // Don't count absent
+    
+    // Check if in 'out' session
+    const hasOutAssignment = schedule.outOfSessionAssignments && schedule.outOfSessionAssignments.some(
+      outAssignment => outAssignment.staffId === staffMember.id && outAssignment.session === session
+    );
+    if (hasOutAssignment) return false; // Don't count out staff
+    
+    // Check if this staff member is certified (solo) on at least one client
     let hasSoloCase = false;
     let hasAnyCase = false;
     
@@ -1653,10 +1828,37 @@ export const SessionSummary = ({ schedule, staff, students, session, program }) 
         const trainingStatus = student.getStaffTrainingStatus ? 
           student.getStaffTrainingStatus(staffMember.id) : 'solo';
         
-        // Log for debugging
-        if (staffMember.name.toLowerCase().includes('mya')) {
-          console.log(`🔍 ${staffMember.name} on ${student.name}: status = ${trainingStatus}`);
+        // They have a solo case if status is 'solo' or 'trainer'
+        if (trainingStatus === 'solo' || trainingStatus === 'trainer') {
+          hasSoloCase = true;
         }
+      }
+    });
+    
+    // Return true if they have cases but NO solo cases (training only)
+    return hasAnyCase && !hasSoloCase;
+  }).length;
+
+  // Calculate available direct staff (excluding absent, out, and training-only)
+  const directStaff = allDirectStaffForProgram.filter(staffMember => {
+    if (!staffMember.isAvailableForSession(session)) return false; // Exclude absent
+    
+    // Exclude 'out' staff
+    const hasOutAssignment = schedule.outOfSessionAssignments && schedule.outOfSessionAssignments.some(
+      outAssignment => outAssignment.staffId === staffMember.id && outAssignment.session === session
+    );
+    if (hasOutAssignment) return false;
+    
+    // Check if this staff member is certified (solo) on at least one client
+    let hasSoloCase = false;
+    let hasAnyCase = false;
+    
+    presentProgramStudents.forEach(student => {
+      // Check if staff is on this student's team
+      if (student.teamIds && student.teamIds.includes(staffMember.id)) {
+        hasAnyCase = true;
+        const trainingStatus = student.getStaffTrainingStatus ? 
+          student.getStaffTrainingStatus(staffMember.id) : 'solo';
         
         // They have a solo case if status is 'solo' or 'trainer'
         if (trainingStatus === 'solo' || trainingStatus === 'trainer') {
@@ -1665,8 +1867,9 @@ export const SessionSummary = ({ schedule, staff, students, session, program }) 
       }
     });
     
-    // If they have no cases at all, count them (available for assignment)
-    // If they have cases but no solo cases, exclude them (trainee-only)
+    // Include if they have no cases at all (available for assignment)
+    // Include if they have at least one solo case
+    // Exclude if they only have training cases
     if (!hasAnyCase) {
       return true; // No cases yet, available for assignment
     }
@@ -1717,14 +1920,20 @@ export const SessionSummary = ({ schedule, staff, students, session, program }) 
       
       <div className="space-y-2 text-sm">
         <div className="flex justify-between">
-          <span>Total Student Spots:</span>
+          <span>Total Students:</span>
           <span className="font-medium">
-            {totalAssignmentsNeeded}
+            {programStudents.length}
             {absentStudents.length > 0 && (
               <span className="text-xs text-gray-500 ml-1">
-                ({presentProgramStudents.length} students, {absentStudents.length} absent)
+                ({absentStudents.length} absent)
               </span>
             )}
+          </span>
+        </div>
+        <div className="flex justify-between">
+          <span>Total Sessions:</span>
+          <span className="font-medium">
+            {totalSessions}
           </span>
         </div>
         <div className="flex justify-between">
@@ -1732,11 +1941,21 @@ export const SessionSummary = ({ schedule, staff, students, session, program }) 
           <span className={`font-medium flex items-center gap-1 ${hasStaffShortage ? 'text-red-600' : ''}`}>
             {hasStaffShortage && <span title="More students than direct staff - may need BCBAs or temp staff">⚠️</span>}
             {directStaffCount}
-            {absentStaff.filter(s => s.role === 'RBT' || s.role === 'BS').length > 0 && (
+            {(absentDirectStaffCount > 0 || outDirectStaffCount > 0 || trainingOnlyDirectStaffCount > 0) && (
               <span className="text-xs text-gray-500 ml-1">
-                ({absentStaff.filter(s => s.role === 'RBT' || s.role === 'BS').length} absent)
+                ({[
+                  absentDirectStaffCount > 0 ? `${absentDirectStaffCount} absent` : null,
+                  outDirectStaffCount > 0 ? `${outDirectStaffCount} out` : null,
+                  trainingOnlyDirectStaffCount > 0 ? `${trainingOnlyDirectStaffCount} training` : null
+                ].filter(Boolean).join(', ')})
               </span>
             )}
+          </span>
+        </div>
+        <div className="flex justify-between pb-3 border-b border-gray-300">
+          <span>Extra Staff:</span>
+          <span className={`font-medium ${directStaffCount - totalSessions < 0 ? 'text-red-600' : directStaffCount - totalSessions === 0 ? 'text-yellow-600' : 'text-green-600'}`}>
+            {directStaffCount - totalSessions}
           </span>
         </div>
         <div className="flex justify-between">
@@ -1750,69 +1969,80 @@ export const SessionSummary = ({ schedule, staff, students, session, program }) 
           </span>
         </div>
         <div className="flex justify-between">
-          <span>Staff Used:</span>
-          <span className="font-medium">{assignedStaffIds.size}</span>
+          <span>Available Direct Staff:</span>
+          <span className="font-medium">
+            {directStaff.filter(s => !assignedStaffIds.has(s.id)).length}
+          </span>
         </div>
       </div>
 
-      {/* Staff by Role */}
-      {Object.keys(staffRoleCounts).length > 0 && (
+      {/* Available Direct Staff (RBT/BS) List - includes training-only staff for visibility */}
+      {(directStaff.filter(s => !assignedStaffIds.has(s.id)).length > 0 || 
+        allDirectStaffForProgram.filter(s => !assignedStaffIds.has(s.id) && s.isAvailableForSession(session)).length > 0) && (
         <div className="mt-3 border-t pt-3">
-          <div className="text-xs font-medium text-gray-600 mb-2">Staff by Role:</div>
-          <div className="space-y-1">
-            {Object.entries(staffRoleCounts)
-              .sort(([a], [b]) => a.localeCompare(b))
-              .map(([role, count]) => (
-                <div key={role} className="flex justify-between items-center">
-                  <span className={`px-2 py-0.5 rounded text-xs font-medium ${getRoleColor(role)}`}>
-                    {role}
-                  </span>
-                  <span className="text-xs font-semibold">{count}</span>
+          <div className="text-xs font-medium text-gray-600 mb-2">Available Direct Staff:</div>
+          <div className="space-y-1 max-h-36 overflow-y-auto">
+            {['RBT', 'BS'].map(role => {
+              // Get staff with solo cases (can be auto-assigned)
+              const roleStaffWithSolo = directStaff.filter(s => s.role === role && !assignedStaffIds.has(s.id));
+              
+              // Get training-only staff (available but can't be auto-assigned)
+              const trainingOnlyStaff = allDirectStaffForProgram.filter(staffMember => {
+                if (staffMember.role !== role) return false;
+                if (assignedStaffIds.has(staffMember.id)) return false;
+                if (!staffMember.isAvailableForSession(session)) return false;
+                
+                // Check if already in the "with solo" list
+                if (roleStaffWithSolo.find(s => s.id === staffMember.id)) return false;
+                
+                // Check if they're 'out'
+                const hasOutAssignment = schedule.outOfSessionAssignments && schedule.outOfSessionAssignments.some(
+                  outAssignment => outAssignment.staffId === staffMember.id && outAssignment.session === session
+                );
+                if (hasOutAssignment) return false;
+                
+                // Check if they have any cases but no solo cases
+                let hasSoloCase = false;
+                let hasAnyCase = false;
+                
+                presentProgramStudents.forEach(student => {
+                  if (student.teamIds && student.teamIds.includes(staffMember.id)) {
+                    hasAnyCase = true;
+                    const trainingStatus = student.getStaffTrainingStatus ? 
+                      student.getStaffTrainingStatus(staffMember.id) : 'solo';
+                    
+                    if (trainingStatus === 'solo' || trainingStatus === 'trainer') {
+                      hasSoloCase = true;
+                    }
+                  }
+                });
+                
+                // Include only if they have cases but NO solo cases (training only)
+                return hasAnyCase && !hasSoloCase;
+              });
+              
+              if (roleStaffWithSolo.length === 0 && trainingOnlyStaff.length === 0) return null;
+              
+              return (
+                <div key={role} className="space-y-0.5">
+                  <div className={`px-2 py-0.5 rounded text-xs font-medium inline-block ${getRoleColor(role)}`}>
+                    {role} ({roleStaffWithSolo.length})
+                  </div>
+                  <div className="ml-2 space-y-0.5">
+                    {roleStaffWithSolo.map(staffMember => (
+                      <div key={staffMember.id} className="text-xs text-gray-600">
+                        {staffMember.name}
+                      </div>
+                    ))}
+                    {trainingOnlyStaff.map(staffMember => (
+                      <div key={staffMember.id} className="text-xs text-gray-400 italic">
+                        {staffMember.name} <span className="text-orange-500">(no solo cases)</span>
+                      </div>
+                    ))}
+                  </div>
                 </div>
-              ))}
-          </div>
-        </div>
-      )}
-
-      {/* Absent Staff */}
-      {absentStaff.length > 0 && (
-        <div className="mt-3 border-t pt-3">
-          <div className="text-xs font-medium text-red-600 mb-2">
-            Absent Staff ({absentStaff.length}):
-          </div>
-          <div className="space-y-1 max-h-20 overflow-y-auto">
-            {absentStaff.map(staffMember => (
-              <div key={staffMember.id} className="text-xs flex items-center gap-2">
-                <span className={`px-2 py-0.5 rounded ${getRoleColor(staffMember.role)}`}>
-                  {staffMember.role}
-                </span>
-                <span className="text-gray-700">{staffMember.name}</span>
-                <span className="text-red-600 text-[10px]">
-                  {staffMember.absentFullDay ? '(Full Day)' : 
-                   session === 'AM' ? '(AM)' : '(PM)'}
-                </span>
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
-
-      {/* Absent Students */}
-      {absentStudents.length > 0 && (
-        <div className="mt-3 border-t pt-3">
-          <div className="text-xs font-medium text-red-600 mb-2">
-            Absent Clients ({absentStudents.length}):
-          </div>
-          <div className="space-y-1 max-h-20 overflow-y-auto">
-            {absentStudents.map(student => (
-              <div key={student.id} className="text-xs text-gray-700 flex items-center gap-2">
-                <span>{student.name}</span>
-                <span className="text-red-600 text-[10px]">
-                  {student.absentFullDay ? '(Full Day)' : 
-                   session === 'AM' ? '(AM)' : '(PM)'}
-                </span>
-              </div>
-            ))}
+              );
+            })}
           </div>
         </div>
       )}
@@ -1839,28 +2069,111 @@ export const SessionSummary = ({ schedule, staff, students, session, program }) 
         </div>
       )}
 
-      {/* Unassigned Staff */}
-      {Object.keys(unassignedStaffByRole).length > 0 && (
+      {/* Staff by Role */}
+      {Object.keys(staffRoleCounts).length > 0 && (
         <div className="mt-3 border-t pt-3">
-          <div className="text-xs font-medium text-gray-600 mb-2">Available Staff:</div>
-          <div className="space-y-1 max-h-20 overflow-y-auto">
-            {Object.entries(unassignedStaffByRole)
+          <div className="text-xs font-medium text-gray-600 mb-2">Staff Scheduled by Role:</div>
+          <div className="space-y-1">
+            {Object.entries(staffRoleCounts)
               .sort(([a], [b]) => a.localeCompare(b))
-              .map(([role, staffList]) => (
-                <div key={role} className="space-y-0.5">
-                  <div className={`px-2 py-0.5 rounded text-xs font-medium inline-block ${getRoleColor(role)}`}>
-                    {role} ({staffList.length})
-                  </div>
-                  <div className="ml-2 space-y-0.5">
-                    {staffList.map(staffMember => (
-                      <div key={staffMember.id} className="text-xs text-gray-600">
-                        {staffMember.name}
-                      </div>
-                    ))}
-                  </div>
+              .map(([role, count]) => (
+                <div key={role} className="flex justify-between items-center">
+                  <span className={`px-2 py-0.5 rounded text-xs font-medium ${getRoleColor(role)}`}>
+                    {role}
+                  </span>
+                  <span className="text-xs font-semibold">{count}</span>
                 </div>
               ))}
           </div>
+        </div>
+      )}
+
+      {/* Absent Staff */}
+      {absentStaff.length > 0 && (
+        <div className="mt-3 border-t pt-3">
+          <button
+            onClick={() => setIsAbsentStaffOpen(!isAbsentStaffOpen)}
+            className="w-full flex items-center justify-between text-xs font-medium text-red-600 mb-2 hover:bg-red-50 p-1 rounded transition-colors"
+          >
+            <span>Absent Staff ({absentStaff.length}):</span>
+            {isAbsentStaffOpen ? <ChevronUp className="w-3 h-3" /> : <ChevronDown className="w-3 h-3" />}
+          </button>
+          {isAbsentStaffOpen && (
+            <div className="space-y-1 max-h-20 overflow-y-auto">
+              {absentStaff.map(staffMember => (
+                <div key={staffMember.id} className="text-xs flex items-center gap-2">
+                  <span className={`px-2 py-0.5 rounded ${getRoleColor(staffMember.role)}`}>
+                    {staffMember.role}
+                  </span>
+                  <span className="text-gray-700">{staffMember.name}</span>
+                  <span className="text-red-600 text-[10px]">
+                    {staffMember.absentFullDay ? '(Full Day)' : 
+                     session === 'AM' ? '(AM)' : '(PM)'}
+                  </span>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Absent Students */}
+      {absentStudents.length > 0 && (
+        <div className="mt-3 border-t pt-3">
+          <button
+            onClick={() => setIsAbsentStudentsOpen(!isAbsentStudentsOpen)}
+            className="w-full flex items-center justify-between text-xs font-medium text-red-600 mb-2 hover:bg-red-50 p-1 rounded transition-colors"
+          >
+            <span>Absent Clients ({absentStudents.length}):</span>
+            {isAbsentStudentsOpen ? <ChevronUp className="w-3 h-3" /> : <ChevronDown className="w-3 h-3" />}
+          </button>
+          {isAbsentStudentsOpen && (
+            <div className="space-y-1 max-h-20 overflow-y-auto">
+              {absentStudents.map(student => (
+                <div key={student.id} className="text-xs text-gray-700 flex items-center gap-2">
+                  <span>{student.name}</span>
+                  <span className="text-red-600 text-[10px]">
+                    {student.absentFullDay ? '(Full Day)' : 
+                     session === 'AM' ? '(AM)' : '(PM)'}
+                  </span>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Unassigned Staff (excluding RBT/BS shown above) */}
+      {Object.keys(unassignedStaffByRole).some(role => role !== 'RBT' && role !== 'BS') && (
+        <div className="mt-3 border-t pt-3">
+          <button
+            onClick={() => setIsAvailableStaffOpen(!isAvailableStaffOpen)}
+            className="w-full flex items-center justify-between text-xs font-medium text-gray-600 mb-2 hover:bg-gray-50 p-1 rounded transition-colors"
+          >
+            <span>Available Staff:</span>
+            {isAvailableStaffOpen ? <ChevronUp className="w-3 h-3" /> : <ChevronDown className="w-3 h-3" />}
+          </button>
+          {isAvailableStaffOpen && (
+            <div className="space-y-1 max-h-20 overflow-y-auto">
+              {Object.entries(unassignedStaffByRole)
+                .filter(([role]) => role !== 'RBT' && role !== 'BS')
+                .sort(([a], [b]) => a.localeCompare(b))
+                .map(([role, staffList]) => (
+                  <div key={role} className="space-y-0.5">
+                    <div className={`px-2 py-0.5 rounded text-xs font-medium inline-block ${getRoleColor(role)}`}>
+                      {role} ({staffList.length})
+                    </div>
+                    <div className="ml-2 space-y-0.5">
+                      {staffList.map(staffMember => (
+                        <div key={staffMember.id} className="text-xs text-gray-600">
+                          {staffMember.name}
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                ))}
+            </div>
+          )}
         </div>
       )}
 

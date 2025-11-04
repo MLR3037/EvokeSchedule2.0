@@ -2140,4 +2140,94 @@ export class SharePointService {
       return false;
     }
   }
+
+  /**
+   * Get training history for staff members
+   * Retrieves all trainee assignments from historical schedules
+   */
+  async getTrainingHistory(startDate = null, endDate = null) {
+    try {
+      if (!this.isAuthenticated()) {
+        console.error('Cannot get training history - not authenticated');
+        return [];
+      }
+
+      console.log('📚 Fetching training history from SharePoint...');
+
+      // Build date filter if provided
+      let dateFilter = '';
+      if (startDate) {
+        const startISO = new Date(startDate).toISOString();
+        dateFilter += `and ScheduleDate ge datetime'${startISO}'`;
+      }
+      if (endDate) {
+        const endISO = new Date(endDate).toISOString();
+        dateFilter += `and ScheduleDate le datetime'${endISO}'`;
+      }
+
+      // Get all schedule records
+      const scheduleUrl = `${this.siteUrl}/_api/web/lists/getbytitle('ScheduleHistory')/items?` +
+        `$select=Id,ScheduleDate&$filter=IsFinalized eq 1 ${dateFilter}&$orderby=ScheduleDate desc&$top=5000`;
+
+      const scheduleResponse = await this.makeRequest(scheduleUrl, {
+        headers: await this.getHeaders()
+      });
+
+      if (!scheduleResponse.ok) {
+        throw new Error('Failed to fetch schedule history');
+      }
+
+      const scheduleData = await scheduleResponse.json();
+      const schedules = scheduleData.d.results;
+
+      if (schedules.length === 0) {
+        console.log('No schedule history found');
+        return [];
+      }
+
+      console.log(`Found ${schedules.length} historical schedules`);
+
+      // Get all trainee assignments for these schedules
+      const scheduleIds = schedules.map(s => s.Id);
+      const trainingHistory = [];
+
+      // Process in batches to avoid URL length limits
+      const batchSize = 50;
+      for (let i = 0; i < scheduleIds.length; i += batchSize) {
+        const batchIds = scheduleIds.slice(i, i + batchSize);
+        const idFilter = batchIds.map(id => `ScheduleId eq ${id}`).join(' or ');
+        
+        const assignmentsUrl = `${this.siteUrl}/_api/web/lists/getbytitle('DailyAssignments')/items?` +
+          `$select=Id,StaffId,StudentId,Session,Program,ScheduleId,IsTrainee&` +
+          `$filter=IsTrainee eq 1 and (${idFilter})&$top=5000`;
+
+        const assignmentsResponse = await this.makeRequest(assignmentsUrl, {
+          headers: await this.getHeaders()
+        });
+
+        if (assignmentsResponse.ok) {
+          const assignmentsData = await assignmentsResponse.json();
+          const assignments = assignmentsData.d.results;
+
+          // Map each assignment to include the schedule date
+          assignments.forEach(assignment => {
+            const schedule = schedules.find(s => s.Id === assignment.ScheduleId);
+            if (schedule) {
+              trainingHistory.push({
+                ...assignment,
+                ScheduleDate: schedule.ScheduleDate
+              });
+            }
+          });
+        }
+      }
+
+      console.log(`✅ Found ${trainingHistory.length} training sessions in history`);
+      return trainingHistory;
+
+    } catch (error) {
+      console.error('Error fetching training history:', error);
+      return [];
+    }
+  }
 }
