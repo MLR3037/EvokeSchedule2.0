@@ -193,16 +193,18 @@ export const ScheduleTableView = ({
     }
     
     // NEW: Add temporary team members for today only (not saved to SharePoint)
-    const tempStaffIds = tempTeamAdditions[student.id] || [];
-    tempStaffIds.forEach(staffId => {
-      const staffMember = staff.find(s => s.id === staffId);
-      if (staffMember && !team.find(t => t.id === staffId)) {
+    // tempStaffIds is now an array of objects: [{staffId, sessions: ['AM', 'PM']}]
+    const tempStaffList = tempTeamAdditions[student.id] || [];
+    tempStaffList.forEach(tempStaff => {
+      const staffMember = staff.find(s => s.id === tempStaff.staffId);
+      if (staffMember && !team.find(t => t.id === tempStaff.staffId)) {
         team.push({
           id: staffMember.id,
           name: staffMember.name,
           role: staffMember.role,
           email: staffMember.email,
-          isTemp: true // Mark as temporary
+          isTemp: true, // Mark as temporary
+          tempSessions: tempStaff.sessions // Store which sessions: ['AM'], ['PM'], or ['AM', 'PM']
         });
       }
     });
@@ -567,6 +569,14 @@ export const ScheduleTableView = ({
         return true;
       }
       
+      // NEW: For temp staff, check if they're available for this specific session
+      if (teamMember.isTemp && teamMember.tempSessions) {
+        if (!teamMember.tempSessions.includes(session)) {
+          console.log(`🚫 Excluding temp staff ${teamMember.name} from ${session} dropdown - only available for ${teamMember.tempSessions.join(', ')}`);
+          return false;
+        }
+      }
+      
       // EXCLUDE staff who are in training for THIS student (overlap-staff or overlap-bcba)
       // They should only appear in the trainee dropdown, not the regular staff dropdown
       const trainingStatus = student.getStaffTrainingStatus ? student.getStaffTrainingStatus(teamMember.id) : TRAINING_STATUS.SOLO;
@@ -922,18 +932,28 @@ export const ScheduleTableView = ({
   const [showQuickAddModal, setShowQuickAddModal] = useState(false);
   const [quickAddStudent, setQuickAddStudent] = useState(null);
 
-  const handleQuickAddStaff = (studentId, staffId) => {
+  const handleQuickAddStaff = (studentId, staffId, sessions) => {
     setTempTeamAdditions(prev => {
       const current = prev[studentId] || [];
-      if (current.includes(staffId)) {
-        return prev; // Already added
+      // Check if staff already added
+      const existingIndex = current.findIndex(t => t.staffId === staffId);
+      if (existingIndex >= 0) {
+        // Update sessions for existing staff
+        const updated = [...current];
+        updated[existingIndex] = { staffId, sessions };
+        return {
+          ...prev,
+          [studentId]: updated
+        };
       }
+      // Add new staff with sessions
       return {
         ...prev,
-        [studentId]: [...current, staffId]
+        [studentId]: [...current, { staffId, sessions }]
       };
     });
-    console.log(`✨ Temporarily added staff ${staffId} to student ${studentId}'s team for today`);
+    const sessionStr = sessions.join(', ');
+    console.log(`✨ Temporarily added staff ${staffId} to student ${studentId}'s team for ${sessionStr}`);
   };
 
   const handleRemoveTempStaff = (studentId, staffId) => {
@@ -941,7 +961,7 @@ export const ScheduleTableView = ({
       const current = prev[studentId] || [];
       return {
         ...prev,
-        [studentId]: current.filter(id => id !== staffId)
+        [studentId]: current.filter(t => t.staffId !== staffId)
       };
     });
     console.log(`🗑️ Removed temporary staff ${staffId} from student ${studentId}'s team`);
@@ -1063,23 +1083,35 @@ export const ScheduleTableView = ({
                                       {trainingStatus === TRAINING_STATUS.OVERLAP_BCBA && (
                                         <GraduationCap className="w-3.5 h-3.5 text-yellow-600 flex-shrink-0" title="Needs BCBA Overlap" />
                                       )}
-                                      <span 
-                                        className={`px-2 py-1 rounded text-xs font-medium ${
-                                          isTemp ? 'bg-yellow-100 text-yellow-700 border border-yellow-300' : getRoleColor(teamMember.role)
-                                        }`}
-                                      >
-                                        {isTemp && <Clock className="w-3 h-3 inline mr-1" />}
-                                        {teamMember.name}
-                                      </span>
-                                      {isTemp && (
-                                        <button
-                                          onClick={() => handleRemoveTempStaff(student.id, teamMember.id)}
-                                          className="text-xs text-red-600 hover:text-red-800"
-                                          title="Remove temporary assignment"
+                                      <div className="flex items-center gap-1">
+                                        <span 
+                                          className={`px-2 py-1 rounded text-xs font-medium ${
+                                            isTemp ? 'bg-yellow-100 text-yellow-700 border border-yellow-300' : getRoleColor(teamMember.role)
+                                          }`}
                                         >
-                                          ×
-                                        </button>
-                                      )}
+                                          {isTemp && <Clock className="w-3 h-3 inline mr-1" />}
+                                          {teamMember.name}
+                                        </span>
+                                        {isTemp && teamMember.tempSessions && (
+                                          <div className="flex gap-0.5">
+                                            {teamMember.tempSessions.includes('AM') && (
+                                              <span className="px-1 py-0.5 bg-orange-100 text-orange-700 rounded text-[10px] font-bold">AM</span>
+                                            )}
+                                            {teamMember.tempSessions.includes('PM') && (
+                                              <span className="px-1 py-0.5 bg-purple-100 text-purple-700 rounded text-[10px] font-bold">PM</span>
+                                            )}
+                                          </div>
+                                        )}
+                                        {isTemp && (
+                                          <button
+                                            onClick={() => handleRemoveTempStaff(student.id, teamMember.id)}
+                                            className="text-xs text-red-600 hover:text-red-800"
+                                            title="Remove temporary assignment"
+                                          >
+                                            ×
+                                          </button>
+                                        )}
+                                      </div>
                                     </div>
                                   );
                                 })
@@ -1148,32 +1180,66 @@ export const ScheduleTableView = ({
                   .sort((a, b) => a.name.localeCompare(b.name))
                   .map(staffMember => {
                     const tempStaff = tempTeamAdditions[quickAddStudent.id] || [];
-                    const isAdded = tempStaff.includes(staffMember.id);
+                    const existingTemp = tempStaff.find(t => t.staffId === staffMember.id);
+                    const isAdded = !!existingTemp;
                     
                     return (
-                      <div key={staffMember.id} className="flex items-center justify-between p-3 border rounded hover:bg-gray-50">
-                        <div>
-                          <div className="font-medium">{staffMember.name}</div>
-                          <div className="text-sm text-gray-600">
-                            <span className={`px-2 py-0.5 rounded text-xs ${getRoleColor(staffMember.role)}`}>
-                              {staffMember.role}
-                            </span>
+                      <div key={staffMember.id} className="p-3 border rounded hover:bg-gray-50">
+                        <div className="flex items-center justify-between mb-2">
+                          <div>
+                            <div className="font-medium">{staffMember.name}</div>
+                            <div className="text-sm text-gray-600">
+                              <span className={`px-2 py-0.5 rounded text-xs ${getRoleColor(staffMember.role)}`}>
+                                {staffMember.role}
+                              </span>
+                            </div>
                           </div>
+                          {isAdded && (
+                            <button
+                              onClick={() => handleRemoveTempStaff(quickAddStudent.id, staffMember.id)}
+                              className="px-3 py-1 bg-red-100 text-red-700 rounded hover:bg-red-200 text-sm"
+                            >
+                              Remove
+                            </button>
+                          )}
                         </div>
-                        {isAdded ? (
-                          <button
-                            onClick={() => handleRemoveTempStaff(quickAddStudent.id, staffMember.id)}
-                            className="px-3 py-1 bg-red-100 text-red-700 rounded hover:bg-red-200 text-sm"
-                          >
-                            Remove
-                          </button>
-                        ) : (
-                          <button
-                            onClick={() => handleQuickAddStaff(quickAddStudent.id, staffMember.id)}
-                            className="px-3 py-1 bg-blue-600 text-white rounded hover:bg-blue-700 text-sm"
-                          >
-                            Add for Today
-                          </button>
+                        {!isAdded && (
+                          <div className="flex gap-2">
+                            <button
+                              onClick={() => handleQuickAddStaff(quickAddStudent.id, staffMember.id, ['AM'])}
+                              className="flex-1 px-3 py-1 bg-orange-100 text-orange-700 rounded hover:bg-orange-200 text-sm font-medium"
+                              title="Add for AM session only"
+                            >
+                              AM Only
+                            </button>
+                            <button
+                              onClick={() => handleQuickAddStaff(quickAddStudent.id, staffMember.id, ['PM'])}
+                              className="flex-1 px-3 py-1 bg-purple-100 text-purple-700 rounded hover:bg-purple-200 text-sm font-medium"
+                              title="Add for PM session only"
+                            >
+                              PM Only
+                            </button>
+                            <button
+                              onClick={() => handleQuickAddStaff(quickAddStudent.id, staffMember.id, ['AM', 'PM'])}
+                              className="flex-1 px-3 py-1 bg-blue-600 text-white rounded hover:bg-blue-700 text-sm font-medium"
+                              title="Add for both AM and PM sessions"
+                            >
+                              Both
+                            </button>
+                          </div>
+                        )}
+                        {isAdded && existingTemp && (
+                          <div className="mt-2 flex items-center gap-2">
+                            <span className="text-xs text-gray-600">Added for:</span>
+                            <div className="flex gap-1">
+                              {existingTemp.sessions.includes('AM') && (
+                                <span className="px-2 py-0.5 bg-orange-100 text-orange-700 rounded text-xs font-medium">AM</span>
+                              )}
+                              {existingTemp.sessions.includes('PM') && (
+                                <span className="px-2 py-0.5 bg-purple-100 text-purple-700 rounded text-xs font-medium">PM</span>
+                              )}
+                            </div>
+                          </div>
                         )}
                       </div>
                     );
@@ -1594,11 +1660,32 @@ const ManualAssignmentModal = ({
 /**
  * Session Summary Component - Shows summary statistics for a session
  */
-export const SessionSummary = ({ schedule, staff, students, session, program }) => {
+export const SessionSummary = ({ schedule, staff, students, session, program, selectedDate }) => {
   // State for collapsible sections
   const [isAbsentStaffOpen, setIsAbsentStaffOpen] = useState(false);
   const [isAbsentStudentsOpen, setIsAbsentStudentsOpen] = useState(false);
   const [isAvailableStaffOpen, setIsAvailableStaffOpen] = useState(false);
+  
+  // Load temp team additions from localStorage
+  const getTempTeamStorageKey = () => {
+    const dateKey = selectedDate ? selectedDate.toISOString().split('T')[0] : new Date().toISOString().split('T')[0];
+    return `tempTeamAdditions_${dateKey}`;
+  };
+
+  const loadTempTeamAdditions = () => {
+    try {
+      const storageKey = getTempTeamStorageKey();
+      const stored = localStorage.getItem(storageKey);
+      if (stored) {
+        return JSON.parse(stored);
+      }
+    } catch (error) {
+      console.error('Error loading temp team additions:', error);
+    }
+    return {};
+  };
+
+  const tempTeamAdditions = loadTempTeamAdditions();
   
   const assignments = schedule.getAssignmentsForSession(session, program);
   const programStudents = students
@@ -1758,14 +1845,43 @@ export const SessionSummary = ({ schedule, staff, students, session, program }) 
     // Check if staff is already assigned in regular assignments
     if (assignedStaffIds.has(staffMember.id)) return false;
     
-    // CRITICAL: Also check if staff is assigned as a trainee
+    // CRITICAL: Also check if staff is assigned as a trainee IN ANY PROGRAM
     // Trainee assignments should NOT show in "Available Staff" list
+    // Note: We check ALL programs because a staff member assigned as trainee in another program is not available
     const isAssignedAsTrainee = schedule.traineeAssignments && schedule.traineeAssignments.some(
       traineeAssignment => traineeAssignment.staffId === staffMember.id && traineeAssignment.session === session
+      // Intentionally NOT filtering by program - if they're a trainee ANYWHERE, they're not available
     );
     
     if (isAssignedAsTrainee) {
-      console.log(`🚫 Excluding ${staffMember.name} from Available Staff - assigned as trainee in ${session}`);
+      const traineeAssignment = schedule.traineeAssignments.find(
+        ta => ta.staffId === staffMember.id && ta.session === session
+      );
+      console.log(`🚫 Excluding ${staffMember.name} from Available Staff (${program}) - assigned as trainee in ${traineeAssignment?.program || 'unknown'} ${session}`);
+      return false;
+    }
+    
+    // CRITICAL: Also check if staff is borrowed as temp staff by ANOTHER program for this session
+    // If they're added as temp staff to a different program, they're not available here
+    const isBorrowedByOtherProgram = students.filter(s => s.isActive && s.program !== program).some(student => {
+      const tempStaffList = tempTeamAdditions[student.id] || [];
+      return tempStaffList.some(tempStaff => 
+        tempStaff.staffId === staffMember.id && 
+        tempStaff.sessions && 
+        tempStaff.sessions.includes(session)
+      );
+    });
+    
+    if (isBorrowedByOtherProgram) {
+      const borrowingStudent = students.filter(s => s.isActive && s.program !== program).find(student => {
+        const tempStaffList = tempTeamAdditions[student.id] || [];
+        return tempStaffList.some(tempStaff => 
+          tempStaff.staffId === staffMember.id && 
+          tempStaff.sessions && 
+          tempStaff.sessions.includes(session)
+        );
+      });
+      console.log(`🚫 Excluding ${staffMember.name} from Available Staff (${program}) - borrowed as temp staff by ${borrowingStudent?.program || 'other'} ${session}`);
       return false;
     }
     
@@ -1789,6 +1905,42 @@ export const SessionSummary = ({ schedule, staff, students, session, program }) 
     
     return true;
   });
+  
+  // NEW: Count temp staff (RBT/BS only) that are available for this session
+  // Also track temp staff borrowed by OTHER programs to subtract from this program's count
+  const tempDirectStaffIds = new Set();
+  const tempStaffBorrowedByOtherPrograms = new Set();
+  
+  // Check ALL students across ALL programs to find temp staff assignments from localStorage
+  students.filter(s => s.isActive).forEach(student => {
+    const tempStaffList = tempTeamAdditions[student.id] || [];
+    
+    tempStaffList.forEach(tempStaff => {
+      // Only process if they're available for this session
+      if (tempStaff.sessions && tempStaff.sessions.includes(session)) {
+        // Find the staff member to check role and program
+        const staffMember = staff.find(s => s.id === tempStaff.staffId);
+        if (staffMember && (staffMember.role === 'RBT' || staffMember.role === 'BS')) {
+          // Check if staff normally works with THIS program
+          const staffWorksWithThisProgram = program === 'Primary' 
+            ? staffMember.primaryProgram 
+            : staffMember.secondaryProgram;
+          
+          if (student.program === program) {
+            // This temp staff is assigned TO this program
+            tempDirectStaffIds.add(staffMember.id);
+            console.log(`➕ Adding temp staff ${staffMember.name} to ${program} ${session} count`);
+          } else if (staffWorksWithThisProgram) {
+            // This temp staff normally works with THIS program but is borrowed by another program
+            tempStaffBorrowedByOtherPrograms.add(staffMember.id);
+            console.log(`➖ Subtracting ${staffMember.name} from ${program} ${session} - borrowed by ${student.program}`);
+          }
+        }
+      }
+    });
+  });
+  
+  console.log(`📊 ${program} ${session}: Found ${tempDirectStaffIds.size} temp staff added, ${tempStaffBorrowedByOtherPrograms.size} borrowed by other programs`);
 
   // Count absent direct staff
   const absentDirectStaffCount = allDirectStaffForProgram.filter(
@@ -1877,7 +2029,32 @@ export const SessionSummary = ({ schedule, staff, students, session, program }) 
     return hasSoloCase; // Only count if they have at least one solo case
   });
   
-  const directStaffCount = directStaff.length;
+  // NEW: Count non-RBT/BS staff (e.g., BCBAs) who are manually assigned to clients
+  // These should count toward "Direct Staff" even though they're not RBT/BS
+  const nonDirectStaffAssignedIds = new Set();
+  assignments.forEach(assignment => {
+    const staffMember = staff.find(s => s.id === assignment.staffId);
+    if (staffMember && staffMember.role !== 'RBT' && staffMember.role !== 'BS') {
+      // This is a non-direct staff (BCBA, etc.) who is assigned to a client
+      const worksWithProgram = program === 'Primary' 
+        ? staffMember.primaryProgram 
+        : staffMember.secondaryProgram;
+      
+      // Only count if they normally work with this program
+      if (worksWithProgram) {
+        nonDirectStaffAssignedIds.add(staffMember.id);
+      }
+    }
+  });
+  
+  console.log(`📊 ${program} ${session}: Found ${nonDirectStaffAssignedIds.size} non-RBT/BS staff manually assigned to clients`);
+  
+  // NEW: Calculate net direct staff count
+  // Base: RBT/BS staff who are available
+  // Add: Temp staff borrowed FROM other programs (RBT/BS only)
+  // Subtract: Temp staff borrowed BY other programs (RBT/BS only)
+  // Add: Non-RBT/BS staff who are manually assigned to clients (e.g., BCBA working direct)
+  const directStaffCount = directStaff.length + tempDirectStaffIds.size - tempStaffBorrowedByOtherPrograms.size + nonDirectStaffAssignedIds.size;
   // Check staff shortage: compare total spots needed (including 2:1) vs available direct staff
   const hasStaffShortage = totalAssignmentsNeeded > directStaffCount;
 
@@ -1941,12 +2118,14 @@ export const SessionSummary = ({ schedule, staff, students, session, program }) 
           <span className={`font-medium flex items-center gap-1 ${hasStaffShortage ? 'text-red-600' : ''}`}>
             {hasStaffShortage && <span title="More students than direct staff - may need BCBAs or temp staff">⚠️</span>}
             {directStaffCount}
-            {(absentDirectStaffCount > 0 || outDirectStaffCount > 0 || trainingOnlyDirectStaffCount > 0) && (
+            {(absentDirectStaffCount > 0 || outDirectStaffCount > 0 || trainingOnlyDirectStaffCount > 0 || tempDirectStaffIds.size > 0 || tempStaffBorrowedByOtherPrograms.size > 0) && (
               <span className="text-xs text-gray-500 ml-1">
                 ({[
                   absentDirectStaffCount > 0 ? `${absentDirectStaffCount} absent` : null,
                   outDirectStaffCount > 0 ? `${outDirectStaffCount} out` : null,
-                  trainingOnlyDirectStaffCount > 0 ? `${trainingOnlyDirectStaffCount} training` : null
+                  trainingOnlyDirectStaffCount > 0 ? `${trainingOnlyDirectStaffCount} training` : null,
+                  tempDirectStaffIds.size > 0 ? `+${tempDirectStaffIds.size} temp` : null,
+                  tempStaffBorrowedByOtherPrograms.size > 0 ? `-${tempStaffBorrowedByOtherPrograms.size} borrowed` : null
                 ].filter(Boolean).join(', ')})
               </span>
             )}

@@ -925,7 +925,7 @@ const handleAssignmentRemove = (assignmentId) => {
   // Load previously saved schedule for the selected date
   const handleLoadSchedule = async () => {
     // Confirm with user before loading
-    const confirmMessage = `📅 Load Previously Saved Schedule?\n\nThis will:\n✅ Load the saved schedule for ${currentDate.toLocaleDateString()}\n⚠️ Replace any unsaved changes in the current view\n\nDo you want to proceed?`;
+    const confirmMessage = `📅 Load Previously Saved Schedule?\n\nThis will:\n✅ Load the saved schedule for ${currentDate.toLocaleDateString()}\n✅ Load the saved attendance for ${currentDate.toLocaleDateString()}\n⚠️ Replace any unsaved changes in the current view\n\nDo you want to proceed?`;
     
     if (!window.confirm(confirmMessage)) {
       return;
@@ -941,7 +941,57 @@ const handleAssignmentRemove = (assignmentId) => {
         setSchedule(scheduleData);
         setDataLoadedAt(new Date());
         console.log('✅ Schedule loaded successfully:', scheduleData.assignments.length, 'assignments');
-        alert(`✅ Schedule loaded successfully!\n\n${scheduleData.assignments.length} assignments loaded from ${currentDate.toLocaleDateString()}`);
+        
+        // Also load attendance data for this date
+        console.log('📥 Loading attendance data for:', currentDate.toLocaleDateString());
+        const attendanceData = await sharePointService.loadAttendanceForDate(currentDate);
+        
+        if (attendanceData) {
+          console.log('✅ Attendance data loaded, applying to staff and students');
+          
+          // Apply attendance data to staff
+          const staffWithAttendance = staff.map(s => {
+            const attendance = attendanceData.staff[s.id];
+            if (attendance) {
+              return new Staff({
+                ...s,
+                absentAM: attendance.absentAM,
+                absentPM: attendance.absentPM,
+                absentFullDay: attendance.absentFullDay,
+                outOfSessionAM: attendance.outOfSessionAM,
+                outOfSessionPM: attendance.outOfSessionPM,
+                outOfSessionFullDay: attendance.outOfSessionFullDay
+              });
+            }
+            return s;
+          });
+          
+          // Apply attendance data to students
+          const studentsWithAttendance = students.map(s => {
+            const attendance = attendanceData.students[s.id];
+            if (attendance) {
+              return new Student({
+                ...s,
+                absentAM: attendance.absentAM,
+                absentPM: attendance.absentPM,
+                absentFullDay: attendance.absentFullDay,
+                outOfSessionAM: attendance.outOfSessionAM,
+                outOfSessionPM: attendance.outOfSessionPM,
+                outOfSessionFullDay: attendance.outOfSessionFullDay
+              });
+            }
+            return s;
+          });
+          
+          setStaff(staffWithAttendance);
+          setStudents(studentsWithAttendance);
+          
+          console.log('✅ Attendance data applied to UI');
+          alert(`✅ Schedule and attendance loaded successfully!\n\n${scheduleData.assignments.length} assignments loaded from ${currentDate.toLocaleDateString()}`);
+        } else {
+          console.log('ℹ️ No attendance data found for this date - all marked as present');
+          alert(`✅ Schedule loaded successfully!\n\n${scheduleData.assignments.length} assignments loaded from ${currentDate.toLocaleDateString()}\n\nℹ️ No attendance data found - all marked as present`);
+        }
       } else {
         console.log('ℹ️ No saved schedule found for this date');
         alert(`ℹ️ No saved schedule found for ${currentDate.toLocaleDateString()}.\n\nThis might mean:\n• No schedule has been saved for this date yet\n• The schedule was saved but contains no assignments\n\nYou can create a new schedule using Auto Assign.`);
@@ -1499,7 +1549,12 @@ const handleAssignmentRemove = (assignmentId) => {
                 <input
                   type="date"
                   value={formatDateLocal(currentDate)}
-                  onChange={(e) => handleDateChange(new Date(e.target.value))}
+                  onChange={(e) => {
+                    // Parse date as local time to avoid timezone issues
+                    const [year, month, day] = e.target.value.split('-').map(Number);
+                    const newDate = new Date(year, month - 1, day);
+                    handleDateChange(newDate);
+                  }}
                   className="border border-gray-300 rounded px-3 py-1 text-sm"
                 />
               </div>
@@ -1716,28 +1771,32 @@ const handleAssignmentRemove = (assignmentId) => {
                     staff={staff} 
                     students={students} 
                     session="AM" 
-                    program="Primary" 
+                    program="Primary"
+                    selectedDate={currentDate}
                   />
                   <SessionSummary 
                     schedule={schedule} 
                     staff={staff} 
                     students={students} 
                     session="PM" 
-                    program="Primary" 
+                    program="Primary"
+                    selectedDate={currentDate}
                   />
                   <SessionSummary 
                     schedule={schedule} 
                     staff={staff} 
                     students={students} 
                     session="AM" 
-                    program="Secondary" 
+                    program="Secondary"
+                    selectedDate={currentDate}
                   />
                   <SessionSummary 
                     schedule={schedule} 
                     staff={staff} 
                     students={students} 
                     session="PM" 
-                    program="Secondary" 
+                    program="Secondary"
+                    selectedDate={currentDate} 
                   />
                 </div>
                 
