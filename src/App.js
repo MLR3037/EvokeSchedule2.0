@@ -330,14 +330,20 @@ const ABAScheduler = () => {
             ...s,
             absentAM: false,
             absentPM: false,
-            absentFullDay: false
+            absentFullDay: false,
+            outOfSessionAM: false,
+            outOfSessionPM: false,
+            outOfSessionFullDay: false
           }));
           
           const clearedStudents = students.map(s => new Student({
             ...s,
             absentAM: false,
             absentPM: false,
-            absentFullDay: false
+            absentFullDay: false,
+            outOfSessionAM: false,
+            outOfSessionPM: false,
+            outOfSessionFullDay: false
           }));
           
           // Update local state immediately so UI shows cleared attendance
@@ -1550,9 +1556,12 @@ const handleAssignmentRemove = (assignmentId) => {
                   type="date"
                   value={formatDateLocal(currentDate)}
                   onChange={(e) => {
+                    if (!e.target.value) return; // Skip if empty
                     // Parse date as local time to avoid timezone issues
                     const [year, month, day] = e.target.value.split('-').map(Number);
+                    if (!year || !month || !day) return; // Skip if invalid
                     const newDate = new Date(year, month - 1, day);
+                    console.log('📅 Date picker changed:', e.target.value, '→', newDate);
                     handleDateChange(newDate);
                   }}
                   className="border border-gray-300 rounded px-3 py-1 text-sm"

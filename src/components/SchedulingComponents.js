@@ -2001,6 +2001,12 @@ export const SessionSummary = ({ schedule, staff, students, session, program, se
     );
     if (hasOutAssignment) return false;
     
+    // EXCLUDE staff borrowed as temp by another program
+    if (tempStaffBorrowedByOtherPrograms.has(staffMember.id)) {
+      console.log(`🚫 Excluding ${staffMember.name} from ${program} ${session} directStaff - borrowed by another program`);
+      return false;
+    }
+    
     // Check if this staff member is certified (solo) on at least one client
     let hasSoloCase = false;
     let hasAnyCase = false;
