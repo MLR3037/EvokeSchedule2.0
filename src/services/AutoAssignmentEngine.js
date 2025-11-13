@@ -218,6 +218,18 @@ export class AutoAssignmentEngine {
         continue;
       }
 
+      // CRITICAL: Skip if this staff is already assigned to targetStudent in ANY session
+      // We don't want to pull them into both AM and PM with the same student
+      const alreadyWithTargetStudent = schedule.assignments.some(a =>
+        a.staffId === busyTeamMember.id &&
+        a.studentId === targetStudent.id
+      );
+      
+      if (alreadyWithTargetStudent) {
+        console.log(`    🚫 ${busyTeamMember.name} is already assigned to ${targetStudent.name} in another session - skipping to avoid double assignment`);
+        continue;
+      }
+
       // Find ALL assignments for this team member in the target session/program
       const currentAssignments = schedule.assignments.filter(a =>
         a.staffId === busyTeamMember.id &&
@@ -588,6 +600,17 @@ export class AutoAssignmentEngine {
     console.log(`          🔨 Creating swap chain:`);
     console.log(`             1. ${replacementStaff.name} → ${currentStudent.name} (${currentAssignment.program} ${currentAssignment.session})`);
     console.log(`             2. ${targetStaff.name} → ${finalStudent.name} (${finalProgram} ${finalSession})`);
+
+    // CRITICAL: Check if targetStaff is already assigned to finalStudent in ANY session
+    const alreadyWithFinalStudent = schedule.assignments.some(a =>
+      a.staffId === targetStaff.id &&
+      a.studentId === finalStudent.id
+    );
+    
+    if (alreadyWithFinalStudent) {
+      console.log(`          🚫 BLOCKED: ${targetStaff.name} is already assigned to ${finalStudent.name} in another session`);
+      return { success: false };
+    }
 
     // Create replacement assignment
     const replacementAssignment = new Assignment({

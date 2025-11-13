@@ -6,6 +6,28 @@ import * as XLSX from 'xlsx';
  */
 export class ExcelExportService {
   /**
+   * Format staff name as First Name + Last Initial
+   * @param {string} fullName - Full name of staff member
+   * @returns {string} Formatted name (e.g., "John D.")
+   */
+  static formatStaffName(fullName) {
+    if (!fullName) return 'Unknown';
+    
+    const parts = fullName.trim().split(/\s+/);
+    if (parts.length === 1) {
+      // Only one name, return as is
+      return parts[0];
+    }
+    
+    // First name + last initial
+    const firstName = parts[0];
+    const lastName = parts[parts.length - 1];
+    const lastInitial = lastName.charAt(0).toUpperCase();
+    
+    return `${firstName} ${lastInitial}.`;
+  }
+
+  /**
    * Export schedule to Excel with assignments and absences
    * @param {Object} schedule - Schedule object with assignments
    * @param {Array} students - Array of Student objects
@@ -129,28 +151,28 @@ export class ExcelExportService {
         t => t.studentId === student.id && t.session === 'PM'
       );
 
-      // Get staff names
+      // Get staff names (formatted as First Name + Last Initial)
       const amStaffNames = amAssignments.map(a => {
         const staffMember = staff.find(s => s.id === a.staffId);
-        return staffMember ? staffMember.name : 'Unknown';
+        return staffMember ? this.formatStaffName(staffMember.name) : 'Unknown';
       });
       
-      // Remove duplicates and join
-      const uniqueAmStaff = [...new Set(amStaffNames)].join(', ');
+      // Remove duplicates (keep as array for 2:1 handling)
+      const uniqueAmStaff = [...new Set(amStaffNames)];
 
       const pmStaffNames = pmAssignments.map(a => {
         const staffMember = staff.find(s => s.id === a.staffId);
-        return staffMember ? staffMember.name : 'Unknown';
+        return staffMember ? this.formatStaffName(staffMember.name) : 'Unknown';
       });
       
-      // Remove duplicates and join
-      const uniquePmStaff = [...new Set(pmStaffNames)].join(', ');
+      // Remove duplicates (keep as array for 2:1 handling)
+      const uniquePmStaff = [...new Set(pmStaffNames)];
 
       // Check if student is absent
       const isAbsentAM = !student.isAvailableForSession('AM');
       const isAbsentPM = !student.isAvailableForSession('PM');
 
-      // Determine absence status text
+      // Determine absence status
       let amStatus = '';
       let pmStatus = '';
       
@@ -161,8 +183,6 @@ export class ExcelExportService {
         } else {
           amStatus = 'ABSENT';
         }
-      } else {
-        amStatus = uniqueAmStaff || '';
       }
       
       if (isAbsentPM) {
@@ -172,17 +192,27 @@ export class ExcelExportService {
         } else {
           pmStatus = 'ABSENT';
         }
-      } else {
-        pmStatus = uniquePmStaff || '';
       }
 
-      // Always add row for student (show ABSENT/OUT even if no assignments)
-      data.push([
-        student.name,
-        student.program,
-        amStatus,
-        pmStatus
-      ]);
+      // NEW: For 2:1 ratios, create separate rows for each staff member
+      const maxStaffAM = Math.max(uniqueAmStaff.length, isAbsentAM ? 1 : 0);
+      const maxStaffPM = Math.max(uniquePmStaff.length, isAbsentPM ? 1 : 0);
+      const maxRows = Math.max(maxStaffAM, maxStaffPM, 1); // At least 1 row
+
+      for (let i = 0; i < maxRows; i++) {
+        const rowAmStaff = isAbsentAM && i === 0 ? amStatus : (uniqueAmStaff[i] || '');
+        const rowPmStaff = isAbsentPM && i === 0 ? pmStatus : (uniquePmStaff[i] || '');
+        
+        // Only add row if there's content or it's the first row
+        if (i === 0 || rowAmStaff || rowPmStaff) {
+          data.push([
+            i === 0 ? student.name : '', // Only show name on first row
+            i === 0 ? student.program : '', // Only show program on first row
+            rowAmStaff,
+            rowPmStaff
+          ]);
+        }
+      }
 
       // Add trainee rows if applicable - ALWAYS add as separate row
       if (amTrainee && !isAbsentAM) {
@@ -191,7 +221,7 @@ export class ExcelExportService {
           data.push([
             student.name + ' (Trainee)',
             student.program,
-            traineeStaff.name,
+            this.formatStaffName(traineeStaff.name),
             '' // PM Staff (trainee is AM only)
           ]);
         }
@@ -204,11 +234,48 @@ export class ExcelExportService {
             student.name + ' (Trainee)',
             student.program,
             '', // AM Staff (trainee is PM only)
-            traineeStaff.name
+            this.formatStaffName(traineeStaff.name)
           ]);
         }
       }
     });
+
+    // Add OUT rows for staff with out-of-session assignments
+    // Create one row per staff member (separate rows for AM and PM if needed)
+    if (schedule.outOfSessionAssignments && schedule.outOfSessionAssignments.length > 0) {
+      // Group by staff ID, tracking which sessions they have
+      const outStaffMap = new Map();
+
+      schedule.outOfSessionAssignments.forEach(outAssignment => {
+        const staffMember = staff.find(s => s.id === outAssignment.staffId);
+        if (staffMember && outAssignment.session) {
+          const staffName = this.formatStaffName(staffMember.name);
+          
+          if (!outStaffMap.has(outAssignment.staffId)) {
+            outStaffMap.set(outAssignment.staffId, {
+              name: staffName,
+              AM: false,
+              PM: false
+            });
+          }
+          
+          outStaffMap.get(outAssignment.staffId)[outAssignment.session] = true;
+        }
+      });
+
+      // Convert to array and sort by name
+      const outStaffList = Array.from(outStaffMap.values()).sort((a, b) => a.name.localeCompare(b.name));
+
+      // Add one row per staff member
+      outStaffList.forEach((staffInfo, index) => {
+        data.push([
+          index === 0 ? 'OUT' : '', // Only show "OUT" on first row
+          index === 0 ? '-' : '',   // Only show "-" on first row
+          staffInfo.AM ? staffInfo.name : '',
+          staffInfo.PM ? staffInfo.name : ''
+        ]);
+      });
+    }
 
     return data;
   }
@@ -258,7 +325,7 @@ export class ExcelExportService {
       }
       
       staffList.push({
-        name: staffMember.name,
+        name: this.formatStaffName(staffMember.name),
         role: staffMember.role,
         status: status
       });

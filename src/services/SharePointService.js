@@ -1111,12 +1111,23 @@ export class SharePointService {
 
       // NEW: Sync team data to ClientTeamMembers list (if it exists)
       // This runs in the background and doesn't fail if the list doesn't exist
-      if (isUpdate) {
-        this.syncStudentTeamToList(student).catch(err => {
-          console.warn('⚠️ Failed to sync team to ClientTeamMembers list:', err.message);
-          console.log('  → Falling back to legacy Team field storage');
+      // For new students, we need to get the newly created ID from the response
+      let studentToSync = student;
+      if (!isUpdate) {
+        // Get the newly created student ID from the response
+        const responseData = await response.json();
+        studentToSync = new Student({
+          ...student,
+          id: responseData.d.Id
         });
+        console.log(`✅ New student created with ID: ${studentToSync.id}`);
       }
+      
+      // Sync team members to ClientTeamMembers list (for both new and updated students)
+      this.syncStudentTeamToList(studentToSync).catch(err => {
+        console.warn('⚠️ Failed to sync team to ClientTeamMembers list:', err.message);
+        console.log('  → Falling back to legacy Team field storage');
+      });
 
       return response;
     } catch (error) {

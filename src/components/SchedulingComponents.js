@@ -1658,12 +1658,150 @@ const ManualAssignmentModal = ({
 };
 
 /**
+ * BS/BT Swap Finder Component - Identifies BSs in schedule who could swap with available BTs
+ */
+const BSBTSwapFinder = ({ schedule, staff, students, session, program, assignments, availableStaff }) => {
+  const [searchTerm, setSearchTerm] = useState('');
+  const [isExpanded, setIsExpanded] = useState(false);
+  
+  // Find BSs who are currently scheduled (assigned to clients)
+  const scheduledBSs = assignments
+    .map(assignment => {
+      const staffMember = staff.find(s => s.id === assignment.staffId);
+      return staffMember && staffMember.role === 'BS' ? {
+        ...staffMember,
+        studentId: assignment.studentId,
+        student: students.find(s => s.id === assignment.studentId)
+      } : null;
+    })
+    .filter(Boolean);
+  
+  // Find available BTs who are not currently scheduled
+  const availableBTs = availableStaff.filter(s => s.role === 'RBT');
+  
+  // If no BSs scheduled or no BTs available, don't show the tool
+  if (scheduledBSs.length === 0 || availableBTs.length === 0) {
+    return null;
+  }
+  
+  // Find swap opportunities: BSs whose client teams include available BTs
+  const swapOpportunities = scheduledBSs
+    .map(bs => {
+      const student = bs.student;
+      if (!student) return null;
+      
+      // Find available BTs who are on this student's team (certified)
+      const availableBTsOnTeam = availableBTs.filter(bt => {
+        if (!student.teamIds || !student.teamIds.includes(bt.id)) return false;
+        
+        // Check training status - must be solo or trainer
+        const trainingStatus = student.getStaffTrainingStatus ? 
+          student.getStaffTrainingStatus(bt.id) : 'solo';
+        return trainingStatus === 'solo' || trainingStatus === 'trainer';
+      });
+      
+      if (availableBTsOnTeam.length === 0) return null;
+      
+      return {
+        bs,
+        student,
+        availableBTs: availableBTsOnTeam
+      };
+    })
+    .filter(Boolean);
+  
+  // Filter based on search term (search BS name or student name)
+  const filteredOpportunities = swapOpportunities.filter(opp => {
+    if (!searchTerm) return true;
+    const search = searchTerm.toLowerCase();
+    return opp.bs.name.toLowerCase().includes(search) || 
+           opp.student.name.toLowerCase().includes(search);
+  });
+  
+  if (swapOpportunities.length === 0) {
+    return null;
+  }
+  
+  return (
+    <div className="mt-3 border-t pt-3">
+      <button
+        onClick={() => setIsExpanded(!isExpanded)}
+        className="w-full flex items-center justify-between text-xs font-medium text-blue-600 mb-2 hover:bg-blue-50 p-1 rounded transition-colors"
+      >
+        <span className="flex items-center gap-1">
+          <Users className="w-3 h-3" />
+          BS/BT Swap Finder ({swapOpportunities.length} opportunities)
+        </span>
+        {isExpanded ? <ChevronUp className="w-3 h-3" /> : <ChevronDown className="w-3 h-3" />}
+      </button>
+      
+      {isExpanded && (
+        <div className="space-y-2">
+          <div className="text-xs text-gray-600 mb-2">
+            BSs in schedule with available BTs on their client's team:
+          </div>
+          
+          {/* Search bar */}
+          <input
+            type="text"
+            placeholder="Search BS or Client name..."
+            value={searchTerm}
+            onChange={(e) => setSearchTerm(e.target.value)}
+            className="w-full px-2 py-1 text-xs border border-gray-300 rounded focus:outline-none focus:ring-1 focus:ring-blue-500"
+          />
+          
+          {/* Swap opportunities list */}
+          <div className="space-y-2 max-h-40 overflow-y-auto">
+            {filteredOpportunities.length === 0 ? (
+              <div className="text-xs text-gray-500 italic">
+                {searchTerm ? 'No matches found' : 'No swap opportunities'}
+              </div>
+            ) : (
+              filteredOpportunities.map((opp, idx) => (
+                <div key={idx} className="bg-blue-50 p-2 rounded text-xs space-y-1">
+                  <div className="flex items-center justify-between">
+                    <div className="font-medium text-blue-900">
+                      <span className="bg-blue-200 px-1.5 py-0.5 rounded">BS</span> {opp.bs.name}
+                    </div>
+                    <div className="text-gray-600">
+                      → Client: {opp.student.name}
+                    </div>
+                  </div>
+                  <div className="text-gray-700 pl-2">
+                    Available BTs on team ({opp.availableBTs.length}):
+                    <div className="ml-2 mt-1 space-y-0.5">
+                      {opp.availableBTs.map(bt => (
+                        <div key={bt.id} className="text-gray-600">
+                          • {bt.name}
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+              ))
+            )}
+          </div>
+          
+          {filteredOpportunities.length > 0 && (
+            <div className="text-xs text-gray-500 italic mt-2">
+              💡 Tip: Swap BS for BT to free up BS for other assignments
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+};
+
+/**
  * Session Summary Component - Shows summary statistics for a session
  */
 export const SessionSummary = ({ schedule, staff, students, session, program, selectedDate }) => {
   // State for collapsible sections
   const [isAbsentStaffOpen, setIsAbsentStaffOpen] = useState(false);
   const [isAbsentStudentsOpen, setIsAbsentStudentsOpen] = useState(false);
+  const [isOutStaffOpen, setIsOutStaffOpen] = useState(false);
+  const [isOutStudentsOpen, setIsOutStudentsOpen] = useState(false);
   const [isAvailableStaffOpen, setIsAvailableStaffOpen] = useState(false);
   
   // Load temp team additions from localStorage
@@ -1692,9 +1830,51 @@ export const SessionSummary = ({ schedule, staff, students, session, program, se
     .filter(s => s.program === program && s.isActive)
     .sort((a, b) => a.name.localeCompare(b.name));
   
-  // Calculate absent staff and students for this session
-  const absentStaff = staff.filter(s => s.isActive && !s.isAvailableForSession(session));
-  const absentStudents = students.filter(s => s.isActive && s.program === program && !s.isAvailableForSession(session));
+  // Calculate absent staff and students for this session (excluding out-of-session)
+  const absentStaff = staff.filter(s => {
+    if (!s.isActive) return false;
+    if (s.isAvailableForSession(session)) return false;
+    // Only show staff who work with this program
+    const worksWithProgram = program === 'Primary' 
+      ? s.primaryProgram 
+      : s.secondaryProgram;
+    if (!worksWithProgram) return false;
+    // Exclude if they're out-of-session (we'll show them separately)
+    if (session === 'AM' && (s.outOfSessionAM || s.outOfSessionFullDay)) return false;
+    if (session === 'PM' && (s.outOfSessionPM || s.outOfSessionFullDay)) return false;
+    return true;
+  });
+  
+  const absentStudents = students.filter(s => {
+    if (!s.isActive) return false;
+    if (s.program !== program) return false;
+    if (s.isAvailableForSession(session)) return false;
+    // Exclude if they're out-of-session (we'll show them separately)
+    if (session === 'AM' && (s.outOfSessionAM || s.outOfSessionFullDay)) return false;
+    if (session === 'PM' && (s.outOfSessionPM || s.outOfSessionFullDay)) return false;
+    return true;
+  });
+  
+  // Calculate out-of-session staff and students for this session
+  const outStaff = staff.filter(s => {
+    if (!s.isActive) return false;
+    // Only show staff who work with this program
+    const worksWithProgram = program === 'Primary' 
+      ? s.primaryProgram 
+      : s.secondaryProgram;
+    if (!worksWithProgram) return false;
+    if (session === 'AM' && (s.outOfSessionAM || s.outOfSessionFullDay)) return true;
+    if (session === 'PM' && (s.outOfSessionPM || s.outOfSessionFullDay)) return true;
+    return false;
+  });
+  
+  const outStudents = students.filter(s => {
+    if (!s.isActive) return false;
+    if (s.program !== program) return false;
+    if (session === 'AM' && (s.outOfSessionAM || s.outOfSessionFullDay)) return true;
+    if (session === 'PM' && (s.outOfSessionPM || s.outOfSessionFullDay)) return true;
+    return false;
+  });
   
   // Filter out absent students when counting - only count present students
   const presentProgramStudents = programStudents.filter(s => s.isAvailableForSession(session));
@@ -2007,6 +2187,15 @@ export const SessionSummary = ({ schedule, staff, students, session, program, se
       return false;
     }
     
+    // EXCLUDE staff assigned as trainee (in any program for this session)
+    const isAssignedAsTrainee = schedule.traineeAssignments && schedule.traineeAssignments.some(
+      traineeAssignment => traineeAssignment.staffId === staffMember.id && traineeAssignment.session === session
+    );
+    if (isAssignedAsTrainee) {
+      console.log(`🚫 Excluding ${staffMember.name} from ${program} ${session} directStaff - assigned as trainee`);
+      return false;
+    }
+    
     // Check if this staff member is certified (solo) on at least one client
     let hasSoloCase = false;
     let hasAnyCase = false;
@@ -2186,6 +2375,12 @@ export const SessionSummary = ({ schedule, staff, students, session, program, se
                 );
                 if (hasOutAssignment) return false;
                 
+                // EXCLUDE staff assigned as trainee (in any program for this session)
+                const isAssignedAsTrainee = schedule.traineeAssignments && schedule.traineeAssignments.some(
+                  traineeAssignment => traineeAssignment.staffId === staffMember.id && traineeAssignment.session === session
+                );
+                if (isAssignedAsTrainee) return false;
+                
                 // Check if they have any cases but no solo cases
                 let hasSoloCase = false;
                 let hasAnyCase = false;
@@ -2328,6 +2523,58 @@ export const SessionSummary = ({ schedule, staff, students, session, program, se
         </div>
       )}
 
+      {/* Out of Session Staff */}
+      {outStaff.length > 0 && (
+        <div className="mt-3 border-t pt-3">
+          <button
+            onClick={() => setIsOutStaffOpen(!isOutStaffOpen)}
+            className="w-full flex items-center justify-between text-xs font-medium text-purple-600 mb-2 hover:bg-purple-50 p-1 rounded transition-colors"
+          >
+            <span>Out of Session Staff ({outStaff.length}):</span>
+            {isOutStaffOpen ? <ChevronUp className="w-3 h-3" /> : <ChevronDown className="w-3 h-3" />}
+          </button>
+          {isOutStaffOpen && (
+            <div className="space-y-1 max-h-20 overflow-y-auto">
+              {outStaff.map(staffMember => (
+                <div key={staffMember.id} className="text-xs text-gray-700 flex items-center gap-2">
+                  <span>{staffMember.name}</span>
+                  <span className="text-purple-600 text-[10px]">
+                    {staffMember.outOfSessionFullDay ? '(Full Day)' : 
+                     session === 'AM' ? '(AM)' : '(PM)'}
+                  </span>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Out of Session Clients */}
+      {outStudents.length > 0 && (
+        <div className="mt-3 border-t pt-3">
+          <button
+            onClick={() => setIsOutStudentsOpen(!isOutStudentsOpen)}
+            className="w-full flex items-center justify-between text-xs font-medium text-purple-600 mb-2 hover:bg-purple-50 p-1 rounded transition-colors"
+          >
+            <span>Out of Session Clients ({outStudents.length}):</span>
+            {isOutStudentsOpen ? <ChevronUp className="w-3 h-3" /> : <ChevronDown className="w-3 h-3" />}
+          </button>
+          {isOutStudentsOpen && (
+            <div className="space-y-1 max-h-20 overflow-y-auto">
+              {outStudents.map(student => (
+                <div key={student.id} className="text-xs text-gray-700 flex items-center gap-2">
+                  <span>{student.name}</span>
+                  <span className="text-purple-600 text-[10px]">
+                    {student.outOfSessionFullDay ? '(Full Day)' : 
+                     session === 'AM' ? '(AM)' : '(PM)'}
+                  </span>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+
       {/* Unassigned Staff (excluding RBT/BS shown above) */}
       {Object.keys(unassignedStaffByRole).some(role => role !== 'RBT' && role !== 'BS') && (
         <div className="mt-3 border-t pt-3">
@@ -2361,6 +2608,17 @@ export const SessionSummary = ({ schedule, staff, students, session, program, se
           )}
         </div>
       )}
+
+      {/* BS/BT Swap Finder - Show if there are available BTs and scheduled BSs */}
+      <BSBTSwapFinder 
+        schedule={schedule}
+        staff={staff}
+        students={students}
+        session={session}
+        program={program}
+        assignments={assignments}
+        availableStaff={availableStaff}
+      />
 
       {unassignedCount === 0 ? (
         <div className="mt-3 flex items-center gap-2 text-green-600">
