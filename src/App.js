@@ -524,7 +524,7 @@ const ABAScheduler = () => {
     setAutoAssigning(true);
     
     try {
-      const result = await autoAssignEngine.autoAssignSchedule(schedule, staff, students);
+      const result = await autoAssignEngine.autoAssignSchedule(schedule, staff, students, currentDate);
       
       if (result.assignments.length > 0) {
         // Keep only locked/manual assignments from the existing schedule
@@ -649,7 +649,7 @@ const ABAScheduler = () => {
       console.log('🔀 Starting Smart Swap Optimization...');
       
       // Use the AutoAssignmentEngine's swap optimization
-      const result = await autoAssignEngine.performSwapOptimization(schedule, staff, students);
+      const result = await autoAssignEngine.performSwapOptimization(schedule, staff, students, currentDate);
       
       if (result.swapsMade > 0 || result.newAssignments.length > 0) {
         console.log(`✅ Smart Swap Results: ${result.swapsMade} swaps, ${result.gapsFilled} gaps filled`);
@@ -931,7 +931,7 @@ const handleAssignmentRemove = (assignmentId) => {
   // Load previously saved schedule for the selected date
   const handleLoadSchedule = async () => {
     // Confirm with user before loading
-    const confirmMessage = `📅 Load Previously Saved Schedule?\n\nThis will:\n✅ Load the saved schedule for ${currentDate.toLocaleDateString()}\n✅ Load the saved attendance for ${currentDate.toLocaleDateString()}\n⚠️ Replace any unsaved changes in the current view\n\nDo you want to proceed?`;
+    const confirmMessage = `📅 Load Previously Saved Schedule?\n\nThis will:\n✅ Load the saved schedule for ${currentDate.toLocaleDateString()}\n✅ Reload current attendance from SharePoint\n⚠️ Replace any unsaved changes in the current view\n\nDo you want to proceed?`;
     
     if (!window.confirm(confirmMessage)) {
       return;
@@ -941,6 +941,17 @@ const handleAssignmentRemove = (assignmentId) => {
     try {
       console.log('📥 Loading saved schedule for:', currentDate);
       
+      // First, reload staff and students from SharePoint to get current attendance
+      console.log('📥 Reloading staff and students from SharePoint...');
+      const [freshStaff, freshStudents] = await Promise.all([
+        sharePointService.loadStaff(),
+        sharePointService.loadStudents()
+      ]);
+      
+      setStaff(freshStaff);
+      setStudents(freshStudents);
+      console.log('✅ Staff and students reloaded with current attendance');
+      
       const scheduleData = await sharePointService.loadSchedule(currentDate);
       
       if (scheduleData && scheduleData.assignments && scheduleData.assignments.length > 0) {
@@ -948,8 +959,8 @@ const handleAssignmentRemove = (assignmentId) => {
         setDataLoadedAt(new Date());
         console.log('✅ Schedule loaded successfully:', scheduleData.assignments.length, 'assignments');
         
-        // Also load attendance data for this date
-        console.log('📥 Loading attendance data for:', currentDate.toLocaleDateString());
+        // Also load attendance data for this date from history
+        console.log('📥 Loading attendance history for:', currentDate.toLocaleDateString());
         const attendanceData = await sharePointService.loadAttendanceForDate(currentDate);
         
         if (attendanceData) {
@@ -992,11 +1003,11 @@ const handleAssignmentRemove = (assignmentId) => {
           setStaff(staffWithAttendance);
           setStudents(studentsWithAttendance);
           
-          console.log('✅ Attendance data applied to UI');
-          alert(`✅ Schedule and attendance loaded successfully!\n\n${scheduleData.assignments.length} assignments loaded from ${currentDate.toLocaleDateString()}`);
+          console.log('✅ Attendance history applied to UI');
+          alert(`✅ Schedule and attendance loaded successfully!\n\n${scheduleData.assignments.length} assignments loaded from ${currentDate.toLocaleDateString()}\n\nAttendance loaded from current SharePoint data and history.`);
         } else {
-          console.log('ℹ️ No attendance data found for this date - all marked as present');
-          alert(`✅ Schedule loaded successfully!\n\n${scheduleData.assignments.length} assignments loaded from ${currentDate.toLocaleDateString()}\n\nℹ️ No attendance data found - all marked as present`);
+          console.log('ℹ️ No attendance history found for this date - using current SharePoint data');
+          alert(`✅ Schedule loaded successfully!\n\n${scheduleData.assignments.length} assignments loaded from ${currentDate.toLocaleDateString()}\n\nℹ️ Using current attendance data from SharePoint`);
         }
       } else {
         console.log('ℹ️ No saved schedule found for this date');

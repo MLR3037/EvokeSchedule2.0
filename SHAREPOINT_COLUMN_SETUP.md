@@ -56,9 +56,46 @@ You need to add attendance tracking columns to both the Staff and Clients lists 
 4. Default value: **No**
 5. Click **Save**
 
+### 4. Add ScheduledMonday Column
+1. Click **+ Add column** → **Yes/No**
+2. Enter name: `ScheduledMonday`
+3. Description: "Client is scheduled to attend on Mondays"
+4. Default value: **Yes**
+5. Click **Save**
+
+### 5. Add ScheduledTuesday Column
+1. Click **+ Add column** → **Yes/No**
+2. Enter name: `ScheduledTuesday`
+3. Description: "Client is scheduled to attend on Tuesdays"
+4. Default value: **Yes**
+5. Click **Save**
+
+### 6. Add ScheduledWednesday Column
+1. Click **+ Add column** → **Yes/No**
+2. Enter name: `ScheduledWednesday`
+3. Description: "Client is scheduled to attend on Wednesdays"
+4. Default value: **Yes**
+5. Click **Save**
+
+### 7. Add ScheduledThursday Column
+1. Click **+ Add column** → **Yes/No**
+2. Enter name: `ScheduledThursday`
+3. Description: "Client is scheduled to attend on Thursdays"
+4. Default value: **Yes**
+5. Click **Save**
+
+### 8. Add ScheduledFriday Column
+1. Click **+ Add column** → **Yes/No**
+2. Enter name: `ScheduledFriday`
+3. Description: "Client is scheduled to attend on Fridays"
+4. Default value: **Yes**
+5. Click **Save**
+
 ---
 
 ## Column Settings Summary
+
+### Staff List Columns
 
 | Column Name      | Type   | Default | Required | Indexed |
 |------------------|--------|---------|----------|---------|
@@ -66,17 +103,32 @@ You need to add attendance tracking columns to both the Staff and Clients lists 
 | AbsentPM         | Yes/No | No      | No       | No      |
 | AbsentFullDay    | Yes/No | No      | No       | No      |
 
+### Clients List Columns
+
+| Column Name         | Type   | Default | Required | Indexed |
+|---------------------|--------|---------|----------|---------|
+| AbsentAM            | Yes/No | No      | No       | No      |
+| AbsentPM            | Yes/No | No      | No       | No      |
+| AbsentFullDay       | Yes/No | No      | No       | No      |
+| ScheduledMonday     | Yes/No | Yes     | No       | No      |
+| ScheduledTuesday    | Yes/No | Yes     | No       | No      |
+| ScheduledWednesday  | Yes/No | Yes     | No       | No      |
+| ScheduledThursday   | Yes/No | Yes     | No       | No      |
+| ScheduledFriday     | Yes/No | Yes     | No       | No      |
+
 ---
 
 ## Verification Checklist
 
 After adding columns, verify:
 
-- [ ] **Staff list** has 3 new columns (AbsentAM, AbsentPM, AbsentFullDay)
-- [ ] **Clients list** has 3 new columns (AbsentAM, AbsentPM, AbsentFullDay)
+- [ ] **Staff list** has 3 attendance columns (AbsentAM, AbsentPM, AbsentFullDay)
+- [ ] **Clients list** has 3 attendance columns (AbsentAM, AbsentPM, AbsentFullDay)
+- [ ] **Clients list** has 5 schedule columns (ScheduledMonday through ScheduledFriday)
 - [ ] All column names match exactly (case-sensitive)
 - [ ] All columns are type "Yes/No"
-- [ ] Default value is set to "No" for all
+- [ ] Default value is "No" for attendance columns
+- [ ] Default value is "Yes" for schedule columns
 - [ ] You can manually check/uncheck boxes in SharePoint
 
 ---
@@ -175,7 +227,14 @@ Add-PnPField -List "Clients" -DisplayName "AbsentAM" -InternalName "AbsentAM" -T
 Add-PnPField -List "Clients" -DisplayName "AbsentPM" -InternalName "AbsentPM" -Type Boolean -AddToDefaultView
 Add-PnPField -List "Clients" -DisplayName "AbsentFullDay" -InternalName "AbsentFullDay" -Type Boolean -AddToDefaultView
 
-Write-Host "Attendance columns added successfully!" -ForegroundColor Green
+# Add Days of Week schedule columns to Clients list (default to Yes)
+Add-PnPField -List "Clients" -DisplayName "ScheduledMonday" -InternalName "ScheduledMonday" -Type Boolean -AddToDefaultView
+Add-PnPField -List "Clients" -DisplayName "ScheduledTuesday" -InternalName "ScheduledTuesday" -Type Boolean -AddToDefaultView
+Add-PnPField -List "Clients" -DisplayName "ScheduledWednesday" -InternalName "ScheduledWednesday" -Type Boolean -AddToDefaultView
+Add-PnPField -List "Clients" -DisplayName "ScheduledThursday" -InternalName "ScheduledThursday" -Type Boolean -AddToDefaultView
+Add-PnPField -List "Clients" -DisplayName "ScheduledFriday" -InternalName "ScheduledFriday" -Type Boolean -AddToDefaultView
+
+Write-Host "Attendance and Days of Week columns added successfully!" -ForegroundColor Green
 ```
 
 ---

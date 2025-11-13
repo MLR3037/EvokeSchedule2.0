@@ -562,7 +562,7 @@ export class SharePointService {
       // For multi-person picker fields, we need to expand them directly
       // Team is a multi-person picker field that references the Staff list
       const url = `${this.config.siteUrl}/_api/web/lists/getbytitle('${this.config.studentsListName}')/items?` +
-        `$select=Id,Title,Program,RatioAM,RatioPM,IsActive,PairedWith,Team/Id,Team/Title,Team/EMail,AbsentAM,AbsentPM,AbsentFullDay,TeamTrainingStatus&` +
+        `$select=Id,Title,Program,RatioAM,RatioPM,IsActive,PairedWith,Team/Id,Team/Title,Team/EMail,AbsentAM,AbsentPM,AbsentFullDay,TeamTrainingStatus,ScheduledMonday,ScheduledTuesday,ScheduledWednesday,ScheduledThursday,ScheduledFriday&` +
         `$expand=Team&` +
         `$top=5000`;
 
@@ -696,7 +696,13 @@ export class SharePointService {
         absentAM: item.AbsentAM === true,
         absentPM: item.AbsentPM === true,
         absentFullDay: item.AbsentFullDay === true,
-        teamTrainingStatus: teamTrainingStatus
+        teamTrainingStatus: teamTrainingStatus,
+        // Days of week schedule (default to true if not set)
+        scheduledMonday: item.ScheduledMonday !== false,
+        scheduledTuesday: item.ScheduledTuesday !== false,
+        scheduledWednesday: item.ScheduledWednesday !== false,
+        scheduledThursday: item.ScheduledThursday !== false,
+        scheduledFriday: item.ScheduledFriday !== false
       });
 
       if (team.length > 0) {
@@ -1096,7 +1102,13 @@ export class SharePointService {
         AbsentAM: student.absentAM || false,
         AbsentPM: student.absentPM || false,
         AbsentFullDay: student.absentFullDay || false,
-        TeamTrainingStatus: student.teamTrainingStatus ? JSON.stringify(student.teamTrainingStatus) : '{}' // Legacy fallback
+        TeamTrainingStatus: student.teamTrainingStatus ? JSON.stringify(student.teamTrainingStatus) : '{}', // Legacy fallback
+        // Days of week schedule
+        ScheduledMonday: student.scheduledMonday !== false,
+        ScheduledTuesday: student.scheduledTuesday !== false,
+        ScheduledWednesday: student.scheduledWednesday !== false,
+        ScheduledThursday: student.scheduledThursday !== false,
+        ScheduledFriday: student.scheduledFriday !== false
       };
 
       const response = await this.makeRequest(url, {

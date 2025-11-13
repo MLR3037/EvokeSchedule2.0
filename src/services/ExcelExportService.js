@@ -11,20 +11,8 @@ export class ExcelExportService {
    * @returns {string} Formatted name (e.g., "John D.")
    */
   static formatStaffName(fullName) {
-    if (!fullName) return 'Unknown';
-    
-    const parts = fullName.trim().split(/\s+/);
-    if (parts.length === 1) {
-      // Only one name, return as is
-      return parts[0];
-    }
-    
-    // First name + last initial
-    const firstName = parts[0];
-    const lastName = parts[parts.length - 1];
-    const lastInitial = lastName.charAt(0).toUpperCase();
-    
-    return `${firstName} ${lastInitial}.`;
+    // Return full name as-is
+    return fullName || 'Unknown';
   }
 
   /**
@@ -206,8 +194,8 @@ export class ExcelExportService {
         // Only add row if there's content or it's the first row
         if (i === 0 || rowAmStaff || rowPmStaff) {
           data.push([
-            i === 0 ? student.name : '', // Only show name on first row
-            i === 0 ? student.program : '', // Only show program on first row
+            student.name, // Show name on all rows
+            student.program, // Show program on all rows
             rowAmStaff,
             rowPmStaff
           ]);

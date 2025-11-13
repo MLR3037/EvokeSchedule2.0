@@ -206,7 +206,13 @@ export class Student {
     absentAM = false, // Absent for AM session
     absentPM = false, // Absent for PM session
     absentFullDay = false, // Absent for full day (both sessions)
-    teamTrainingStatus = {} // Training status for each team member: { staffId: 'certified' | 'overlap-bcba' | 'overlap-staff' }
+    teamTrainingStatus = {}, // Training status for each team member: { staffId: 'certified' | 'overlap-bcba' | 'overlap-staff' }
+    // Days of week schedule (all default to true = scheduled)
+    scheduledMonday = true,
+    scheduledTuesday = true,
+    scheduledWednesday = true,
+    scheduledThursday = true,
+    scheduledFriday = true
   }) {
     this.id = id;
     this.name = name;
@@ -235,6 +241,13 @@ export class Student {
     
     // Training status tracking: { staffId: status }
     this.teamTrainingStatus = teamTrainingStatus || {};
+    
+    // Days of week schedule (default all true)
+    this.scheduledMonday = scheduledMonday;
+    this.scheduledTuesday = scheduledTuesday;
+    this.scheduledWednesday = scheduledWednesday;
+    this.scheduledThursday = scheduledThursday;
+    this.scheduledFriday = scheduledFriday;
   }
 
   requiresMultipleStaff(session = 'AM') {
@@ -252,12 +265,37 @@ export class Student {
   }
 
   /**
+   * Check if student is scheduled for a specific day of the week
+   * @param {Date} date - Date to check
+   * @returns {boolean} True if student is scheduled for this day
+   */
+  isScheduledForDay(date) {
+    const dayOfWeek = date.getDay(); // 0=Sunday, 1=Monday, ..., 5=Friday, 6=Saturday
+    
+    switch(dayOfWeek) {
+      case 1: return this.scheduledMonday;
+      case 2: return this.scheduledTuesday;
+      case 3: return this.scheduledWednesday;
+      case 4: return this.scheduledThursday;
+      case 5: return this.scheduledFriday;
+      default: return false; // Weekend
+    }
+  }
+
+  /**
    * Check if student is available for a specific session
    * @param {string} session - 'AM' or 'PM'
+   * @param {Date} date - Optional date to check day-of-week schedule
    * @returns {boolean} True if student is available (not absent)
    */
-  isAvailableForSession(session) {
+  isAvailableForSession(session, date = null) {
     if (!this.isActive) return false;
+    
+    // Check if student is scheduled for this day of the week
+    if (date && !this.isScheduledForDay(date)) {
+      return false; // Treat as absent if not scheduled for this day
+    }
+    
     if (this.absentFullDay) return false;
     if (session === 'AM') return !this.absentAM;
     if (session === 'PM') return !this.absentPM;

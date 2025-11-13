@@ -277,6 +277,13 @@ export const AttendanceManagement = ({
           )}
         </div>
 
+        {/* Informational Note */}
+        <div className="mb-6 p-3 bg-blue-50 border border-blue-200 rounded-lg">
+          <p className="text-sm text-blue-800">
+            <strong>NOTE:</strong> This page is only for editing DAILY client attendance changes. To edit permanent client schedules, use the 'Clients' SharePoint List found in Clinistrators.
+          </p>
+        </div>
+
         {/* Staff View */}
         {view === 'staff' && (
           <div className="space-y-3">

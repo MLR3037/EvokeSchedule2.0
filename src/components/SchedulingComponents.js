@@ -538,7 +538,7 @@ export const ScheduleTableView = ({
 
   const renderStaffDropdown = (student, session) => {
     // Check if student is absent for this session
-    if (!student.isAvailableForSession(session)) {
+    if (!student.isAvailableForSession(session, selectedDate)) {
       return (
         <div className="flex items-center gap-2">
           <div className="text-sm px-3 py-2 bg-gray-100 text-gray-400 rounded border border-gray-200 italic">
@@ -592,7 +592,7 @@ export const ScheduleTableView = ({
       if (!staffMember) return false;
       
       // EXCLUDE staff who are absent for this session
-      if (!staffMember.isAvailableForSession(session)) {
+      if (!staffMember.isAvailableForSession(session, selectedDate)) {
         console.log(`🚫 Excluding ${teamMember.name} from dropdown - absent for ${session}`);
         return false;
       }
@@ -723,7 +723,7 @@ export const ScheduleTableView = ({
 
   const renderTraineeDropdown = (student, session) => {
     // Check if student is absent for this session
-    if (!student.isAvailableForSession(session)) {
+    if (!student.isAvailableForSession(session, selectedDate)) {
       return null;
     }
 
@@ -754,7 +754,7 @@ export const ScheduleTableView = ({
       if (!staffMember) return false;
       
       // EXCLUDE staff who are absent for this session
-      if (!staffMember.isAvailableForSession(session)) {
+      if (!staffMember.isAvailableForSession(session, selectedDate)) {
         console.log(`🚫 Excluding ${teamMember.name} from trainee dropdown - absent for ${session}`);
         return false;
       }
@@ -1426,6 +1426,7 @@ export const ScheduleGrid = ({
           schedule={schedule}
           onAssign={onManualAssignment}
           onClose={() => setShowAssignmentModal(false)}
+          selectedDate={selectedDate}
         />
       )}
     </div>
@@ -1545,7 +1546,8 @@ const ManualAssignmentModal = ({
   students, 
   schedule, 
   onAssign, 
-  onClose 
+  onClose,
+  selectedDate
 }) => {
   const [selectedStaff, setSelectedStaff] = useState('');
   const [selectedStudent, setSelectedStudent] = useState('');
@@ -1562,6 +1564,7 @@ const ManualAssignmentModal = ({
     .filter(s => 
       s.isActive && 
       s.program === program &&
+      s.isScheduledForDay(selectedDate) &&
       !schedule.getAssignmentsForSession(session, program).some(a => a.studentId === s.id)
     )
     .sort((a, b) => a.name.localeCompare(b.name));
@@ -1827,13 +1830,13 @@ export const SessionSummary = ({ schedule, staff, students, session, program, se
   
   const assignments = schedule.getAssignmentsForSession(session, program);
   const programStudents = students
-    .filter(s => s.program === program && s.isActive)
+    .filter(s => s.program === program && s.isActive && s.isScheduledForDay(selectedDate))
     .sort((a, b) => a.name.localeCompare(b.name));
   
   // Calculate absent staff and students for this session (excluding out-of-session)
   const absentStaff = staff.filter(s => {
     if (!s.isActive) return false;
-    if (s.isAvailableForSession(session)) return false;
+    if (s.isAvailableForSession(session, selectedDate)) return false;
     // Only show staff who work with this program
     const worksWithProgram = program === 'Primary' 
       ? s.primaryProgram 
@@ -1848,7 +1851,7 @@ export const SessionSummary = ({ schedule, staff, students, session, program, se
   const absentStudents = students.filter(s => {
     if (!s.isActive) return false;
     if (s.program !== program) return false;
-    if (s.isAvailableForSession(session)) return false;
+    if (s.isAvailableForSession(session, selectedDate)) return false;
     // Exclude if they're out-of-session (we'll show them separately)
     if (session === 'AM' && (s.outOfSessionAM || s.outOfSessionFullDay)) return false;
     if (session === 'PM' && (s.outOfSessionPM || s.outOfSessionFullDay)) return false;
@@ -1877,7 +1880,7 @@ export const SessionSummary = ({ schedule, staff, students, session, program, se
   });
   
   // Filter out absent students when counting - only count present students
-  const presentProgramStudents = programStudents.filter(s => s.isAvailableForSession(session));
+  const presentProgramStudents = programStudents.filter(s => s.isAvailableForSession(session, selectedDate));
   
   // Calculate required vs actual assignments, accounting for 2:1 students
   const studentAssignmentCounts = {}; // Track how many assignments each student has
@@ -1919,7 +1922,7 @@ export const SessionSummary = ({ schedule, staff, students, session, program, se
     const ratio = session === 'AM' ? student.ratioAM : student.ratioPM;
     
     // Check if student is present for this session
-    const isPresent = student.isAvailableForSession(session);
+    const isPresent = student.isAvailableForSession(session, selectedDate);
     
     if (ratio === '1:2') {
       // For 1:2 students, count as 1 session per pair
@@ -1930,7 +1933,7 @@ export const SessionSummary = ({ schedule, staff, students, session, program, se
           processedPairs.add(student.id);
           processedPairs.add(partner.id);
           // Only count if at least one of the pair is present
-          const partnerPresent = partner.isAvailableForSession(session);
+          const partnerPresent = partner.isAvailableForSession(session, selectedDate);
           if (isPresent || partnerPresent) {
             totalSessions += 1; // One session for the pair
             // Check if assigned (if either student has an assignment, count as assigned)
@@ -1998,7 +2001,7 @@ export const SessionSummary = ({ schedule, staff, students, session, program, se
 
   // Find unassigned or partially assigned students (exclude absent students)
   const unassignedStudents = programStudents.filter(student => {
-    if (!student.isAvailableForSession(session)) return false;
+    if (!student.isAvailableForSession(session, selectedDate)) return false;
     
     const ratio = session === 'AM' ? student.ratioAM : student.ratioPM;
     const required = ratio === '2:1' ? 2 : 1;
@@ -2013,7 +2016,7 @@ export const SessionSummary = ({ schedule, staff, students, session, program, se
     if (!staffMember.isActive) return false;
     
     // Check if staff is available for this session (not absent)
-    if (!staffMember.isAvailableForSession(session)) return false;
+    if (!staffMember.isAvailableForSession(session, selectedDate)) return false;
     
     // Check if staff works with this program
     const worksWithProgram = program === 'Primary' 
@@ -2124,12 +2127,12 @@ export const SessionSummary = ({ schedule, staff, students, session, program, se
 
   // Count absent direct staff
   const absentDirectStaffCount = allDirectStaffForProgram.filter(
-    s => !s.isAvailableForSession(session)
+    s => !s.isAvailableForSession(session, selectedDate)
   ).length;
 
   // Count 'out' direct staff (in out-of-session assignments for this session)
   const outDirectStaffCount = allDirectStaffForProgram.filter(staffMember => {
-    if (!staffMember.isAvailableForSession(session)) return false; // Don't double count absent
+    if (!staffMember.isAvailableForSession(session, selectedDate)) return false; // Don't double count absent
     
     // Check if staff has an out-of-session assignment for this session
     const hasOutAssignment = schedule.outOfSessionAssignments && schedule.outOfSessionAssignments.some(
@@ -2141,7 +2144,7 @@ export const SessionSummary = ({ schedule, staff, students, session, program, se
 
   // Count training-only direct staff (only have training cases, no solo cases)
   const trainingOnlyDirectStaffCount = allDirectStaffForProgram.filter(staffMember => {
-    if (!staffMember.isAvailableForSession(session)) return false; // Don't count absent
+    if (!staffMember.isAvailableForSession(session, selectedDate)) return false; // Don't count absent
     
     // Check if in 'out' session
     const hasOutAssignment = schedule.outOfSessionAssignments && schedule.outOfSessionAssignments.some(
@@ -2173,7 +2176,7 @@ export const SessionSummary = ({ schedule, staff, students, session, program, se
 
   // Calculate available direct staff (excluding absent, out, and training-only)
   const directStaff = allDirectStaffForProgram.filter(staffMember => {
-    if (!staffMember.isAvailableForSession(session)) return false; // Exclude absent
+    if (!staffMember.isAvailableForSession(session, selectedDate)) return false; // Exclude absent
     
     // Exclude 'out' staff
     const hasOutAssignment = schedule.outOfSessionAssignments && schedule.outOfSessionAssignments.some(
@@ -2352,7 +2355,7 @@ export const SessionSummary = ({ schedule, staff, students, session, program, se
 
       {/* Available Direct Staff (RBT/BS) List - includes training-only staff for visibility */}
       {(directStaff.filter(s => !assignedStaffIds.has(s.id)).length > 0 || 
-        allDirectStaffForProgram.filter(s => !assignedStaffIds.has(s.id) && s.isAvailableForSession(session)).length > 0) && (
+        allDirectStaffForProgram.filter(s => !assignedStaffIds.has(s.id) && s.isAvailableForSession(session, selectedDate)).length > 0) && (
         <div className="mt-3 border-t pt-3">
           <div className="text-xs font-medium text-gray-600 mb-2">Available Direct Staff:</div>
           <div className="space-y-1 max-h-36 overflow-y-auto">
@@ -2364,7 +2367,7 @@ export const SessionSummary = ({ schedule, staff, students, session, program, se
               const trainingOnlyStaff = allDirectStaffForProgram.filter(staffMember => {
                 if (staffMember.role !== role) return false;
                 if (assignedStaffIds.has(staffMember.id)) return false;
-                if (!staffMember.isAvailableForSession(session)) return false;
+                if (!staffMember.isAvailableForSession(session, selectedDate)) return false;
                 
                 // Check if already in the "with solo" list
                 if (roleStaffWithSolo.find(s => s.id === staffMember.id)) return false;

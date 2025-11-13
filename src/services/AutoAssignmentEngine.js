@@ -827,14 +827,14 @@ export class AutoAssignmentEngine {
    * @param {Student[]} students - Array of students
    * @returns {Assignment[]} Array of new assignments created
    */
-  async autoAssignSchedule(schedule, staff, students) {
+  async autoAssignSchedule(schedule, staff, students, selectedDate = new Date()) {
     const newAssignments = [];
     const errors = [];
 
     console.log('\n🚀 ========== STARTING AUTO-ASSIGNMENT ==========');
 
     const activeStaff = staff.filter(s => s.isActive);
-    const activeStudents = students.filter(s => s.isActive);
+    const activeStudents = students.filter(s => s.isActive && s.isScheduledForDay(selectedDate));
 
     console.log(`📊 Active: ${activeStaff.length} staff, ${activeStudents.length} students`);
     console.log(`📊 Attendance - Staff absent AM: ${activeStaff.filter(s => s.absentAM || s.absentFullDay).length}, PM: ${activeStaff.filter(s => s.absentPM || s.absentFullDay).length}`);
@@ -1975,14 +1975,14 @@ export class AutoAssignmentEngine {
    * - Can Carol work with Student X? Check if X.teamIds.includes(Carol.id)
    * - If yes: Swap Carol → X, Dave → Lydia
    */
-  async performSwapOptimization(schedule, staff, students) {
+  async performSwapOptimization(schedule, staff, students, selectedDate = new Date()) {
     const swaps = [];
     const newAssignments = [];
     let totalSwapsMade = 0;
     let totalGapsFilled = 0;
 
     const activeStaff = staff.filter(s => s.isActive);
-    const activeStudents = students.filter(s => s.isActive);
+    const activeStudents = students.filter(s => s.isActive && s.isScheduledForDay(selectedDate));
 
     // Find all unassigned students (gaps)
     const sessions = ['AM', 'PM'];
