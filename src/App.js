@@ -645,11 +645,15 @@ const ABAScheduler = () => {
   const handleSmartSwap = async () => {
     setAutoAssigning(true);
     
+    // Preserve current staff/students state (including attendance data)
+    const preservedStaff = [...staff];
+    const preservedStudents = [...students];
+    
     try {
       console.log('🔀 Starting Smart Swap Optimization...');
       
       // Use the AutoAssignmentEngine's swap optimization
-      const result = await autoAssignEngine.performSwapOptimization(schedule, staff, students, currentDate);
+      const result = await autoAssignEngine.performSwapOptimization(schedule, preservedStaff, preservedStudents, currentDate);
       
       if (result.swapsMade > 0 || result.newAssignments.length > 0) {
         console.log(`✅ Smart Swap Results: ${result.swapsMade} swaps, ${result.gapsFilled} gaps filled`);
@@ -737,6 +741,12 @@ const ABAScheduler = () => {
         });
         
         setSchedule(newSchedule);
+        
+        // CRITICAL: Verify attendance data is still present
+        const staffWithAttendance = staff.filter(s => s.absentAM || s.absentPM || s.absentFullDay || s.outOfSessionAM || s.outOfSessionPM || s.outOfSessionFullDay).length;
+        const studentsWithAttendance = students.filter(s => s.absentAM || s.absentPM || s.absentFullDay || s.outOfSessionAM || s.outOfSessionPM || s.outOfSessionFullDay).length;
+        console.log(`✅ After Smart Swap - Attendance preserved: ${staffWithAttendance} staff, ${studentsWithAttendance} students with attendance flags`);
+        
         alert(`✅ Smart Swap Complete!\n\n${result.swapsMade} swaps made\n${result.gapsFilled} gaps filled\n\nCheck the schedule for improvements.`);
       } else {
         alert('ℹ️ No beneficial swaps found.\n\nAll gaps may require staff who are already assigned or unavailable.');

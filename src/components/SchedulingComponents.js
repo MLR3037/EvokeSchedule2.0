@@ -219,6 +219,12 @@ export const ScheduleTableView = ({
       a.program === student.program
     );
     
+    // If assignment exists but staff member doesn't (e.g., temp staff was removed on refresh), return null
+    if (assignment && !staff.find(s => s.id === assignment.staffId)) {
+      console.warn(`Assignment found but staff member ${assignment.staffId} no longer exists - likely temp staff removed on refresh`);
+      return null;
+    }
+    
     return assignment;
   };
 
@@ -532,7 +538,8 @@ export const ScheduleTableView = ({
     return schedule.assignments.filter(assignment => 
       assignment.studentId === student.id && 
       assignment.session === session && 
-      assignment.program === student.program
+      assignment.program === student.program &&
+      staff.find(s => s.id === assignment.staffId) // Only include assignments where staff member still exists
     );
   };
 
@@ -589,6 +596,13 @@ export const ScheduleTableView = ({
       
       // Check if staff is available for this session
       const staffMember = staff.find(s => s.id === teamMember.id || s.id == teamMember.id);
+      
+      // If this is temp staff (not in main staff array), they're automatically available for their designated sessions
+      if (!staffMember && teamMember.isTemp) {
+        console.log(`✅ Including temp staff ${teamMember.name} in ${session} dropdown`);
+        return true; // Temp staff are always available for their designated sessions (already filtered above)
+      }
+      
       if (!staffMember) return false;
       
       // EXCLUDE staff who are absent for this session
@@ -2297,7 +2311,7 @@ export const SessionSummary = ({ schedule, staff, students, session, program, se
         <div className="flex justify-between">
           <span>Total Students:</span>
           <span className="font-medium">
-            {programStudents.length}
+            {presentProgramStudents.length}
             {absentStudents.length > 0 && (
               <span className="text-xs text-gray-500 ml-1">
                 ({absentStudents.length} absent)

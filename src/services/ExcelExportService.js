@@ -95,13 +95,24 @@ export class ExcelExportService {
   static generateScheduleData(schedule, students, staff) {
     const data = [];
     
-    // Header row
+    // Header row with time columns
     data.push([
       'Client',
       'Program',
       'AM Staff',
-      'PM Staff'
+      'ExpAM Start',
+      'ExpAM End',
+      'Lunch1Cov',
+      'Lunch2Cov',
+      'PM Staff',
+      'ExpPM Start',
+      'ExpPM End',
+      'AMStartOR',
+      'AMEndOR',
+      'PMStartOR',
+      'PMEndOR2'
     ]);
+
 
     // Get all active students, sorted by name
     const activeStudents = students
@@ -187,6 +198,13 @@ export class ExcelExportService {
       const maxStaffPM = Math.max(uniquePmStaff.length, isAbsentPM ? 1 : 0);
       const maxRows = Math.max(maxStaffAM, maxStaffPM, 1); // At least 1 row
 
+      // Determine times based on program
+      const isPrimary = student.program === 'Primary';
+      const amStart = '8:45 AM';
+      const amEnd = isPrimary ? '12:05 PM' : '11:30 AM';
+      const pmStart = isPrimary ? '12:35 PM' : '12:00 PM';
+      const pmEnd = '3:00 PM';
+
       for (let i = 0; i < maxRows; i++) {
         const rowAmStaff = isAbsentAM && i === 0 ? amStatus : (uniqueAmStaff[i] || '');
         const rowPmStaff = isAbsentPM && i === 0 ? pmStatus : (uniquePmStaff[i] || '');
@@ -194,10 +212,20 @@ export class ExcelExportService {
         // Only add row if there's content or it's the first row
         if (i === 0 || rowAmStaff || rowPmStaff) {
           data.push([
-            student.name, // Show name on all rows
-            student.program, // Show program on all rows
-            rowAmStaff,
-            rowPmStaff
+            student.name, // Client
+            student.program, // Program
+            rowAmStaff, // AM Staff
+            rowAmStaff ? amStart : '', // AM Start (only if staff assigned)
+            rowAmStaff ? amEnd : '', // AM End (only if staff assigned)
+            '', // Lunch1Cov BLANK
+            '', // Lunch2Cov BLANK
+            rowPmStaff, // PM Staff
+            rowPmStaff ? pmStart : '', // PM Start (only if staff assigned)
+            rowPmStaff ? pmEnd : '', // PM End (only if staff assigned)
+            '', // AMStartOR BLANK
+            '', // AMEndOR BLANK
+            '', // PMStartOR BLANK
+            ''  // PMEndOR2 BLANK
           ]);
         }
       }
@@ -206,11 +234,25 @@ export class ExcelExportService {
       if (amTrainee && !isAbsentAM) {
         const traineeStaff = staff.find(s => s.id === amTrainee.staffId);
         if (traineeStaff) {
+          const isPrimary = student.program === 'Primary';
+          const amStart = '8:45 AM';
+          const amEnd = isPrimary ? '12:05 PM' : '11:30 AM';
+          
           data.push([
             student.name + ' (Trainee)',
             student.program,
-            this.formatStaffName(traineeStaff.name),
-            '' // PM Staff (trainee is AM only)
+            this.formatStaffName(traineeStaff.name), // AM Staff
+            amStart, // AM Start
+            amEnd, // AM End
+            '', // Lunch1Cov BLANK
+            '', // Lunch2Cov BLANK
+            '', // PM Staff (trainee is AM only)
+            '', // PM Start
+            '', // PM End
+            '', // AMStartOR BLANK
+            '', // AMEndOR BLANK
+            '', // PMStartOR BLANK
+            ''  // PMEndOR2 BLANK
           ]);
         }
       }
@@ -218,11 +260,25 @@ export class ExcelExportService {
       if (pmTrainee && !isAbsentPM) {
         const traineeStaff = staff.find(s => s.id === pmTrainee.staffId);
         if (traineeStaff) {
+          const isPrimary = student.program === 'Primary';
+          const pmStart = isPrimary ? '12:35 PM' : '12:00 PM';
+          const pmEnd = '3:00 PM';
+          
           data.push([
             student.name + ' (Trainee)',
             student.program,
             '', // AM Staff (trainee is PM only)
-            this.formatStaffName(traineeStaff.name)
+            '', // AM Start
+            '', // AM End
+            '', // Lunch1Cov BLANK
+            '', // Lunch2Cov BLANK
+            this.formatStaffName(traineeStaff.name), // PM Staff
+            pmStart, // PM Start
+            pmEnd, // PM End
+            '', // AMStartOR BLANK
+            '', // AMEndOR BLANK
+            '', // PMStartOR BLANK
+            ''  // PMEndOR2 BLANK
           ]);
         }
       }
@@ -259,8 +315,18 @@ export class ExcelExportService {
         data.push([
           index === 0 ? 'OUT' : '', // Only show "OUT" on first row
           index === 0 ? '-' : '',   // Only show "-" on first row
-          staffInfo.AM ? staffInfo.name : '',
-          staffInfo.PM ? staffInfo.name : ''
+          staffInfo.AM ? staffInfo.name : '', // AM Staff
+          '', // AM Start
+          '', // AM End
+          '', // Lunch1Cov BLANK
+          '', // Lunch2Cov BLANK
+          staffInfo.PM ? staffInfo.name : '', // PM Staff
+          '', // PM Start
+          '', // PM End
+          '', // AMStartOR BLANK
+          '', // AMEndOR BLANK
+          '', // PMStartOR BLANK
+          ''  // PMEndOR2 BLANK
         ]);
       });
     }

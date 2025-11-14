@@ -97,7 +97,7 @@ export class AutoAssignmentEngine {
   /**
    * Sort staff with STRICT preference for RBTs/BSs over EAs
    */
-  sortStaffForStudentStrict(student, availableStaff, session) {
+  sortStaffForStudentStrict(student, availableStaff, session, schedule = null) {
     return [...availableStaff].sort((a, b) => {
       // 1. Team members first
       const aIsTeamMember = student.teamIds.includes(a.id);
@@ -110,12 +110,19 @@ export class AutoAssignmentEngine {
       const bScore = this.getStaffPriorityScore(b);
       if (aScore !== bScore) return aScore - bScore;
 
-      // 3. For PM sessions, add slight randomization within same priority level
+      // 3. NEW: Prioritize staff with smaller caseloads (fewer current assignments)
+      if (schedule) {
+        const aAssignments = schedule.getStaffAssignments(a.id).length;
+        const bAssignments = schedule.getStaffAssignments(b.id).length;
+        if (aAssignments !== bAssignments) return aAssignments - bAssignments;
+      }
+
+      // 4. For PM sessions, add slight randomization within same priority level
       if (session === 'PM' && aScore === bScore) {
         return Math.random() - 0.5;
       }
 
-      // 4. Alphabetically for consistency
+      // 5. Alphabetically for consistency
       return a.name.localeCompare(b.name);
     });
   }
@@ -165,8 +172,8 @@ export class AutoAssignmentEngine {
 
     if (availableStaff.length === 0) return null;
 
-    // Prefer RBT/BS over EA
-    const sorted = this.sortStaffForStudentStrict(student, availableStaff, session);
+    // Prefer RBT/BS over EA and staff with smaller caseloads
+    const sorted = this.sortStaffForStudentStrict(student, availableStaff, session, schedule);
     return sorted[0];
   }
   /**
@@ -1045,7 +1052,7 @@ export class AutoAssignmentEngine {
     }
 
     // Sort with hierarchy but add randomization for better distribution
-    const sortedStaff = this.sortStaffForStudentWithShuffling(student, finalTeamStaff, session);
+    const sortedStaff = this.sortStaffForStudentWithShuffling(student, finalTeamStaff, session, schedule);
 
     console.log(`  📋 Assignment order:`);
     sortedStaff.slice(0, staffCount).forEach((s, i) => {
@@ -1168,7 +1175,7 @@ export class AutoAssignmentEngine {
     teamStaff = preferredTeamStaff.length > 0 ? preferredTeamStaff : teamStaff.filter(staffMember => staffMember.canDoDirectSessions());
 
     if (teamStaff.length > 0) {
-      const sortedStaff = this.sortStaffForStudentWithShuffling(student, teamStaff, session);
+      const sortedStaff = this.sortStaffForStudentWithShuffling(student, teamStaff, session, schedule);
       const assignment = new Assignment({
         id: SchedulingUtils.generateAssignmentId(),
         staffId: sortedStaff[0].id,
@@ -1224,9 +1231,10 @@ export class AutoAssignmentEngine {
    * @param {Student} student - Student to assign
    * @param {Staff[]} availableStaff - Available staff members
    * @param {string} session - 'AM' or 'PM'
+   * @param {Schedule} schedule - Current schedule for caseload calculation
    * @returns {Staff[]} Sorted staff array
    */
-  sortStaffForStudentWithShuffling(student, availableStaff, session) {
+  sortStaffForStudentWithShuffling(student, availableStaff, session, schedule = null) {
     // PRIORITY 1: Only use preferred direct service providers (RBTs, BSs) if available
     const preferredStaff = availableStaff.filter(staff => staff.isPreferredDirectService());
 
@@ -1242,6 +1250,7 @@ export class AutoAssignmentEngine {
       isTeamMember: student.teamIds.includes(staff.id),
       roleLevel: staff.getRoleLevel(),
       isPreferred: staff.isPreferredDirectService(),
+      caseload: schedule ? schedule.getStaffAssignments(staff.id).length : 0,
       // Stronger random factor for more variation between runs
       randomFactor: Math.random() * randomizationFactor
     }));
@@ -1254,6 +1263,11 @@ export class AutoAssignmentEngine {
       // Preferred direct service providers first (RBTs/BSs over EAs)
       if (a.isPreferred && !b.isPreferred) return -1;
       if (!a.isPreferred && b.isPreferred) return 1;
+
+      // NEW: Prioritize staff with smaller caseloads (fewer current assignments)
+      if (schedule && a.caseload !== b.caseload) {
+        return a.caseload - b.caseload;
+      }
 
       // ENHANCED: Within same preference/team level, use randomization to create variation
       // This allows different staff to be selected on each auto-assign click
@@ -1274,16 +1288,16 @@ export class AutoAssignmentEngine {
    */
   prioritizeStudents(students, session = 'AM') {
     return [...students].sort((a, b) => {
-      // 2:1 ratio students first (they need more staff) - session-specific
-      if (a.requiresMultipleStaff(session) && !b.requiresMultipleStaff(session)) return -1;
-      if (!a.requiresMultipleStaff(session) && b.requiresMultipleStaff(session)) return 1;
-
-      // Then by team size (students with smaller teams get priority to ensure coverage)
+      // 1. PRIORITY: Students with fewer team members first (harder to staff)
       const aTeamSize = a.teamIds.length;
       const bTeamSize = b.teamIds.length;
       if (aTeamSize !== bTeamSize) return aTeamSize - bTeamSize;
 
-      // Then alphabetically for consistency
+      // 2. Then 2:1 ratio students (they need more staff) - session-specific
+      if (a.requiresMultipleStaff(session) && !b.requiresMultipleStaff(session)) return -1;
+      if (!a.requiresMultipleStaff(session) && b.requiresMultipleStaff(session)) return 1;
+
+      // 3. Then alphabetically for consistency
       return a.name.localeCompare(b.name);
     });
   }
@@ -1960,6 +1974,120 @@ export class AutoAssignmentEngine {
   }
 
   /**
+   * Try to fill a gap by finding a cascading chain of reassignments
+   * This method aggressively tries to redistribute staff to fill gaps
+   * 
+   * @param {Student} gapStudent - Student with no assignment (gap)
+   * @param {string} session - AM or PM
+   * @param {string} program - Primary or Secondary
+   * @param {Staff[]} staff - All active staff
+   * @param {Student[]} students - All active students
+   * @param {Schedule} schedule - Current schedule
+   * @param {number} depth - Current recursion depth (max 3)
+   * @returns {Object} { success: boolean, assignments: Array, removals: Array }
+   */
+  async tryCascadingReassignment(gapStudent, session, program, staff, students, schedule, depth = 0) {
+    const MAX_DEPTH = 3;
+    if (depth >= MAX_DEPTH) {
+      console.log(`      ⚠️ Max cascade depth reached for ${gapStudent.name}`);
+      return { success: false, assignments: [], removals: [] };
+    }
+
+    console.log(`${'  '.repeat(depth)}🔗 CASCADE LEVEL ${depth + 1}: Finding assignment for ${gapStudent.name}`);
+
+    // Find team members of gap student
+    const gapTeamMembers = staff.filter(s => 
+      gapStudent.teamIds.includes(s.id) &&
+      s.isAvailableForSession(session) &&
+      s.canWorkProgram(program) &&
+      this.canStaffDoDirectService(s) &&
+      !this.isStaffInTrainingForStudent(s, gapStudent) &&
+      !schedule.hasStaffWorkedWithStudentToday(s.id, gapStudent.id)
+    );
+
+    console.log(`${'  '.repeat(depth)}   Team members available: ${gapTeamMembers.length}`);
+
+    // Try each team member
+    for (const teamStaff of gapTeamMembers) {
+      // Check if this staff is currently assigned
+      const currentAssignment = schedule.assignments.find(a =>
+        a.staffId === teamStaff.id &&
+        a.session === session &&
+        !a.isLocked &&
+        a.assignedBy !== 'manual'
+      );
+
+      if (!currentAssignment) {
+        // Staff is free - direct assignment!
+        console.log(`${'  '.repeat(depth)}   ✅ DIRECT: ${teamStaff.name} is free → ${gapStudent.name}`);
+        
+        const newAssignment = new Assignment({
+          id: SchedulingUtils.generateAssignmentId(),
+          staffId: teamStaff.id,
+          staffName: teamStaff.name,
+          studentId: gapStudent.id,
+          studentName: gapStudent.name,
+          session: session,
+          program: program,
+          date: schedule.date,
+          isLocked: false,
+          assignedBy: 'auto-swap-cascade'
+        });
+
+        return {
+          success: true,
+          assignments: [newAssignment],
+          removals: []
+        };
+      }
+
+      // Staff is assigned - need to find replacement
+      const currentStudent = students.find(s => s.id === currentAssignment.studentId);
+      if (!currentStudent) continue;
+
+      // Don't break paired students
+      if (currentStudent.isPaired && currentStudent.isPaired()) {
+        console.log(`${'  '.repeat(depth)}   ⚠️ Skip ${currentStudent.name} - paired student`);
+        continue;
+      }
+
+      console.log(`${'  '.repeat(depth)}   🔄 ${teamStaff.name} currently with ${currentStudent.name}, need replacement...`);
+
+      // Try to recursively fill the current student's spot
+      const cascadeResult = await this.tryCascadingReassignment(
+        currentStudent, session, program, staff, students, schedule, depth + 1
+      );
+
+      if (cascadeResult.success) {
+        console.log(`${'  '.repeat(depth)}   ✅ CASCADE SUCCESS: ${teamStaff.name} → ${gapStudent.name}`);
+        
+        // Create the assignment for gap student
+        const newAssignment = new Assignment({
+          id: SchedulingUtils.generateAssignmentId(),
+          staffId: teamStaff.id,
+          staffName: teamStaff.name,
+          studentId: gapStudent.id,
+          studentName: gapStudent.name,
+          session: session,
+          program: program,
+          date: schedule.date,
+          isLocked: false,
+          assignedBy: 'auto-swap-cascade'
+        });
+
+        return {
+          success: true,
+          assignments: [...cascadeResult.assignments, newAssignment],
+          removals: [...cascadeResult.removals, currentAssignment]
+        };
+      }
+    }
+
+    console.log(`${'  '.repeat(depth)}   ❌ No cascade solution found for ${gapStudent.name}`);
+    return { success: false, assignments: [], removals: [] };
+  }
+
+  /**
    * PHASE 3: Swap Optimization - Fill gaps by swapping available staff
    * 
    * Strategy:
@@ -1967,6 +2095,7 @@ export class AutoAssignmentEngine {
    * 2. For each gap, find UNASSIGNED staff who are available
    * 3. Look for students who have staff that COULD work with the unassigned staff's students
    * 4. Execute swaps: Unassigned staff → assigned student, their staff → gap student
+   * 5. NEW: Try aggressive cascading reassignments for stubborn gaps
    * 
    * Example:
    * - Lydia (gap) has team members: [Amy, Bob]
@@ -2345,40 +2474,73 @@ export class AutoAssignmentEngine {
 
           if (!swapFound) {
             console.log(`   ❌ No simple swap found to fill ${gapStudent.name}'s gap`);
-            console.log(`   📋 DIAGNOSTIC INFO:`);
-            console.log(`      • Gap student's team: ${gapStudentTeam.map(s => s.name).join(', ')}`);
-            console.log(`      • Available unassigned staff: ${unassignedStaff.map(s => s.name).join(', ')}`);
-            console.log(`      • Need to find: Someone who can free up one of ${gapStudent.name}'s team members`);
             
-            // TRY DEEPER ANALYSIS: Show WHERE each team member is currently assigned
-            console.log(`\n   🔎 DEEP ANALYSIS: Where are ${gapStudent.name}'s team members?`);
-            for (const teamMember of gapStudentTeam) {
-              const assignment = schedule.assignments.find(a => 
-                a.staffId === teamMember.id && 
-                a.session === session &&
-                a.program === program
-              );
+            // TRY 3C: AGGRESSIVE CASCADING REASSIGNMENT
+            console.log(`\n   🔗 Attempting CASCADING REASSIGNMENT for ${gapStudent.name}...`);
+            
+            const cascadeResult = await this.tryCascadingReassignment(
+              gapStudent, session, program, activeStaff, activeStudents, schedule, 0
+            );
+            
+            if (cascadeResult.success) {
+              console.log(`\n   ✅ CASCADE SUCCESS for ${gapStudent.name}!`);
+              console.log(`      Removing ${cascadeResult.removals.length} old assignments`);
+              console.log(`      Adding ${cascadeResult.assignments.length} new assignments`);
               
-              if (assignment) {
-                const assignedStudent = programStudents.find(s => s.id === assignment.studentId);
-                console.log(`      • ${teamMember.name} → ${assignedStudent ? assignedStudent.name : 'Unknown'} (${assignment.isLocked ? 'LOCKED' : 'unlocked'})`);
+              // Remove old assignments
+              for (const removal of cascadeResult.removals) {
+                schedule.removeAssignment(removal.id);
+                swaps.push({
+                  oldAssignment: removal,
+                  description: `Cascaded removal for ${gapStudent.name}`
+                });
+                swapsMade++;
+              }
+              
+              // Add new assignments
+              for (const assignment of cascadeResult.assignments) {
+                schedule.addAssignment(assignment);
+                newAssignments.push(assignment);
+              }
+              
+              gapsFilled++;
+              swapFound = true;
+            } else {
+              console.log(`   ❌ CASCADE FAILED for ${gapStudent.name}`);
+              console.log(`   📋 DIAGNOSTIC INFO:`);
+              console.log(`      • Gap student's team: ${gapStudentTeam.map(s => s.name).join(', ')}`);
+              console.log(`      • Available unassigned staff: ${unassignedStaff.map(s => s.name).join(', ')}`);
+              
+              // TRY DEEPER ANALYSIS: Show WHERE each team member is currently assigned
+              console.log(`\n   🔎 DEEP ANALYSIS: Where are ${gapStudent.name}'s team members?`);
+              for (const teamMember of gapStudentTeam) {
+                const assignment = schedule.assignments.find(a => 
+                  a.staffId === teamMember.id && 
+                  a.session === session &&
+                  a.program === program
+                );
                 
-                if (assignedStudent && !assignment.isLocked) {
-                  // Check who could replace this team member
-                  const potentialReplacements = unassignedStaff.filter(us => 
-                    assignedStudent.teamIds.includes(us.id) &&
-                    !this.isStaffInTrainingForStudent(us, assignedStudent) &&
-                    !schedule.hasStaffWorkedWithStudentToday(us.id, assignedStudent.id)
-                  );
+                if (assignment) {
+                  const assignedStudent = programStudents.find(s => s.id === assignment.studentId);
+                  console.log(`      • ${teamMember.name} → ${assignedStudent ? assignedStudent.name : 'Unknown'} (${assignment.isLocked ? 'LOCKED' : 'unlocked'})`);
                   
-                  if (potentialReplacements.length > 0) {
-                    console.log(`         ✓ Could be replaced by: ${potentialReplacements.map(p => p.name).join(', ')}`);
-                  } else {
-                    console.log(`         ✗ No available replacements on ${assignedStudent.name}'s team`);
+                  if (assignedStudent && !assignment.isLocked) {
+                    // Check who could replace this team member
+                    const potentialReplacements = unassignedStaff.filter(us => 
+                      assignedStudent.teamIds.includes(us.id) &&
+                      !this.isStaffInTrainingForStudent(us, assignedStudent) &&
+                      !schedule.hasStaffWorkedWithStudentToday(us.id, assignedStudent.id)
+                    );
+                    
+                    if (potentialReplacements.length > 0) {
+                      console.log(`         ✓ Could be replaced by: ${potentialReplacements.map(p => p.name).join(', ')}`);
+                    } else {
+                      console.log(`         ✗ No available replacements on ${assignedStudent.name}'s team`);
+                    }
                   }
+                } else {
+                  console.log(`      • ${teamMember.name} → Available (not assigned in this session)`);
                 }
-              } else {
-                console.log(`      • ${teamMember.name} → Available (not assigned in this session)`);
               }
             }
           }

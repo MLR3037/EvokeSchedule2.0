@@ -192,6 +192,51 @@ export const AttendanceManagement = ({
       </div>
 
       <div className="p-6">
+        {/* Absent People Summary Lists */}
+        {(counts.staffAbsentAM > 0 || counts.staffAbsentPM > 0 || counts.clientsAbsentAM > 0 || counts.clientsAbsentPM > 0) && (
+          <div className="mb-6 grid grid-cols-1 md:grid-cols-2 gap-4">
+            {/* Absent Staff */}
+            {(counts.staffAbsentAM > 0 || counts.staffAbsentPM > 0) && (
+              <div className="bg-red-50 border border-red-200 rounded-lg p-4">
+                <h3 className="font-semibold text-red-900 mb-3 flex items-center gap-2">
+                  <UserX className="w-4 h-4" />
+                  Absent Staff Today
+                </h3>
+                <div className="space-y-2">
+                  {activeStaff
+                    .filter(s => s.absentAM || s.absentPM || s.absentFullDay || s.outOfSessionAM || s.outOfSessionPM || s.outOfSessionFullDay)
+                    .map(s => (
+                      <div key={s.id} className="flex items-center justify-between text-sm">
+                        <span className="text-red-900 font-medium">{s.name}</span>
+                        <span className="text-red-700 text-xs">{s.getAttendanceStatus()}</span>
+                      </div>
+                    ))}
+                </div>
+              </div>
+            )}
+            
+            {/* Absent Clients */}
+            {(counts.clientsAbsentAM > 0 || counts.clientsAbsentPM > 0) && (
+              <div className="bg-orange-50 border border-orange-200 rounded-lg p-4">
+                <h3 className="font-semibold text-orange-900 mb-3 flex items-center gap-2">
+                  <UserX className="w-4 h-4" />
+                  Absent Clients Today
+                </h3>
+                <div className="space-y-2">
+                  {activeStudents
+                    .filter(s => s.absentAM || s.absentPM || s.absentFullDay)
+                    .map(s => (
+                      <div key={s.id} className="flex items-center justify-between text-sm">
+                        <span className="text-orange-900 font-medium">{s.name}</span>
+                        <span className="text-orange-700 text-xs">{s.getAttendanceStatus()}</span>
+                      </div>
+                    ))}
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+
         {/* Summary Stats */}
         <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-6">
           <div className="bg-blue-50 rounded-lg p-4">
