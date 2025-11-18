@@ -726,8 +726,13 @@ export class SharePointService {
    */
   async loadSchedule(date) {
     try {
-      const dateString = typeof date === 'string' ? date : date.toISOString().split('T')[0];
-      console.log('� Loading schedule for date:', dateString);
+      // Format date in LOCAL timezone to avoid UTC conversion issues
+      const dateString = typeof date === 'string' 
+        ? date 
+        : `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
+      console.log('📅 Loading schedule for date:', dateString);
+      console.log('🔍 Date object received:', date);
+      console.log('🔍 Date string formatted (local timezone):', dateString);
 
       // Check authentication
       if (!this.isAuthenticated()) {
@@ -742,6 +747,7 @@ export class SharePointService {
         `$top=1`;
 
       console.log('🔍 Fetching schedule metadata from:', scheduleUrl);
+      console.log('🔍 Full request URL:', scheduleUrl);
 
       const scheduleResponse = await this.retryFetch(scheduleUrl, {
         method: 'GET',
@@ -752,7 +758,10 @@ export class SharePointService {
       });
 
       if (!scheduleResponse.ok) {
+        const errorText = await scheduleResponse.text();
         console.warn(`⚠️ No schedule found for ${dateString}`);
+        console.warn(`Response status: ${scheduleResponse.status}`);
+        console.warn(`Response details:`, errorText);
         return new Schedule({ 
           date: dateString, 
           assignments: [], 
@@ -763,6 +772,7 @@ export class SharePointService {
       }
 
       const scheduleData = await scheduleResponse.json();
+      console.log('📦 Raw schedule data from SharePoint:', scheduleData);
       
       if (!scheduleData.d.results || scheduleData.d.results.length === 0) {
         console.log(`ℹ️ No schedule record found for ${dateString}`);
@@ -794,11 +804,15 @@ export class SharePointService {
       });
 
       if (!assignmentsResponse.ok) {
+        const errorText = await assignmentsResponse.text();
         console.error('❌ Failed to load assignments');
-        throw new Error('Failed to load assignments from SharePoint');
+        console.error(`Response status: ${assignmentsResponse.status}`);
+        console.error(`Response details:`, errorText);
+        throw new Error(`Failed to load assignments from SharePoint: ${assignmentsResponse.status}`);
       }
 
       const assignmentsData = await assignmentsResponse.json();
+      console.log('📦 Raw assignments data from SharePoint:', assignmentsData);
       const assignmentItems = assignmentsData.d.results || [];
 
       console.log(`✅ Loaded ${assignmentItems.length} assignments from SharePoint`);
@@ -1212,7 +1226,10 @@ export class SharePointService {
     }
   }
 
-  async saveSchedule(schedule) {
+  async saveSchedule(schedule, staff = null, students = null) {
+    // Cache staff and students for use in saveAttendanceForDate
+    this.cachedStaff = staff;
+    this.cachedStudents = students;
     try {
       console.log('🔐 Checking authentication status...');
       
@@ -1426,8 +1443,10 @@ export class SharePointService {
       }
 
       // ✅ NEW: Save attendance data to DailyAttendance
+      // Note: This will save whatever attendance state is currently in SharePoint
+      // The actual attendance state should be passed from App.js during save
       console.log('💾 Saving attendance data for', schedule.date);
-      await this.saveAttendanceForDate(schedule.date);
+      await this.saveAttendanceForDate(schedule.date, this.cachedStaff, this.cachedStudents);
 
       return true;
     } catch (error) {
@@ -1593,7 +1612,7 @@ export class SharePointService {
    * Save attendance data for all staff and students for a specific date
    * This replaces the old saveAttendanceHistory method
    */
-  async saveAttendanceForDate(date) {
+  async saveAttendanceForDate(date, staff = null, students = null) {
     try {
       if (!this.isAuthenticated()) {
         console.error('Cannot save attendance - not authenticated');
@@ -1607,11 +1626,15 @@ export class SharePointService {
       // First, delete existing attendance records for this date
       await this.deleteAttendanceForDate(dateStr);
 
-      // Get current staff and students from App state
-      // We need to pass these from the saveSchedule call
-      // For now, we'll load them fresh
-      const staff = await this.loadStaff();
-      const students = await this.loadStudents();
+      // Use provided staff/students if available, otherwise load fresh
+      // If passed from App.js, these will have the current attendance flags
+      if (!staff || !students) {
+        console.log('⚠️ No staff/students provided, loading fresh from SharePoint (attendance data may be lost)');
+        staff = await this.loadStaff();
+        students = await this.loadStudents();
+      } else {
+        console.log(`✅ Using provided staff (${staff.length}) and students (${students.length}) with current attendance data`);
+      }
 
       const attendanceRecords = [];
 

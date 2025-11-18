@@ -905,7 +905,8 @@ const handleAssignmentRemove = (assignmentId) => {
         lastModifiedBy: currentUser
       });
 
-      const success = await sharePointService.saveSchedule(scheduleToSave);
+      // Pass current staff and students so attendance data is saved
+      const success = await sharePointService.saveSchedule(scheduleToSave, staff, students);
       
       if (success) {
         // Update local schedule state with metadata
@@ -950,6 +951,7 @@ const handleAssignmentRemove = (assignmentId) => {
     setLoading(true);
     try {
       console.log('📥 Loading saved schedule for:', currentDate);
+      console.log('🔍 Date being sent to SharePoint:', currentDate.toISOString());
       
       // First, reload staff and students from SharePoint to get current attendance
       console.log('📥 Reloading staff and students from SharePoint...');
@@ -962,7 +964,9 @@ const handleAssignmentRemove = (assignmentId) => {
       setStudents(freshStudents);
       console.log('✅ Staff and students reloaded with current attendance');
       
+      console.log('📥 Now loading schedule from SharePoint for date:', currentDate);
       const scheduleData = await sharePointService.loadSchedule(currentDate);
+      console.log('📦 Schedule data received:', scheduleData);
       
       if (scheduleData && scheduleData.assignments && scheduleData.assignments.length > 0) {
         setSchedule(scheduleData);
