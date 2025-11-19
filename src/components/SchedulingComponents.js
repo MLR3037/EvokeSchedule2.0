@@ -535,12 +535,45 @@ export const ScheduleTableView = ({
   // Helper function to get all assignments for a student in a session
   const getStudentAssignments = (student, session) => {
     if (!schedule || !schedule.assignments) return [];
-    return schedule.assignments.filter(assignment => 
+    
+    // Get direct assignments for this student
+    const directAssignments = schedule.assignments.filter(assignment => 
       assignment.studentId === student.id && 
       assignment.session === session && 
       assignment.program === student.program &&
       staff.find(s => s.id === assignment.staffId) // Only include assignments where staff member still exists
     );
+    
+    // PAIRED STUDENT FIX: If student is paired and has no assignments, check if paired partner has assignments
+    // This handles cases where old schedules only saved one partner's assignment
+    if (directAssignments.length === 0 && student.isPaired && student.isPaired()) {
+      const ratio = session === 'AM' ? student.ratioAM : student.ratioPM;
+      
+      // Only apply this fix for 1:2 paired students
+      if (ratio === '1:2') {
+        const pairedStudent = student.getPairedStudent(students);
+        if (pairedStudent) {
+          const pairedRatio = session === 'AM' ? pairedStudent.ratioAM : pairedStudent.ratioPM;
+          
+          // If paired partner also has 1:2 ratio, they should share staff
+          if (pairedRatio === '1:2') {
+            const pairedAssignments = schedule.assignments.filter(assignment => 
+              assignment.studentId === pairedStudent.id && 
+              assignment.session === session && 
+              assignment.program === pairedStudent.program &&
+              staff.find(s => s.id === assignment.staffId)
+            );
+            
+            if (pairedAssignments.length > 0) {
+              console.log(`🔗 PAIRED FIX: ${student.name} has no assignments, using ${pairedStudent.name}'s assignments`);
+              return pairedAssignments; // Return paired partner's assignments
+            }
+          }
+        }
+      }
+    }
+    
+    return directAssignments;
   };
 
   const renderStaffDropdown = (student, session) => {
@@ -2020,6 +2053,17 @@ export const SessionSummary = ({ schedule, staff, students, session, program, se
     const ratio = session === 'AM' ? student.ratioAM : student.ratioPM;
     const required = ratio === '2:1' ? 2 : 1;
     const actual = studentAssignmentCounts[student.id] || 0;
+    
+    // SPECIAL CASE: For 1:2 (paired) students, check if their paired partner has an assignment
+    // In a 1:2 pairing, only one student gets the assignment record, but both are covered
+    if (ratio === '1:2' && student.pairedWith) {
+      const partner = students.find(s => s.id === student.pairedWith);
+      if (partner) {
+        const partnerActual = studentAssignmentCounts[partner.id] || 0;
+        // If either this student OR their partner has an assignment, both are considered assigned
+        return actual < required && partnerActual < 1;
+      }
+    }
     
     // Include students who are completely unassigned OR partially assigned (e.g., 2:1 with only 1 staff)
     return actual < required;

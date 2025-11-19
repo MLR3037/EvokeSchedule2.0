@@ -559,11 +559,9 @@ export class SharePointService {
 
       const headers = await this.getHeaders();
       
-      // For multi-person picker fields, we need to expand them directly
-      // Team is a multi-person picker field that references the Staff list
+      // Load students WITHOUT Team field (now using ClientTeamMembers list instead)
       const url = `${this.config.siteUrl}/_api/web/lists/getbytitle('${this.config.studentsListName}')/items?` +
-        `$select=Id,Title,Program,RatioAM,RatioPM,IsActive,PairedWith,Team/Id,Team/Title,Team/EMail,AbsentAM,AbsentPM,AbsentFullDay,TeamTrainingStatus,ScheduledMonday,ScheduledTuesday,ScheduledWednesday,ScheduledThursday,ScheduledFriday&` +
-        `$expand=Team&` +
+        `$select=Id,Title,Program,RatioAM,RatioPM,IsActive,PairedWith,AbsentAM,AbsentPM,AbsentFullDay,ScheduledMonday,ScheduledTuesday,ScheduledWednesday,ScheduledThursday,ScheduledFriday&` +
         `$top=5000`;
 
       console.log('📋 Fetching students from:', url);
@@ -584,7 +582,6 @@ export class SharePointService {
 
       if (studentItems.length > 0) {
         console.log('📋 First student item:', studentItems[0]);
-        console.log('📋 First student team data:', studentItems[0].Team);
       }
 
       // Load team members from new ClientTeamMembers list
@@ -614,7 +611,7 @@ export class SharePointService {
       let teamIds = [];
       let teamTrainingStatus = {};
 
-      // PRIORITY 1: If ClientTeamMembers list exists, use ONLY that data (even if empty)
+      // Load team from ClientTeamMembers list (should always exist now)
       if (useClientTeamMembersList) {
         console.log(`  📋 Using ClientTeamMembers list for ${item.Title} (ID: ${item.Id})`);
         
@@ -641,46 +638,10 @@ export class SharePointService {
           console.log(`  ⚠️ ${item.Title} (ID: ${item.Id}) has no team members in ClientTeamMembers list`);
         }
       }
-      // FALLBACK: Use legacy Team field ONLY if ClientTeamMembers list doesn't exist
-      else if (item.Team) {
-        console.log(`  📋 Using legacy Team field for ${item.Title} (ClientTeamMembers list not available)`);
-        
-        if (item.Team.results && Array.isArray(item.Team.results)) {
-          // Multi-value person picker format
-          console.log(`  📋 Team data for ${item.Title}:`, item.Team.results);
-          
-          team = item.Team.results.map(person => ({
-            id: person.Id,
-            title: person.Title,
-            name: person.Title,
-            email: person.EMail || ''
-          }));
-          
-          teamIds = team.map(member => member.id);
-          
-        } else if (item.Team.Id) {
-          // Single person picker format
-          console.log(`  📋 Single team member for ${item.Title}:`, item.Team);
-          
-          team = [{
-            id: item.Team.Id,
-            title: item.Team.Title,
-            name: item.Team.Title,
-            email: item.Team.EMail || ''
-          }];
-          
-          teamIds = [item.Team.Id];
-        }
-        
-        // Load training status from JSON field (legacy)
-        try {
-          teamTrainingStatus = item.TeamTrainingStatus ? JSON.parse(item.TeamTrainingStatus) : {};
-        } catch (e) {
-          console.warn(`  ⚠️ Failed to parse TeamTrainingStatus for ${item.Title}:`, e);
-          teamTrainingStatus = {};
-        }
-        
-        console.log(`  ✅ ${item.Title} has ${team.length} team members from legacy Team field`);
+      // ERROR: ClientTeamMembers list doesn't exist!
+      else {
+        console.error(`  ❌ ClientTeamMembers list not found! Cannot load team data for ${item.Title}.`);
+        console.error(`  ❌ Please ensure the ClientTeamMembers SharePoint list exists.`);
       }
 
       const student = new Student({
@@ -1100,11 +1061,7 @@ export class SharePointService {
         ? `${this.config.siteUrl}/_api/web/lists/getbytitle('${this.config.studentsListName}')/items(${student.id})`
         : `${this.config.siteUrl}/_api/web/lists/getbytitle('${this.config.studentsListName}')/items`;
 
-      // Prepare team field for SharePoint People Picker (legacy support)
-      const teamResults = student.team && student.team.length > 0
-        ? student.team.map(person => person.id || person.userId).filter(id => id)
-        : [];
-
+      // Team data is now stored in ClientTeamMembers list, not in the Clients list
       const body = {
         __metadata: { type: 'SP.Data.ClientsListItem' },
         Title: student.name,
@@ -1112,11 +1069,9 @@ export class SharePointService {
         RatioAM: student.ratioAM,
         RatioPM: student.ratioPM,
         IsActive: student.isActive,
-        TeamId: { results: teamResults }, // People Picker field (legacy)
         AbsentAM: student.absentAM || false,
         AbsentPM: student.absentPM || false,
         AbsentFullDay: student.absentFullDay || false,
-        TeamTrainingStatus: student.teamTrainingStatus ? JSON.stringify(student.teamTrainingStatus) : '{}', // Legacy fallback
         // Days of week schedule
         ScheduledMonday: student.scheduledMonday !== false,
         ScheduledTuesday: student.scheduledTuesday !== false,

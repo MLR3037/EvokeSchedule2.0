@@ -18,7 +18,8 @@ import {
   Upload,
   Check,
   AlertCircle,
-  X
+  X,
+  ExternalLink
 } from 'lucide-react';
 
 // Import our new components and services
@@ -43,6 +44,7 @@ import {
 import TeamManagement from './components/TeamManagement.js';
 import AttendanceManagement from './components/AttendanceManagement.js';
 import { TrainingTracker } from './components/TrainingTracker.js';
+import LiveScheduleView from './components/LiveScheduleView.js';
 import { runTests } from './tests/SchedulingTestSuite.js';
 import ErrorBoundary from './components/ErrorBoundary.js';
 
@@ -1703,6 +1705,7 @@ const handleAssignmentRemove = (assignmentId) => {
           <div className="flex space-x-8">
             {[
               { id: 'schedule', label: 'Schedule', icon: Clock },
+              { id: 'live-view', label: 'Live View', icon: ExternalLink },
               { id: 'staff', label: 'Staff', icon: Users },
               { id: 'students', label: 'Students', icon: Users },
               { id: 'teams', label: 'Teams', icon: Users },
@@ -1743,6 +1746,20 @@ const handleAssignmentRemove = (assignmentId) => {
 
         {!loading && (
           <>
+            {/* Live View Tab */}
+            {activeTab === 'live-view' && (
+              <LiveScheduleView
+                schedule={schedule}
+                students={students}
+                staff={staff}
+                currentDate={currentDate}
+                onUpdateScheduleData={(data) => {
+                  console.log('Schedule data updated:', data);
+                  // Data is automatically managed within LiveScheduleView component
+                }}
+              />
+            )}
+
             {/* Schedule Tab */}
             {activeTab === 'schedule' && (
               <div className="space-y-6">

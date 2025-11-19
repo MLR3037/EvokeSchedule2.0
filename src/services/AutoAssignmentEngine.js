@@ -1005,7 +1005,8 @@ export class AutoAssignmentEngine {
       // EXCLUDE staff who are in training for this student
       // They should only be assigned as trainees, not main staff
       if (this.isStaffInTrainingForStudent(staffMember, student)) {
-        console.log(`  🚫 EXCLUDING ${staffMember.name}: In training for ${student.name} (trainee only)`);
+        const trainingStatus = student.getStaffTrainingStatus(staffMember.id);
+        console.log(`  🚫 EXCLUDING ${staffMember.name}: In training for ${student.name} (status: ${trainingStatus}) - trainee only`);
         return false;
       }
 
@@ -1014,8 +1015,16 @@ export class AutoAssignmentEngine {
       const hasAnySoloCase = this.staffHasAnySoloCase(staffMember, students);
       if (!hasAnySoloCase) {
         console.log(`  🚫 BLOCKING ${staffMember.name}: NO SOLO CASES - training-only staff cannot be auto-assigned`);
+        console.log(`     Staff ${staffMember.name} team assignments:`, students
+          .filter(s => s.teamIds && s.teamIds.includes(staffMember.id))
+          .map(s => `${s.name}:${s.getStaffTrainingStatus(staffMember.id)}`)
+          .join(', '));
         return false;
       }
+      
+      // Log for staff who PASSED all checks
+      const trainingStatus = student.getStaffTrainingStatus(staffMember.id);
+      console.log(`  ✅ ${staffMember.name} ELIGIBLE for ${student.name} (status: ${trainingStatus})`);
 
       return true;
     });
