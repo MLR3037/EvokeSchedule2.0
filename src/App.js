@@ -180,13 +180,13 @@ const ABAScheduler = () => {
           const student = studentsData.find(s => s.id === assignment.studentId);
           
           // Remove if staff doesn't exist or is unavailable for this session
-          if (!staffMember || !staffMember.isAvailableForSession(assignment.session)) {
+          if (!staffMember || !staffMember.isAvailableForSession(assignment.session, currentDate)) {
             console.log(`🗑️ Removing assignment: ${assignment.staffName || 'Staff'} (unavailable) → ${assignment.studentName || 'Student'} ${assignment.session}`);
             return false;
           }
           
           // Remove if student doesn't exist or is unavailable for this session
-          if (!student || !student.isAvailableForSession(assignment.session)) {
+          if (!student || !student.isAvailableForSession(assignment.session, currentDate)) {
             console.log(`🗑️ Removing assignment: ${assignment.staffName || 'Staff'} → ${assignment.studentName || 'Student'} (unavailable) ${assignment.session}`);
             return false;
           }
@@ -264,13 +264,13 @@ const ABAScheduler = () => {
           const student = studentsData.find(s => s.id === assignment.studentId);
           
           // Remove if staff doesn't exist or is unavailable for this session
-          if (!staffMember || !staffMember.isAvailableForSession(assignment.session)) {
+          if (!staffMember || !staffMember.isAvailableForSession(assignment.session, currentDate)) {
             console.log(`🗑️ Removing assignment: ${assignment.staffName || 'Staff'} (unavailable) → ${assignment.studentName || 'Student'} ${assignment.session}`);
             return false;
           }
           
           // Remove if student doesn't exist or is unavailable for this session
-          if (!student || !student.isAvailableForSession(assignment.session)) {
+          if (!student || !student.isAvailableForSession(assignment.session, currentDate)) {
             console.log(`🗑️ Removing assignment: ${assignment.staffName || 'Staff'} → ${assignment.studentName || 'Student'} (unavailable) ${assignment.session}`);
             return false;
           }
@@ -830,6 +830,9 @@ const handleManualAssignment = ({ staffId, studentId, session, program, bypassTe
     }
   }
 
+  // Check if this is a temp staff assignment (not on student's regular team)
+  const isTempStaff = bypassTeamCheck || !student.teamIds.includes(staffId);
+
   const assignment = new Assignment({
     id: SchedulingUtils.generateAssignmentId(),
     staffId,
@@ -840,8 +843,13 @@ const handleManualAssignment = ({ staffId, studentId, session, program, bypassTe
     program,
     date: currentDate,
     isLocked: false, // Manual assignments start UNLOCKED - user must click lock icon to lock
-    assignedBy: 'manual'
+    assignedBy: 'manual',
+    isTempStaff: isTempStaff // NEW: Mark as temp staff if bypassed team check
   });
+  
+  if (isTempStaff) {
+    console.log(`✅ Created TEMP STAFF assignment: ${staffMember.name} → ${student.name} ${session}`);
+  }
 
   // Add assignment to schedule
   schedule.addAssignment(assignment);
@@ -1393,8 +1401,9 @@ const handleAssignmentRemove = (assignmentId) => {
     try {
       console.log('🧹 Starting cleanup of deleted staff from student teams...');
       
-      const activeStaffIds = new Set(staff.filter(s => s.isActive).map(s => s.id));
-      const activeStaffEmails = new Set(staff.filter(s => s.isActive && s.email).map(s => s.email.toLowerCase()));
+      // Build sets of all current staff (active AND inactive) - we want ALL staff in the system
+      const allStaffIds = new Set(staff.map(s => s.id));
+      const allStaffEmails = new Set(staff.filter(s => s.email).map(s => s.email.toLowerCase()));
       
       let totalCleaned = 0;
       const updatedStudents = [];
@@ -1404,21 +1413,21 @@ const handleAssignmentRemove = (assignmentId) => {
 
         const originalTeamSize = student.team.length;
         
-        // Filter out deleted staff (not in active staff list)
+        // Filter out staff that don't exist in the Staff list at all (deleted from SharePoint)
         const cleanedTeam = student.team.filter(teamMember => {
           // Check by email first (most reliable)
           if (teamMember.email) {
-            const found = activeStaffEmails.has(teamMember.email.toLowerCase());
+            const found = allStaffEmails.has(teamMember.email.toLowerCase());
             if (found) return true;
           }
           
           // Check by ID
           if (teamMember.id) {
-            const found = activeStaffIds.has(teamMember.id);
+            const found = allStaffIds.has(teamMember.id);
             if (found) return true;
           }
           
-          // Staff member not found - they've been deleted
+          // Staff member not found in ANY staff list - they've been completely deleted from SharePoint
           console.log(`  🗑️ Removing deleted staff "${teamMember.title || teamMember.name}" from ${student.name}'s team`);
           return false;
         });

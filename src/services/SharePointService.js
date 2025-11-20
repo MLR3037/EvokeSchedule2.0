@@ -790,7 +790,8 @@ export class SharePointService {
           program: item.Program,
           date: item.ScheduleDate,
           isLocked: item.IsLocked || false,
-          assignedBy: 'loaded'
+          assignedBy: 'loaded',
+          isTempStaff: item.IsTempStaff || false // NEW: Load temp staff flag
         });
       });
 
@@ -1444,7 +1445,8 @@ export class SharePointService {
         Session: assignment.session,
         Program: assignment.program,
         AssignmentType: assignment.type || 'Standard',
-        IsLocked: assignment.isLocked || false
+        IsLocked: assignment.isLocked || false,
+        IsTempStaff: assignment.isTempStaff || false // NEW: Save temp staff flag
       };
 
       console.log('💾 Saving assignment to DailyAssignments list:', assignmentData);
@@ -1578,8 +1580,20 @@ export class SharePointService {
       const dateStr = typeof date === 'string' ? date : `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
       console.log(`💾 Saving attendance for ${dateStr}...`);
 
-      // First, delete existing attendance records for this date
-      await this.deleteAttendanceForDate(dateStr);
+      // CRITICAL: Delete existing attendance records for this date FIRST
+      console.log(`🗑️ Deleting existing attendance records for ${dateStr} before saving new ones...`);
+      const deleteResult = await this.deleteAttendanceForDate(dateStr);
+      
+      if (!deleteResult.success) {
+        console.error(`❌ Failed to delete old attendance records for ${dateStr}`);
+        throw new Error(`Cannot save attendance: Failed to delete existing records for ${dateStr}. ${deleteResult.error || 'Unknown error'}`);
+      }
+      
+      if (deleteResult.failed > 0) {
+        console.warn(`⚠️ ${deleteResult.failed} attendance records failed to delete - proceeding with save but duplicates may occur`);
+      }
+      
+      console.log(`✅ Deletion complete (${deleteResult.deleted} records removed), now saving new attendance records...`);
 
       // Use provided staff/students if available, otherwise load fresh
       // If passed from App.js, these will have the current attendance flags
@@ -1731,9 +1745,10 @@ export class SharePointService {
    * Delete attendance records for a specific date
    */
   async deleteAttendanceForDate(date) {
+    // Use date string as-is (already formatted in local timezone from App.js)
+    const dateStr = typeof date === 'string' ? date : `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
+    
     try {
-      // Use date string as-is (already formatted in local timezone from App.js)
-      const dateStr = typeof date === 'string' ? date : `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
       console.log('🔍 Finding attendance records to delete for', dateStr);
       
       // First, let's see what dates are actually in the list to debug the filter
@@ -1828,15 +1843,17 @@ export class SharePointService {
       const successCount = results.filter(r => r.success).length;
       const failCount = results.filter(r => !r.success).length;
       
-      console.log(`✅ Deleted ${successCount}/${records.length} attendance records (${failCount} failed)`);
+      console.log(`✅ Deleted ${successCount}/${records.length} attendance records for ${dateStr}`);
       
       if (failCount > 0) {
-        console.warn(`⚠️ ${failCount} attendance records failed to delete - duplicates may occur`);
+        console.warn(`⚠️ ${failCount} attendance records failed to delete:`, 
+          results.filter(r => !r.success).map(r => `ID ${r.id}: ${r.error}`));
       }
+      
+      return { success: true, deleted: successCount, failed: failCount };
     } catch (error) {
-      console.error('❌ Error in deleteAttendanceForDate:', error);
-      console.warn('⚠️ Could not delete old attendance records - duplicates may occur');
-      // Don't throw - allow save to continue even if delete fails
+      console.error(`❌ Error in deleteAttendanceForDate for ${dateStr}:`, error);
+      return { success: false, deleted: 0, failed: 0, error: error.message };
     }
   }
 

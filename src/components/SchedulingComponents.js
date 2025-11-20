@@ -697,11 +697,11 @@ export const ScheduleTableView = ({
             }`}
           >
             <option value="">Select staff...</option>
-            {availableForThisDropdown.map(staffMember => {
+            {availableForThisDropdown.map((staffMember, idx) => {
               const trainingStatus = student.getStaffTrainingStatus ? student.getStaffTrainingStatus(staffMember.id) : TRAINING_STATUS.SOLO;
               const isTrainer = trainingStatus === TRAINING_STATUS.TRAINER;
               return (
-                <option key={staffMember.id} value={staffMember.id}>
+                <option key={`${staffMember.id}-${idx}`} value={staffMember.id}>
                   {isTrainer ? '⭐ ' : ''}{staffMember.name} ({staffMember.role})
                 </option>
               );
@@ -956,8 +956,8 @@ export const ScheduleTableView = ({
             className="text-sm border rounded px-2 py-1 min-w-[160px] bg-orange-50 border-orange-300"
           >
             <option value="">Trainee (optional)...</option>
-            {traineesInTraining.map(staffMember => (
-              <option key={staffMember.id} value={staffMember.id}>
+            {traineesInTraining.map((staffMember, idx) => (
+              <option key={`${staffMember.id}-trainee-${idx}`} value={staffMember.id}>
                 🎓 {staffMember.name} ({staffMember.role})
               </option>
             ))}
@@ -1083,7 +1083,7 @@ export const ScheduleTableView = ({
                     const isEvenRow = index % 2 === 0;
                     
                     return (
-                      <tr key={student.id} className={isEvenRow ? 'bg-white' : 'bg-gray-50'}>
+                      <tr key={`student-${student.id}-${index}`} className={isEvenRow ? 'bg-white' : 'bg-gray-50'}>
                         <td className="px-6 py-4 whitespace-nowrap border-r">
                           <div className="flex items-center">
                             <div>
@@ -1661,8 +1661,8 @@ const ManualAssignmentModal = ({
               className="w-full border border-gray-300 rounded-md px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500"
             >
               <option value="">Choose a student...</option>
-              {availableStudents.map(student => (
-                <option key={student.id} value={student.id}>
+              {availableStudents.map((student, idx) => (
+                <option key={`${student.id}-quickadd-${idx}`} value={student.id}>
                   {student.name} ({student.ratio})
                 </option>
               ))}
@@ -1679,8 +1679,8 @@ const ManualAssignmentModal = ({
               className="w-full border border-gray-300 rounded-md px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500"
             >
               <option value="">Choose staff member...</option>
-              {availableStaff.map(staffMember => (
-                <option key={staffMember.id} value={staffMember.id}>
+              {availableStaff.map((staffMember, idx) => (
+                <option key={`${staffMember.id}-quickadd-${idx}`} value={staffMember.id}>
                   {staffMember.name} ({staffMember.role})
                 </option>
               ))}
@@ -2170,19 +2170,15 @@ export const SessionSummary = ({ schedule, staff, students, session, program, se
           if (student.program === program) {
             // This temp staff is assigned TO this program
             tempDirectStaffIds.add(staffMember.id);
-            console.log(`➕ Adding temp staff ${staffMember.name} to ${program} ${session} count`);
           } else if (staffWorksWithThisProgram) {
             // This temp staff normally works with THIS program but is borrowed by another program
             tempStaffBorrowedByOtherPrograms.add(staffMember.id);
-            console.log(`➖ Subtracting ${staffMember.name} from ${program} ${session} - borrowed by ${student.program}`);
           }
         }
       }
     });
   });
   
-  console.log(`📊 ${program} ${session}: Found ${tempDirectStaffIds.size} temp staff added, ${tempStaffBorrowedByOtherPrograms.size} borrowed by other programs`);
-
   // Count absent direct staff
   const absentDirectStaffCount = allDirectStaffForProgram.filter(
     s => !s.isAvailableForSession(session, selectedDate)
@@ -2244,7 +2240,6 @@ export const SessionSummary = ({ schedule, staff, students, session, program, se
     
     // EXCLUDE staff borrowed as temp by another program
     if (tempStaffBorrowedByOtherPrograms.has(staffMember.id)) {
-      console.log(`🚫 Excluding ${staffMember.name} from ${program} ${session} directStaff - borrowed by another program`);
       return false;
     }
     
@@ -2253,7 +2248,6 @@ export const SessionSummary = ({ schedule, staff, students, session, program, se
       traineeAssignment => traineeAssignment.staffId === staffMember.id && traineeAssignment.session === session
     );
     if (isAssignedAsTrainee) {
-      console.log(`🚫 Excluding ${staffMember.name} from ${program} ${session} directStaff - assigned as trainee`);
       return false;
     }
     
@@ -2303,14 +2297,12 @@ export const SessionSummary = ({ schedule, staff, students, session, program, se
     }
   });
   
-  console.log(`📊 ${program} ${session}: Found ${nonDirectStaffAssignedIds.size} non-RBT/BS staff manually assigned to clients`);
-  
-  // NEW: Calculate net direct staff count
-  // Base: RBT/BS staff who are available
+  // Calculate net direct staff count
+  // Base: RBT/BS staff who are available (directStaff already excludes absent, out, borrowed, and training-only)
   // Add: Temp staff borrowed FROM other programs (RBT/BS only)
-  // Subtract: Temp staff borrowed BY other programs (RBT/BS only)
+  // NOTE: Don't subtract tempStaffBorrowedByOtherPrograms - they're already excluded from directStaff array
   // Add: Non-RBT/BS staff who are manually assigned to clients (e.g., BCBA working direct)
-  const directStaffCount = directStaff.length + tempDirectStaffIds.size - tempStaffBorrowedByOtherPrograms.size + nonDirectStaffAssignedIds.size;
+  const directStaffCount = directStaff.length + tempDirectStaffIds.size + nonDirectStaffAssignedIds.size;
   // Check staff shortage: compare total spots needed (including 2:1) vs available direct staff
   const hasStaffShortage = totalAssignmentsNeeded > directStaffCount;
 

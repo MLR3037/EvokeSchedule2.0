@@ -379,7 +379,8 @@ export class Assignment {
     program, // 'Primary' or 'Secondary'
     date,
     isLocked = false,
-    assignedBy = 'auto' // 'auto' or 'manual'
+    assignedBy = 'auto', // 'auto' or 'manual'
+    isTempStaff = false // NEW: Track if this is a temp staff assignment
   }) {
     this.id = id;
     this.staffId = staffId;
@@ -391,6 +392,7 @@ export class Assignment {
     this.date = date;
     this.isLocked = isLocked;
     this.assignedBy = assignedBy;
+    this.isTempStaff = isTempStaff; // NEW: Mark temp staff assignments
   }
 
   getSessionTimes() {
