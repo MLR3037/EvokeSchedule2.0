@@ -28,7 +28,7 @@ export class ExcelExportService {
       const workbook = XLSX.utils.book_new();
 
       // Generate schedule data
-      const scheduleData = this.generateScheduleData(schedule, students, staff);
+      const scheduleData = this.generateScheduleData(schedule, students, staff, date);
       
       // Generate absences data
       const absencesData = this.generateAbsencesData(students, staff);
@@ -90,9 +90,10 @@ export class ExcelExportService {
    * @param {Object} schedule - Schedule object
    * @param {Array} students - Array of students
    * @param {Array} staff - Array of staff
+   * @param {Date} date - Schedule date for day-of-week checking
    * @returns {Array} 2D array for Excel sheet
    */
-  static generateScheduleData(schedule, students, staff) {
+  static generateScheduleData(schedule, students, staff, date) {
     const data = [];
     
     // Header row with time columns
@@ -167,9 +168,9 @@ export class ExcelExportService {
       // Remove duplicates (keep as array for 2:1 handling)
       const uniquePmStaff = [...new Set(pmStaffNames)];
 
-      // Check if student is absent
-      const isAbsentAM = !student.isAvailableForSession('AM');
-      const isAbsentPM = !student.isAvailableForSession('PM');
+      // Check if student is absent (pass date to check day-of-week schedule)
+      const isAbsentAM = !student.isAvailableForSession('AM', date);
+      const isAbsentPM = !student.isAvailableForSession('PM', date);
 
       // Determine absence status
       let amStatus = '';

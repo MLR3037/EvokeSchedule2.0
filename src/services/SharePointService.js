@@ -477,7 +477,7 @@ export class SharePointService {
       // For Lookup fields: Use ClientId to get the ID value directly (no expand needed)
       // For Person fields: Expand StaffMember to get full details
       const url = `${this.config.siteUrl}/_api/web/lists/getbytitle('ClientTeamMembers')/items?` +
-        `$select=ClientId,StaffMember/Id,StaffMember/Title,StaffMember/EMail,TrainingStatus,Position&` +
+        `$select=ClientId,StaffMember/Id,StaffMember/Title,StaffMember/EMail,TrainingStatus&` +
         `$expand=StaffMember&` +
         `$top=5000`;
 
@@ -513,15 +513,13 @@ export class SharePointService {
           }
           
           // Log raw SharePoint training status value for debugging
-          console.log(`  📋 Staff ${item.StaffMember.Title} (ID: ${item.StaffMember.Id}) for Client ${clientId}: TrainingStatus = '${item.TrainingStatus}', Position = '${item.Position || 'N/A'}'`);
+          console.log(`  📋 Staff ${item.StaffMember.Title} (ID: ${item.StaffMember.Id}) for Client ${clientId}: TrainingStatus = '${item.TrainingStatus}'`);
           
           teamsByClient[clientId].push({
             id: item.StaffMember.Id,
             title: item.StaffMember.Title,
             name: item.StaffMember.Title,
             email: item.StaffMember.EMail || '',
-            role: item.Position || '', // Include position/role from ClientTeamMembers list
-            position: item.Position || '', // Alias for compatibility
             trainingStatus: this.normalizeTrainingStatus(item.TrainingStatus)
           });
         }
@@ -782,7 +780,7 @@ export class SharePointService {
 
       // Step 3: Convert SharePoint items to Assignment objects
       const assignments = assignmentItems.map(item => {
-        const assignment = new Assignment({
+        return new Assignment({
           id: `${item.StaffID}_${item.StudentID}_${item.Session}_${item.Program}`,
           staffId: item.StaffID,
           staffName: item.StaffName,
@@ -792,65 +790,28 @@ export class SharePointService {
           program: item.Program,
           date: item.ScheduleDate,
           isLocked: item.IsLocked || false,
-          isTrainee: item.IsTrainee || false,
-          assignedBy: 'loaded'
+          assignedBy: 'loaded',
+          isTempStaff: item.IsTempStaff || false // NEW: Load temp staff flag
         });
-        
-        // Log trainee assignments for debugging
-        if (item.IsTrainee) {
-          console.log(`🎓 TRAINEE LOADED: ${item.StaffName} → ${item.StudentName} (${item.Session})`);
-        }
-        
-        return assignment;
       });
-      
-      // Count and log trainee assignments
-      const traineeCount = assignments.filter(a => a.isTrainee).length;
-      console.log(`✅ Found ${traineeCount} trainee assignments in regular assignments array`);
 
-      // Step 4: Parse trainee assignments if available (old format in JSON field)
+      // Step 4: Parse trainee assignments if available
       let traineeAssignments = [];
       if (scheduleRecord.traineeAssignments) {
         try {
-          const oldTraineeAssignments = JSON.parse(scheduleRecord.traineeAssignments);
-          console.log(`✅ Found ${oldTraineeAssignments.length} trainee assignments in old JSON format`);
-          
-          // Convert old trainee assignments to Assignment objects and add to assignments array
-          oldTraineeAssignments.forEach(ta => {
-            const traineeAssignment = new Assignment({
-              id: `${ta.staffId}_${ta.studentId}_${ta.session}_${ta.program}_trainee`,
-              staffId: ta.staffId,
-              staffName: ta.staffName || '',
-              studentId: ta.studentId,
-              studentName: ta.studentName || '',
-              session: ta.session,
-              program: ta.program,
-              date: dateString,
-              isLocked: ta.isLocked || false,
-              isTrainee: true,
-              assignedBy: 'loaded'
-            });
-            assignments.push(traineeAssignment);
-            console.log(`🎓 Converted old trainee to assignment: ${ta.staffName || ta.staffId} → ${ta.studentName || ta.studentId} (${ta.session})`);
-          });
-          
-          traineeAssignments = oldTraineeAssignments; // Keep for backward compatibility
+          traineeAssignments = JSON.parse(scheduleRecord.traineeAssignments);
+          console.log(`✅ Loaded ${traineeAssignments.length} trainee assignments`);
         } catch (error) {
           console.warn('⚠️ Failed to parse trainee assignments:', error);
         }
       }
 
       // Step 5: Create and return the Schedule object
-      // Build lockedAssignments Set from assignments that have isLocked: true
-      const lockedAssignments = new Set(
-        assignments.filter(a => a.isLocked).map(a => a.id)
-      );
-      
       const schedule = new Schedule({
         date: dateString,
         assignments: assignments,
-        traineeAssignments: traineeAssignments, // Keep old field for backward compatibility
-        lockedAssignments: lockedAssignments,
+        traineeAssignments: traineeAssignments,
+        lockedAssignments: new Set(),
         isFinalized: scheduleRecord.IsFinalized || false,
         lastModified: scheduleRecord.LastModified,
         lastModifiedBy: scheduleRecord.LastModifiedBy
@@ -952,7 +913,6 @@ export class SharePointService {
         ClientId: clientId, // Lookup field - use "Id" suffix
         StaffMemberId: staffMember.id, // Person picker field
         TrainingStatus: this.toSharePointTrainingStatus(trainingStatus), // Convert to SharePoint format
-        Position: staffMember.role || staffMember.position || '', // Staff member's role/position
         IsActive: true,
         DateAdded: new Date().toISOString()
       };
@@ -1051,15 +1011,10 @@ export class SharePointService {
         const staffMember = student.team.find(t => t.id === staffId);
         if (staffMember) {
           const trainingStatus = student.getStaffTrainingStatus(staffId);
-          // Ensure role is included (it should be in student.team, but verify)
-          const staffWithRole = {
-            ...staffMember,
-            role: staffMember.role || staffMember.position || ''
-          };
           await this.saveClientTeamMember(
             student.id,
             student.name,
-            staffWithRole,
+            staffMember,
             trainingStatus
           );
         }
@@ -1069,15 +1024,12 @@ export class SharePointService {
       for (const member of existingMembers) {
         if (newStaffIds.includes(member.StaffMember?.Id)) {
           const trainingStatus = student.getStaffTrainingStatus(member.StaffMember.Id);
-          // Get the staff member's role from student.team
-          const staffMember = student.team.find(t => t.id === member.StaffMember.Id);
-          const staffRole = staffMember?.role || staffMember?.position || '';
           // Only update if training status changed
           // We'd need to load the current status to check, so for now just update all
           await this.saveClientTeamMember(
             student.id,
             student.name,
-            { id: member.StaffMember.Id, name: member.StaffMember.Title, role: staffRole },
+            { id: member.StaffMember.Id, name: member.StaffMember.Title },
             trainingStatus,
             true,
             member.Id
@@ -1494,7 +1446,7 @@ export class SharePointService {
         Program: assignment.program,
         AssignmentType: assignment.type || 'Standard',
         IsLocked: assignment.isLocked || false,
-        IsTrainee: assignment.isTrainee || false
+        IsTempStaff: assignment.isTempStaff || false // NEW: Save temp staff flag
       };
 
       console.log('💾 Saving assignment to DailyAssignments list:', assignmentData);
@@ -1628,8 +1580,20 @@ export class SharePointService {
       const dateStr = typeof date === 'string' ? date : `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
       console.log(`💾 Saving attendance for ${dateStr}...`);
 
-      // First, delete existing attendance records for this date
-      await this.deleteAttendanceForDate(dateStr);
+      // CRITICAL: Delete existing attendance records for this date FIRST
+      console.log(`🗑️ Deleting existing attendance records for ${dateStr} before saving new ones...`);
+      const deleteResult = await this.deleteAttendanceForDate(dateStr);
+      
+      if (!deleteResult.success) {
+        console.error(`❌ Failed to delete old attendance records for ${dateStr}`);
+        throw new Error(`Cannot save attendance: Failed to delete existing records for ${dateStr}. ${deleteResult.error || 'Unknown error'}`);
+      }
+      
+      if (deleteResult.failed > 0) {
+        console.warn(`⚠️ ${deleteResult.failed} attendance records failed to delete - proceeding with save but duplicates may occur`);
+      }
+      
+      console.log(`✅ Deletion complete (${deleteResult.deleted} records removed), now saving new attendance records...`);
 
       // Use provided staff/students if available, otherwise load fresh
       // If passed from App.js, these will have the current attendance flags
@@ -1781,9 +1745,10 @@ export class SharePointService {
    * Delete attendance records for a specific date
    */
   async deleteAttendanceForDate(date) {
+    // Use date string as-is (already formatted in local timezone from App.js)
+    const dateStr = typeof date === 'string' ? date : `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
+    
     try {
-      // Use date string as-is (already formatted in local timezone from App.js)
-      const dateStr = typeof date === 'string' ? date : `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
       console.log('🔍 Finding attendance records to delete for', dateStr);
       
       // First, let's see what dates are actually in the list to debug the filter
@@ -1878,15 +1843,17 @@ export class SharePointService {
       const successCount = results.filter(r => r.success).length;
       const failCount = results.filter(r => !r.success).length;
       
-      console.log(`✅ Deleted ${successCount}/${records.length} attendance records (${failCount} failed)`);
+      console.log(`✅ Deleted ${successCount}/${records.length} attendance records for ${dateStr}`);
       
       if (failCount > 0) {
-        console.warn(`⚠️ ${failCount} attendance records failed to delete - duplicates may occur`);
+        console.warn(`⚠️ ${failCount} attendance records failed to delete:`, 
+          results.filter(r => !r.success).map(r => `ID ${r.id}: ${r.error}`));
       }
+      
+      return { success: true, deleted: successCount, failed: failCount };
     } catch (error) {
-      console.error('❌ Error in deleteAttendanceForDate:', error);
-      console.warn('⚠️ Could not delete old attendance records - duplicates may occur');
-      // Don't throw - allow save to continue even if delete fails
+      console.error(`❌ Error in deleteAttendanceForDate for ${dateStr}:`, error);
+      return { success: false, deleted: 0, failed: 0, error: error.message };
     }
   }
 
