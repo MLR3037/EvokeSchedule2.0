@@ -613,6 +613,37 @@ const ScheduleGridView = ({
 
   // Generate static HTML for popup
   const generatePopupHTML = () => {
+    // Build absent/out summary for both programs
+    const absentClients = [];
+    const outClients = [];
+    
+    [...primaryStudents, ...secondaryStudents].forEach(student => {
+      const isAbsentAM = !student.isAvailableForSession('AM', selectedDate);
+      const isAbsentPM = !student.isAvailableForSession('PM', selectedDate);
+      const isFullyAbsent = isAbsentAM && isAbsentPM;
+      
+      if (isFullyAbsent) {
+        const isOut = student.outOfSessionFullDay || (student.outOfSessionAM && student.outOfSessionPM);
+        if (isOut) {
+          outClients.push(student.name);
+        } else {
+          absentClients.push(student.name);
+        }
+      }
+    });
+    
+    let summaryHTML = '';
+    if (absentClients.length > 0 || outClients.length > 0) {
+      summaryHTML = '<div style="background: #fef3c7; border: 1px solid #fcd34d; border-radius: 4px; padding: 8px 12px; margin-bottom: 16px; font-size: 12px;">';
+      if (absentClients.length > 0) {
+        summaryHTML += `<div style="margin-bottom: 4px;"><strong style="color: #991b1b;">Absent:</strong> ${absentClients.join(', ')}</div>`;
+      }
+      if (outClients.length > 0) {
+        summaryHTML += `<div><strong style="color: #92400e;">Out of Session:</strong> ${outClients.join(', ')}</div>`;
+      }
+      summaryHTML += '</div>';
+    }
+    
     return `
       <!DOCTYPE html>
       <html>
@@ -687,6 +718,7 @@ const ScheduleGridView = ({
         <div class="header">
           <h1>Schedule - ${selectedDate.toLocaleDateString()}</h1>
         </div>
+        ${summaryHTML}
         <h2 style="margin-bottom: 10px; color: #2563eb;">Primary</h2>
         <table>
           <thead>
@@ -720,8 +752,8 @@ const ScheduleGridView = ({
               if (isAbsentAM) {
                 amStaffDisplay = student.outOfSessionAM || student.outOfSessionFullDay ? 'OUT' : 'ABSENT';
               } else {
-                const staff1 = amAssignments[0] ? staff.find(s => s.id === amAssignments[0].staffId)?.name : '';
-                const staff2 = student.ratioAM === '2:1' && amAssignments[1] ? staff.find(s => s.id === amAssignments[1].staffId)?.name : '';
+                const staff1 = amAssignments[0] ? formatNameShort(staff.find(s => s.id === amAssignments[0].staffId)?.name || '') : '';
+                const staff2 = student.ratioAM === '2:1' && amAssignments[1] ? formatNameShort(staff.find(s => s.id === amAssignments[1].staffId)?.name || '') : '';
                 amStaffDisplay = staff1 + (staff2 ? '<br/>' + staff2 : '');
               }
               
@@ -729,15 +761,15 @@ const ScheduleGridView = ({
               if (isAbsentPM) {
                 pmStaffDisplay = student.outOfSessionPM || student.outOfSessionFullDay ? 'OUT' : 'ABSENT';
               } else {
-                const staff1 = pmAssignments[0] ? staff.find(s => s.id === pmAssignments[0].staffId)?.name : '';
-                const staff2 = student.ratioPM === '2:1' && pmAssignments[1] ? staff.find(s => s.id === pmAssignments[1].staffId)?.name : '';
+                const staff1 = pmAssignments[0] ? formatNameShort(staff.find(s => s.id === pmAssignments[0].staffId)?.name || '') : '';
+                const staff2 = student.ratioPM === '2:1' && pmAssignments[1] ? formatNameShort(staff.find(s => s.id === pmAssignments[1].staffId)?.name || '') : '';
                 pmStaffDisplay = staff1 + (staff2 ? '<br/>' + staff2 : '');
               }
               
               const amTraineeIndex = student.ratioAM === '2:1' ? 2 : 1;
               const pmTraineeIndex = student.ratioPM === '2:1' ? 2 : 1;
-              const amTraineeName = amAssignments[amTraineeIndex] ? staff.find(s => s.id === amAssignments[amTraineeIndex].staffId)?.name || '' : '';
-              const pmTraineeName = pmAssignments[pmTraineeIndex] ? staff.find(s => s.id === pmAssignments[pmTraineeIndex].staffId)?.name || '' : '';
+              const amTraineeName = amAssignments[amTraineeIndex] ? formatNameShort(staff.find(s => s.id === amAssignments[amTraineeIndex].staffId)?.name || '') : '';
+              const pmTraineeName = pmAssignments[pmTraineeIndex] ? formatNameShort(staff.find(s => s.id === pmAssignments[pmTraineeIndex].staffId)?.name || '') : '';
               
               // Check if lunch coverage is needed
               const amEnd = data.amEnd || defaults.amEnd;
@@ -806,8 +838,8 @@ const ScheduleGridView = ({
               if (isAbsentAM) {
                 amStaffDisplay = student.outOfSessionAM || student.outOfSessionFullDay ? 'OUT' : 'ABSENT';
               } else {
-                const staff1 = amAssignments[0] ? staff.find(s => s.id === amAssignments[0].staffId)?.name : '';
-                const staff2 = student.ratioAM === '2:1' && amAssignments[1] ? staff.find(s => s.id === amAssignments[1].staffId)?.name : '';
+                const staff1 = amAssignments[0] ? formatNameShort(staff.find(s => s.id === amAssignments[0].staffId)?.name || '') : '';
+                const staff2 = student.ratioAM === '2:1' && amAssignments[1] ? formatNameShort(staff.find(s => s.id === amAssignments[1].staffId)?.name || '') : '';
                 amStaffDisplay = staff1 + (staff2 ? '<br/>' + staff2 : '');
               }
               
@@ -815,15 +847,15 @@ const ScheduleGridView = ({
               if (isAbsentPM) {
                 pmStaffDisplay = student.outOfSessionPM || student.outOfSessionFullDay ? 'OUT' : 'ABSENT';
               } else {
-                const staff1 = pmAssignments[0] ? staff.find(s => s.id === pmAssignments[0].staffId)?.name : '';
-                const staff2 = student.ratioPM === '2:1' && pmAssignments[1] ? staff.find(s => s.id === pmAssignments[1].staffId)?.name : '';
+                const staff1 = pmAssignments[0] ? formatNameShort(staff.find(s => s.id === pmAssignments[0].staffId)?.name || '') : '';
+                const staff2 = student.ratioPM === '2:1' && pmAssignments[1] ? formatNameShort(staff.find(s => s.id === pmAssignments[1].staffId)?.name || '') : '';
                 pmStaffDisplay = staff1 + (staff2 ? '<br/>' + staff2 : '');
               }
               
               const amTraineeIndex = student.ratioAM === '2:1' ? 2 : 1;
               const pmTraineeIndex = student.ratioPM === '2:1' ? 2 : 1;
-              const amTraineeName = amAssignments[amTraineeIndex] ? staff.find(s => s.id === amAssignments[amTraineeIndex].staffId)?.name || '' : '';
-              const pmTraineeName = pmAssignments[pmTraineeIndex] ? staff.find(s => s.id === pmAssignments[pmTraineeIndex].staffId)?.name || '' : '';
+              const amTraineeName = amAssignments[amTraineeIndex] ? formatNameShort(staff.find(s => s.id === amAssignments[amTraineeIndex].staffId)?.name || '') : '';
+              const pmTraineeName = pmAssignments[pmTraineeIndex] ? formatNameShort(staff.find(s => s.id === pmAssignments[pmTraineeIndex].staffId)?.name || '') : '';
               
               // Check if lunch coverage is needed
               const amEnd = data.amEnd || defaults.amEnd;
