@@ -1710,7 +1710,7 @@ const ManualAssignmentModal = ({
 /**
  * BS/BT Swap Finder Component - Identifies BSs in schedule who could swap with available BTs
  */
-const BSBTSwapFinder = ({ schedule, staff, students, session, program, assignments, availableStaff }) => {
+const BSBTSwapFinder = ({ schedule, staff, students, session, program, assignments, availableStaff, onManualAssignment, onAssignmentRemove }) => {
   const [searchTerm, setSearchTerm] = useState('');
   const [isExpanded, setIsExpanded] = useState(false);
   
@@ -1820,11 +1820,38 @@ const BSBTSwapFinder = ({ schedule, staff, students, session, program, assignmen
                   <div className="text-gray-700 pl-2">
                     Available BTs on team ({opp.availableBTs.length}):
                     <div className="ml-2 mt-1 space-y-0.5">
-                      {opp.availableBTs.map(bt => (
-                        <div key={bt.id} className="text-gray-600">
-                          • {bt.name}
-                        </div>
-                      ))}
+                      {opp.availableBTs.map(bt => {
+                        const bsAssignment = assignments.find(a => 
+                          a.staffId === opp.bs.id && 
+                          a.studentId === opp.student.id
+                        );
+                        
+                        return (
+                          <div key={bt.id} className="flex items-center justify-between text-gray-600">
+                            <span>• {bt.name}</span>
+                            <button
+                              onClick={() => {
+                                // Remove BS assignment
+                                if (bsAssignment) {
+                                  onAssignmentRemove(bsAssignment.id);
+                                }
+                                // Add BT assignment
+                                onManualAssignment({
+                                  staffId: bt.id,
+                                  studentId: opp.student.id,
+                                  session: session,
+                                  program: program,
+                                  bypassTeamCheck: false
+                                });
+                              }}
+                              className="ml-2 px-2 py-0.5 bg-blue-600 text-white rounded hover:bg-blue-700 text-xs"
+                              title={`Swap ${opp.bs.name} (BS) for ${bt.name} (BT)`}
+                            >
+                              Make Swap
+                            </button>
+                          </div>
+                        );
+                      })}
                     </div>
                   </div>
                 </div>
@@ -1844,9 +1871,166 @@ const BSBTSwapFinder = ({ schedule, staff, students, session, program, assignmen
 };
 
 /**
+ * Training Opportunities Finder - Shows available RBTs in training whose clients are scheduled with trainers
+ */
+const TrainingOpportunitiesFinder = ({ schedule, staff, students, session, program, assignments, availableStaff, onManualAssignment }) => {
+  const [isExpanded, setIsExpanded] = useState(false);
+  
+  // Find available RBTs who are in training status on at least one client
+  const availableTrainees = availableStaff.filter(staffMember => {
+    if (staffMember.role !== 'RBT') return false;
+    
+    // Check if this staff is in training (overlap-staff or overlap-bcba) on any active student
+    return students.some(student => {
+      if (!student.isActive || !student.teamIds.includes(staffMember.id)) return false;
+      const trainingStatus = student.getStaffTrainingStatus ? student.getStaffTrainingStatus(staffMember.id) : 'solo';
+      return trainingStatus === 'overlap-staff' || trainingStatus === 'overlap-bcba';
+    });
+  });
+  
+  if (availableTrainees.length === 0) return null;
+  
+  // Find training opportunities for each available trainee
+  const opportunities = availableTrainees.map(trainee => {
+    // Find clients this trainee is training on
+    const trainingClients = students.filter(student => {
+      if (!student.isActive || student.program !== program) return false;
+      if (!student.teamIds.includes(trainee.id)) return false;
+      
+      const trainingStatus = student.getStaffTrainingStatus ? student.getStaffTrainingStatus(trainee.id) : 'solo';
+      if (trainingStatus !== 'overlap-staff' && trainingStatus !== 'overlap-bcba') return false;
+      
+      // Check if this client is scheduled in this session
+      const clientAssignments = assignments.filter(a => a.studentId === student.id);
+      return clientAssignments.length > 0;
+    });
+    
+    // For each training client, check if they have a trainer assigned
+    const clientsWithTrainers = trainingClients.map(client => {
+      const clientAssignments = assignments.filter(a => a.studentId === client.id && !a.isTrainee);
+      const trainers = clientAssignments
+        .map(a => {
+          const assignedStaff = staff.find(s => s.id === a.staffId);
+          if (!assignedStaff) return null;
+          const trainerStatus = client.getStaffTrainingStatus ? client.getStaffTrainingStatus(assignedStaff.id) : 'solo';
+          return trainerStatus === 'trainer' ? assignedStaff : null;
+        })
+        .filter(Boolean);
+      
+      const hasTrainer = trainers.length > 0;
+      const traineeAlreadyAssigned = assignments.some(a => a.studentId === client.id && a.staffId === trainee.id);
+      
+      return {
+        client,
+        trainers,
+        hasTrainer,
+        traineeAlreadyAssigned,
+        assignments: clientAssignments
+      };
+    }).filter(opp => !opp.traineeAlreadyAssigned); // Only show if trainee not already assigned
+    
+    if (clientsWithTrainers.length === 0) return null;
+    
+    return {
+      trainee,
+      opportunities: clientsWithTrainers
+    };
+  }).filter(Boolean);
+  
+  if (opportunities.length === 0) return null;
+  
+  const totalOpportunities = opportunities.reduce((sum, opp) => sum + opp.opportunities.length, 0);
+  
+  return (
+    <div className="mt-3 border-t pt-3">
+      <button
+        onClick={() => setIsExpanded(!isExpanded)}
+        className="w-full flex items-center justify-between text-xs font-medium text-green-600 mb-2 hover:bg-green-50 p-1 rounded transition-colors"
+      >
+        <span className="flex items-center gap-1">
+          🎓 Training Opportunities ({totalOpportunities})
+        </span>
+        {isExpanded ? <ChevronUp className="w-3 h-3" /> : <ChevronDown className="w-3 h-3" />}
+      </button>
+      
+      {isExpanded && (
+        <div className="space-y-2">
+          <div className="text-xs text-gray-600 mb-2">
+            Available RBTs in training whose clients are scheduled:
+          </div>
+          
+          <div className="space-y-3 max-h-64 overflow-y-auto">
+            {opportunities.map((opp, idx) => (
+              <div key={idx} className="bg-green-50 p-2 rounded text-xs space-y-2">
+                <div className="font-medium text-green-900">
+                  <span className="bg-green-200 px-1.5 py-0.5 rounded">RBT</span> {opp.trainee.name} (In Training)
+                </div>
+                
+                <div className="space-y-1.5 pl-2">
+                  {opp.opportunities.map((clientOpp, cIdx) => (
+                    <div key={cIdx} className="bg-white p-2 rounded border border-green-200">
+                      <div className="flex items-center justify-between mb-1">
+                        <div className="font-medium text-gray-900">
+                          → {clientOpp.client.name}
+                        </div>
+                        <button
+                          onClick={() => {
+                            onManualAssignment({
+                              staffId: opp.trainee.id,
+                              studentId: clientOpp.client.id,
+                              session: session,
+                              program: program,
+                              isTrainee: true,
+                              bypassTeamCheck: false
+                            });
+                          }}
+                          className="px-2 py-0.5 bg-green-600 text-white rounded hover:bg-green-700 text-xs"
+                          title={`Assign ${opp.trainee.name} as trainee for ${clientOpp.client.name}`}
+                        >
+                          Assign as Trainee
+                        </button>
+                      </div>
+                      <div className="text-gray-600 text-xs">
+                        {clientOpp.hasTrainer ? (
+                          <span className="text-green-700 flex items-center gap-1">
+                            ✓ Trainer available: {clientOpp.trainers.map(t => `⭐ ${t.name}`).join(', ')}
+                          </span>
+                        ) : (
+                          <div className="space-y-0.5">
+                            <span className="text-amber-700 flex items-center gap-1">
+                              ⚠️ No trainer assigned (supervision needed)
+                            </span>
+                            {clientOpp.assignments.length > 0 && (
+                              <div className="text-gray-600 pl-4">
+                                Scheduled with: {clientOpp.assignments.map(a => {
+                                  const assignedStaff = staff.find(s => s.id === a.staffId);
+                                  return assignedStaff ? assignedStaff.name : 'Unknown';
+                                }).join(', ')}
+                              </div>
+                            )}
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            ))}
+          </div>
+          
+          <div className="text-xs text-gray-500 italic mt-2">
+            💡 Tip: Assign trainees when their clients are scheduled with trainers for proper supervision
+          </div>
+        </div>
+      )}
+    </div>
+  );
+};
+
+/**
  * Session Summary Component - Shows summary statistics for a session
  */
-export const SessionSummary = ({ schedule, staff, students, session, program, selectedDate }) => {
+export const SessionSummary = ({ schedule, staff, students, session, program, selectedDate, onManualAssignment, onAssignmentRemove }) => {
   // State for collapsible sections
   const [isAbsentStaffOpen, setIsAbsentStaffOpen] = useState(false);
   const [isAbsentStudentsOpen, setIsAbsentStudentsOpen] = useState(false);
@@ -1930,8 +2114,11 @@ export const SessionSummary = ({ schedule, staff, students, session, program, se
   const presentProgramStudents = programStudents.filter(s => s.isAvailableForSession(session, selectedDate));
   
   // Calculate required vs actual assignments, accounting for 2:1 students
+  // IMPORTANT: Only count main staff assignments, NOT trainee assignments
   const studentAssignmentCounts = {}; // Track how many assignments each student has
   assignments.forEach(a => {
+    // Skip trainee assignments - they don't count toward staff coverage
+    if (a.isTrainee) return;
     studentAssignmentCounts[a.studentId] = (studentAssignmentCounts[a.studentId] || 0) + 1;
   });
   
@@ -2027,7 +2214,11 @@ export const SessionSummary = ({ schedule, staff, students, session, program, se
   
   // Calculate staff utilization by role
   const staffByRole = {};
-  const assignedStaffIds = new Set(assignments.map(a => a.staffId));
+  // IMPORTANT: Only count main staff assignments, NOT trainees
+  // Trainees don't take up a staff member's availability slot
+  const assignedStaffIds = new Set(
+    assignments.filter(a => !a.isTrainee).map(a => a.staffId)
+  );
   
   assignments.forEach(assignment => {
     const staffMember = staff.find(s => s.id === assignment.staffId);
@@ -2089,40 +2280,23 @@ export const SessionSummary = ({ schedule, staff, students, session, program, se
     // CRITICAL: Also check if staff is assigned as a trainee IN ANY PROGRAM
     // Trainee assignments should NOT show in "Available Staff" list
     // Note: We check ALL programs because a staff member assigned as trainee in another program is not available
-    const isAssignedAsTrainee = schedule.traineeAssignments && schedule.traineeAssignments.some(
-      traineeAssignment => traineeAssignment.staffId === staffMember.id && traineeAssignment.session === session
-      // Intentionally NOT filtering by program - if they're a trainee ANYWHERE, they're not available
+    // Check both new format (assignments with isTrainee) and old format (traineeAssignments array)
+    const isAssignedAsTrainee = (
+      // New format: assignments with isTrainee flag
+      schedule.assignments.some(a => a.staffId === staffMember.id && a.session === session && a.isTrainee) ||
+      // Old format: separate traineeAssignments array (backward compatibility)
+      (schedule.traineeAssignments && schedule.traineeAssignments.some(
+        traineeAssignment => traineeAssignment.staffId === staffMember.id && traineeAssignment.session === session
+      ))
     );
     
     if (isAssignedAsTrainee) {
-      const traineeAssignment = schedule.traineeAssignments.find(
+      const traineeAssignment = schedule.assignments.find(
+        a => a.staffId === staffMember.id && a.session === session && a.isTrainee
+      ) || (schedule.traineeAssignments && schedule.traineeAssignments.find(
         ta => ta.staffId === staffMember.id && ta.session === session
-      );
+      ));
       console.log(`🚫 Excluding ${staffMember.name} from Available Staff (${program}) - assigned as trainee in ${traineeAssignment?.program || 'unknown'} ${session}`);
-      return false;
-    }
-    
-    // CRITICAL: Also check if staff is borrowed as temp staff by ANOTHER program for this session
-    // If they're added as temp staff to a different program, they're not available here
-    const isBorrowedByOtherProgram = students.filter(s => s.isActive && s.program !== program).some(student => {
-      const tempStaffList = tempTeamAdditions[student.id] || [];
-      return tempStaffList.some(tempStaff => 
-        tempStaff.staffId === staffMember.id && 
-        tempStaff.sessions && 
-        tempStaff.sessions.includes(session)
-      );
-    });
-    
-    if (isBorrowedByOtherProgram) {
-      const borrowingStudent = students.filter(s => s.isActive && s.program !== program).find(student => {
-        const tempStaffList = tempTeamAdditions[student.id] || [];
-        return tempStaffList.some(tempStaff => 
-          tempStaff.staffId === staffMember.id && 
-          tempStaff.sessions && 
-          tempStaff.sessions.includes(session)
-        );
-      });
-      console.log(`🚫 Excluding ${staffMember.name} from Available Staff (${program}) - borrowed as temp staff by ${borrowingStudent?.program || 'other'} ${session}`);
       return false;
     }
     
@@ -2147,41 +2321,7 @@ export const SessionSummary = ({ schedule, staff, students, session, program, se
     return true;
   });
   
-  // NEW: Count temp staff (RBT/BS only) that are available for this session
-  // Also track temp staff borrowed by OTHER programs to subtract from this program's count
-  const tempDirectStaffIds = new Set();
-  const tempStaffBorrowedByOtherPrograms = new Set();
-  
-  // Check ALL students across ALL programs to find temp staff assignments from localStorage
-  students.filter(s => s.isActive).forEach(student => {
-    const tempStaffList = tempTeamAdditions[student.id] || [];
-    
-    tempStaffList.forEach(tempStaff => {
-      // Only process if they're available for this session
-      if (tempStaff.sessions && tempStaff.sessions.includes(session)) {
-        // Find the staff member to check role and program
-        const staffMember = staff.find(s => s.id === tempStaff.staffId);
-        if (staffMember && (staffMember.role === 'RBT' || staffMember.role === 'BS')) {
-          // Check if staff normally works with THIS program
-          const staffWorksWithThisProgram = program === 'Primary' 
-            ? staffMember.primaryProgram 
-            : staffMember.secondaryProgram;
-          
-          if (student.program === program) {
-            // This temp staff is assigned TO this program
-            tempDirectStaffIds.add(staffMember.id);
-            console.log(`➕ Adding temp staff ${staffMember.name} to ${program} ${session} count`);
-          } else if (staffWorksWithThisProgram) {
-            // This temp staff normally works with THIS program but is borrowed by another program
-            tempStaffBorrowedByOtherPrograms.add(staffMember.id);
-            console.log(`➖ Subtracting ${staffMember.name} from ${program} ${session} - borrowed by ${student.program}`);
-          }
-        }
-      }
-    });
-  });
-  
-  console.log(`📊 ${program} ${session}: Found ${tempDirectStaffIds.size} temp staff added, ${tempStaffBorrowedByOtherPrograms.size} borrowed by other programs`);
+
 
   // Count absent direct staff
   const absentDirectStaffCount = allDirectStaffForProgram.filter(
@@ -2242,15 +2382,15 @@ export const SessionSummary = ({ schedule, staff, students, session, program, se
     );
     if (hasOutAssignment) return false;
     
-    // EXCLUDE staff borrowed as temp by another program
-    if (tempStaffBorrowedByOtherPrograms.has(staffMember.id)) {
-      console.log(`🚫 Excluding ${staffMember.name} from ${program} ${session} directStaff - borrowed by another program`);
-      return false;
-    }
-    
     // EXCLUDE staff assigned as trainee (in any program for this session)
-    const isAssignedAsTrainee = schedule.traineeAssignments && schedule.traineeAssignments.some(
-      traineeAssignment => traineeAssignment.staffId === staffMember.id && traineeAssignment.session === session
+    // Check both new format (assignments with isTrainee) and old format (traineeAssignments array)
+    const isAssignedAsTrainee = (
+      // New format: assignments with isTrainee flag
+      schedule.assignments.some(a => a.staffId === staffMember.id && a.session === session && a.isTrainee) ||
+      // Old format: separate traineeAssignments array (backward compatibility)
+      (schedule.traineeAssignments && schedule.traineeAssignments.some(
+        traineeAssignment => traineeAssignment.staffId === staffMember.id && traineeAssignment.session === session
+      ))
     );
     if (isAssignedAsTrainee) {
       console.log(`🚫 Excluding ${staffMember.name} from ${program} ${session} directStaff - assigned as trainee`);
@@ -2305,12 +2445,10 @@ export const SessionSummary = ({ schedule, staff, students, session, program, se
   
   console.log(`📊 ${program} ${session}: Found ${nonDirectStaffAssignedIds.size} non-RBT/BS staff manually assigned to clients`);
   
-  // NEW: Calculate net direct staff count
+  // Calculate direct staff count
   // Base: RBT/BS staff who are available
-  // Add: Temp staff borrowed FROM other programs (RBT/BS only)
-  // Subtract: Temp staff borrowed BY other programs (RBT/BS only)
   // Add: Non-RBT/BS staff who are manually assigned to clients (e.g., BCBA working direct)
-  const directStaffCount = directStaff.length + tempDirectStaffIds.size - tempStaffBorrowedByOtherPrograms.size + nonDirectStaffAssignedIds.size;
+  const directStaffCount = directStaff.length + nonDirectStaffAssignedIds.size;
   // Check staff shortage: compare total spots needed (including 2:1) vs available direct staff
   const hasStaffShortage = totalAssignmentsNeeded > directStaffCount;
 
@@ -2374,25 +2512,28 @@ export const SessionSummary = ({ schedule, staff, students, session, program, se
           <span className={`font-medium flex items-center gap-1 ${hasStaffShortage ? 'text-red-600' : ''}`}>
             {hasStaffShortage && <span title="More students than direct staff - may need BCBAs or temp staff">⚠️</span>}
             {directStaffCount}
-            {(absentDirectStaffCount > 0 || outDirectStaffCount > 0 || trainingOnlyDirectStaffCount > 0 || tempDirectStaffIds.size > 0 || tempStaffBorrowedByOtherPrograms.size > 0) && (
+            {(absentDirectStaffCount > 0 || outDirectStaffCount > 0 || trainingOnlyDirectStaffCount > 0) && (
               <span className="text-xs text-gray-500 ml-1">
                 ({[
                   absentDirectStaffCount > 0 ? `${absentDirectStaffCount} absent` : null,
                   outDirectStaffCount > 0 ? `${outDirectStaffCount} out` : null,
-                  trainingOnlyDirectStaffCount > 0 ? `${trainingOnlyDirectStaffCount} training` : null,
-                  tempDirectStaffIds.size > 0 ? `+${tempDirectStaffIds.size} temp` : null,
-                  tempStaffBorrowedByOtherPrograms.size > 0 ? `-${tempStaffBorrowedByOtherPrograms.size} borrowed` : null
+                  trainingOnlyDirectStaffCount > 0 ? `${trainingOnlyDirectStaffCount} training` : null
                 ].filter(Boolean).join(', ')})
               </span>
             )}
           </span>
         </div>
-        <div className="flex justify-between pb-3 border-b border-gray-300">
-          <span>Extra Staff:</span>
-          <span className={`font-medium ${directStaffCount - totalSessions < 0 ? 'text-red-600' : directStaffCount - totalSessions === 0 ? 'text-yellow-600' : 'text-green-600'}`}>
-            {directStaffCount - totalSessions}
-          </span>
-        </div>
+        {directStaffCount < totalSessions && (
+          <div className="flex justify-between pb-3 border-b border-gray-300">
+            <span>Additional Staff Needed:</span>
+            <span className="font-medium text-red-600">
+              {totalSessions - directStaffCount}
+            </span>
+          </div>
+        )}
+        {directStaffCount >= totalSessions && (
+          <div className="pb-3 border-b border-gray-300"></div>
+        )}
         <div className="flex justify-between">
           <span>Assigned:</span>
           <span className="font-medium">{assignedStudents.size}</span>
@@ -2416,7 +2557,7 @@ export const SessionSummary = ({ schedule, staff, students, session, program, se
         allDirectStaffForProgram.filter(s => !assignedStaffIds.has(s.id) && s.isAvailableForSession(session, selectedDate)).length > 0) && (
         <div className="mt-3 border-t pt-3">
           <div className="text-xs font-medium text-gray-600 mb-2">Available Direct Staff:</div>
-          <div className="space-y-1 max-h-36 overflow-y-auto">
+          <div className="space-y-1 max-h-36 overflow-y-auto relative">
             {['RBT', 'BS'].map(role => {
               // Get staff with solo cases (can be auto-assigned)
               const roleStaffWithSolo = directStaff.filter(s => s.role === role && !assignedStaffIds.has(s.id));
@@ -2437,8 +2578,12 @@ export const SessionSummary = ({ schedule, staff, students, session, program, se
                 if (hasOutAssignment) return false;
                 
                 // EXCLUDE staff assigned as trainee (in any program for this session)
-                const isAssignedAsTrainee = schedule.traineeAssignments && schedule.traineeAssignments.some(
-                  traineeAssignment => traineeAssignment.staffId === staffMember.id && traineeAssignment.session === session
+                // Check both new format (assignments with isTrainee) and old format (traineeAssignments array)
+                const isAssignedAsTrainee = (
+                  schedule.assignments.some(a => a.staffId === staffMember.id && a.session === session && a.isTrainee) ||
+                  (schedule.traineeAssignments && schedule.traineeAssignments.some(
+                    traineeAssignment => traineeAssignment.staffId === staffMember.id && traineeAssignment.session === session
+                  ))
                 );
                 if (isAssignedAsTrainee) return false;
                 
@@ -2470,16 +2615,83 @@ export const SessionSummary = ({ schedule, staff, students, session, program, se
                     {role} ({roleStaffWithSolo.length})
                   </div>
                   <div className="ml-2 space-y-0.5">
-                    {roleStaffWithSolo.map(staffMember => (
-                      <div key={staffMember.id} className="text-xs text-gray-600">
-                        {staffMember.name}
-                      </div>
-                    ))}
-                    {trainingOnlyStaff.map(staffMember => (
-                      <div key={staffMember.id} className="text-xs text-gray-400 italic">
-                        {staffMember.name} <span className="text-orange-500">(no solo cases)</span>
-                      </div>
-                    ))}
+                    {roleStaffWithSolo.map(staffMember => {
+                      // Get all clients this staff member works with
+                      const staffClients = presentProgramStudents.filter(student => 
+                        student.teamIds && student.teamIds.includes(staffMember.id)
+                      );
+                      
+                      return (
+                        <div key={staffMember.id} className="text-xs text-gray-600 group/staff relative">
+                          <span className="cursor-help underline decoration-dotted hover:text-blue-600">
+                            {staffMember.name}
+                            {/* Hover tooltip */}
+                            <div className="invisible group-hover/staff:visible opacity-0 group-hover/staff:opacity-100 transition-opacity absolute left-full top-0 ml-2 z-[9999] bg-gray-900 text-white text-xs rounded-lg py-2 px-3 shadow-2xl border border-gray-700 w-56 pointer-events-none">
+                            <div className="font-semibold mb-1.5 text-gray-100">
+                              {staffMember.name}'s Clients:
+                            </div>
+                            <div className="space-y-0.5 max-h-48 overflow-y-auto">
+                              {staffClients.length > 0 ? staffClients.map(client => {
+                                const isAbsent = !client.isAvailableForSession(session, selectedDate);
+                                return (
+                                  <div 
+                                    key={client.id}
+                                    className={isAbsent ? 'text-red-400 line-through' : 'text-gray-200'}
+                                  >
+                                    {client.name}
+                                  </div>
+                                );
+                              }) : <div className="text-gray-400 italic">No clients</div>}
+                            </div>
+                              {/* Tooltip arrow */}
+                              <div className="absolute -left-1.5 top-2 w-0 h-0 border-t-[6px] border-b-[6px] border-r-[6px] border-t-transparent border-b-transparent border-r-gray-900"></div>
+                            </div>
+                          </span>
+                        </div>
+                      );
+                    })}
+                    {trainingOnlyStaff.map(staffMember => {
+                      // Get all clients this staff member works with
+                      const staffClients = presentProgramStudents.filter(student => 
+                        student.teamIds && student.teamIds.includes(staffMember.id)
+                      );
+                      
+                      return (
+                        <div key={staffMember.id} className="text-xs text-gray-400 italic group/staff relative">
+                          <span className="cursor-help underline decoration-dotted hover:text-blue-400">
+                            {staffMember.name}
+                            {/* Hover tooltip */}
+                            <div className="invisible group-hover/staff:visible opacity-0 group-hover/staff:opacity-100 transition-opacity absolute left-full top-0 ml-2 z-[9999] bg-gray-900 text-white text-xs rounded-lg py-2 px-3 shadow-2xl border border-gray-700 w-56 pointer-events-none">
+                            <div className="font-semibold mb-1.5 text-gray-100">
+                              {staffMember.name}'s Clients:
+                            </div>
+                            <div className="space-y-0.5 max-h-48 overflow-y-auto">
+                              {staffClients.length > 0 ? staffClients.map(client => {
+                                const isAbsent = !client.isAvailableForSession(session, selectedDate);
+                                const trainingStatus = client.getStaffTrainingStatus ? 
+                                  client.getStaffTrainingStatus(staffMember.id) : 'solo';
+                                return (
+                                  <div 
+                                    key={client.id}
+                                    className={isAbsent ? 'text-red-400 line-through' : 'text-gray-200'}
+                                  >
+                                    {client.name} 
+                                    {trainingStatus !== 'solo' && trainingStatus !== 'trainer' && (
+                                      <span className="text-orange-400 ml-1 text-[10px]">({trainingStatus})</span>
+                                    )}
+                                  </div>
+                                );
+                              }) : <div className="text-gray-400 italic">No clients</div>}
+                            </div>
+                              {/* Tooltip arrow */}
+                              <div className="absolute -left-1.5 top-2 w-0 h-0 border-t-[6px] border-b-[6px] border-r-[6px] border-t-transparent border-b-transparent border-r-gray-900"></div>
+                            </div>
+                          </span>
+                          {' '}
+                          <span className="text-orange-500">(no solo cases)</span>
+                        </div>
+                      );
+                    })}
                   </div>
                 </div>
               );
@@ -2679,6 +2891,20 @@ export const SessionSummary = ({ schedule, staff, students, session, program, se
         program={program}
         assignments={assignments}
         availableStaff={availableStaff}
+        onManualAssignment={onManualAssignment}
+        onAssignmentRemove={onAssignmentRemove}
+      />
+      
+      {/* Training Opportunities Finder - Show available trainees whose clients are scheduled */}
+      <TrainingOpportunitiesFinder
+        schedule={schedule}
+        staff={staff}
+        students={students}
+        session={session}
+        program={program}
+        assignments={assignments}
+        availableStaff={availableStaff}
+        onManualAssignment={onManualAssignment}
       />
 
       {unassignedCount === 0 ? (

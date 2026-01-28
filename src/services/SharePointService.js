@@ -477,7 +477,7 @@ export class SharePointService {
       // For Lookup fields: Use ClientId to get the ID value directly (no expand needed)
       // For Person fields: Expand StaffMember to get full details
       const url = `${this.config.siteUrl}/_api/web/lists/getbytitle('ClientTeamMembers')/items?` +
-        `$select=ClientId,StaffMember/Id,StaffMember/Title,StaffMember/EMail,TrainingStatus&` +
+        `$select=ClientId,StaffMember/Id,StaffMember/Title,StaffMember/EMail,TrainingStatus,Position&` +
         `$expand=StaffMember&` +
         `$top=5000`;
 
@@ -513,13 +513,15 @@ export class SharePointService {
           }
           
           // Log raw SharePoint training status value for debugging
-          console.log(`  📋 Staff ${item.StaffMember.Title} (ID: ${item.StaffMember.Id}) for Client ${clientId}: TrainingStatus = '${item.TrainingStatus}'`);
+          console.log(`  📋 Staff ${item.StaffMember.Title} (ID: ${item.StaffMember.Id}) for Client ${clientId}: TrainingStatus = '${item.TrainingStatus}', Position = '${item.Position || 'N/A'}'`);
           
           teamsByClient[clientId].push({
             id: item.StaffMember.Id,
             title: item.StaffMember.Title,
             name: item.StaffMember.Title,
             email: item.StaffMember.EMail || '',
+            role: item.Position || '', // Include position/role from ClientTeamMembers list
+            position: item.Position || '', // Alias for compatibility
             trainingStatus: this.normalizeTrainingStatus(item.TrainingStatus)
           });
         }
@@ -780,7 +782,7 @@ export class SharePointService {
 
       // Step 3: Convert SharePoint items to Assignment objects
       const assignments = assignmentItems.map(item => {
-        return new Assignment({
+        const assignment = new Assignment({
           id: `${item.StaffID}_${item.StudentID}_${item.Session}_${item.Program}`,
           staffId: item.StaffID,
           staffName: item.StaffName,
@@ -790,27 +792,65 @@ export class SharePointService {
           program: item.Program,
           date: item.ScheduleDate,
           isLocked: item.IsLocked || false,
+          isTrainee: item.IsTrainee || false,
           assignedBy: 'loaded'
         });
+        
+        // Log trainee assignments for debugging
+        if (item.IsTrainee) {
+          console.log(`🎓 TRAINEE LOADED: ${item.StaffName} → ${item.StudentName} (${item.Session})`);
+        }
+        
+        return assignment;
       });
+      
+      // Count and log trainee assignments
+      const traineeCount = assignments.filter(a => a.isTrainee).length;
+      console.log(`✅ Found ${traineeCount} trainee assignments in regular assignments array`);
 
-      // Step 4: Parse trainee assignments if available
+      // Step 4: Parse trainee assignments if available (old format in JSON field)
       let traineeAssignments = [];
       if (scheduleRecord.traineeAssignments) {
         try {
-          traineeAssignments = JSON.parse(scheduleRecord.traineeAssignments);
-          console.log(`✅ Loaded ${traineeAssignments.length} trainee assignments`);
+          const oldTraineeAssignments = JSON.parse(scheduleRecord.traineeAssignments);
+          console.log(`✅ Found ${oldTraineeAssignments.length} trainee assignments in old JSON format`);
+          
+          // Convert old trainee assignments to Assignment objects and add to assignments array
+          oldTraineeAssignments.forEach(ta => {
+            const traineeAssignment = new Assignment({
+              id: `${ta.staffId}_${ta.studentId}_${ta.session}_${ta.program}_trainee`,
+              staffId: ta.staffId,
+              staffName: ta.staffName || '',
+              studentId: ta.studentId,
+              studentName: ta.studentName || '',
+              session: ta.session,
+              program: ta.program,
+              date: dateString,
+              isLocked: ta.isLocked || false,
+              isTrainee: true,
+              assignedBy: 'loaded'
+            });
+            assignments.push(traineeAssignment);
+            console.log(`🎓 Converted old trainee to assignment: ${ta.staffName || ta.staffId} → ${ta.studentName || ta.studentId} (${ta.session})`);
+          });
+          
+          traineeAssignments = oldTraineeAssignments; // Keep for backward compatibility
         } catch (error) {
           console.warn('⚠️ Failed to parse trainee assignments:', error);
         }
       }
 
       // Step 5: Create and return the Schedule object
+      // Build lockedAssignments Set from assignments that have isLocked: true
+      const lockedAssignments = new Set(
+        assignments.filter(a => a.isLocked).map(a => a.id)
+      );
+      
       const schedule = new Schedule({
         date: dateString,
         assignments: assignments,
-        traineeAssignments: traineeAssignments,
-        lockedAssignments: new Set(),
+        traineeAssignments: traineeAssignments, // Keep old field for backward compatibility
+        lockedAssignments: lockedAssignments,
         isFinalized: scheduleRecord.IsFinalized || false,
         lastModified: scheduleRecord.LastModified,
         lastModifiedBy: scheduleRecord.LastModifiedBy
@@ -912,6 +952,7 @@ export class SharePointService {
         ClientId: clientId, // Lookup field - use "Id" suffix
         StaffMemberId: staffMember.id, // Person picker field
         TrainingStatus: this.toSharePointTrainingStatus(trainingStatus), // Convert to SharePoint format
+        Position: staffMember.role || staffMember.position || '', // Staff member's role/position
         IsActive: true,
         DateAdded: new Date().toISOString()
       };
@@ -1010,10 +1051,15 @@ export class SharePointService {
         const staffMember = student.team.find(t => t.id === staffId);
         if (staffMember) {
           const trainingStatus = student.getStaffTrainingStatus(staffId);
+          // Ensure role is included (it should be in student.team, but verify)
+          const staffWithRole = {
+            ...staffMember,
+            role: staffMember.role || staffMember.position || ''
+          };
           await this.saveClientTeamMember(
             student.id,
             student.name,
-            staffMember,
+            staffWithRole,
             trainingStatus
           );
         }
@@ -1023,12 +1069,15 @@ export class SharePointService {
       for (const member of existingMembers) {
         if (newStaffIds.includes(member.StaffMember?.Id)) {
           const trainingStatus = student.getStaffTrainingStatus(member.StaffMember.Id);
+          // Get the staff member's role from student.team
+          const staffMember = student.team.find(t => t.id === member.StaffMember.Id);
+          const staffRole = staffMember?.role || staffMember?.position || '';
           // Only update if training status changed
           // We'd need to load the current status to check, so for now just update all
           await this.saveClientTeamMember(
             student.id,
             student.name,
-            { id: member.StaffMember.Id, name: member.StaffMember.Title },
+            { id: member.StaffMember.Id, name: member.StaffMember.Title, role: staffRole },
             trainingStatus,
             true,
             member.Id
@@ -1444,7 +1493,8 @@ export class SharePointService {
         Session: assignment.session,
         Program: assignment.program,
         AssignmentType: assignment.type || 'Standard',
-        IsLocked: assignment.isLocked || false
+        IsLocked: assignment.isLocked || false,
+        IsTrainee: assignment.isTrainee || false
       };
 
       console.log('💾 Saving assignment to DailyAssignments list:', assignmentData);

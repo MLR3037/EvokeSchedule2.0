@@ -379,7 +379,8 @@ export class Assignment {
     program, // 'Primary' or 'Secondary'
     date,
     isLocked = false,
-    assignedBy = 'auto' // 'auto' or 'manual'
+    assignedBy = 'auto', // 'auto' or 'manual'
+    isTrainee = false // Whether this is a trainee assignment
   }) {
     this.id = id;
     this.staffId = staffId;
@@ -391,6 +392,7 @@ export class Assignment {
     this.date = date;
     this.isLocked = isLocked;
     this.assignedBy = assignedBy;
+    this.isTrainee = isTrainee;
   }
 
   getSessionTimes() {
@@ -455,7 +457,26 @@ export class Schedule {
   }
 
   addAssignment(assignment) {
+    // CRITICAL VALIDATION: Prevent staff from working with same student all day
+    // EXCEPTION: Trainees can work with same student all day (training purposes)
+    // Check if this staff is already assigned to this student in a different session
+    const alreadyAssignedToStudent = this.assignments.some(existing => 
+      existing.staffId === assignment.staffId && 
+      existing.studentId === assignment.studentId &&
+      existing.session !== assignment.session
+    );
+    
+    if (alreadyAssignedToStudent && !assignment.isTrainee) {
+      console.error(`🚫 BLOCKED: Cannot assign staff ${assignment.staffName || assignment.staffId} to student ${assignment.studentName || assignment.studentId} in ${assignment.session} - already assigned in other session`);
+      return false; // Assignment blocked
+    }
+    
+    if (alreadyAssignedToStudent && assignment.isTrainee) {
+      console.log(`✅ ALLOWED: Trainee ${assignment.staffName || assignment.staffId} can work with same student ${assignment.studentName || assignment.studentId} all day`);
+    }
+    
     this.assignments.push(assignment);
+    return true; // Assignment successful
   }
 
   removeAssignment(assignmentId) {

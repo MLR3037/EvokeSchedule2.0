@@ -45,6 +45,8 @@ import TeamManagement from './components/TeamManagement.js';
 import AttendanceManagement from './components/AttendanceManagement.js';
 import { TrainingTracker } from './components/TrainingTracker.js';
 import LiveScheduleView from './components/LiveScheduleView.js';
+import TeamsGridView from './components/TeamsGridView.js';
+import ScheduleGridView from './components/ScheduleGridView.js';
 import { runTests } from './tests/SchedulingTestSuite.js';
 import ErrorBoundary from './components/ErrorBoundary.js';
 
@@ -529,27 +531,47 @@ const ABAScheduler = () => {
       const result = await autoAssignEngine.autoAssignSchedule(schedule, staff, students, currentDate);
       
       if (result.assignments.length > 0) {
-        // Keep only locked/manual assignments from the existing schedule
+        // Keep only locked/manual/loaded assignments from the existing schedule
         // Auto-assignments should be completely replaced
-        const manualAssignments = schedule.assignments.filter(a => 
-          a.assignedBy === 'manual' || a.isLocked
-        );
+        console.log('🔍 Before auto-assign filter - total assignments:', schedule.assignments.length);
+        schedule.assignments.forEach(a => {
+          console.log(`  ${a.staffName} → ${a.studentName} (${a.session}) - assignedBy: ${a.assignedBy}, isLocked: ${a.isLocked}, isTrainee: ${a.isTrainee}`);
+        });
+        
+        // CRITICAL: Filter to keep locked/manual/loaded assignments
+        // Also separate main staff from trainees
+        const manualAssignments = schedule.assignments.filter(a => {
+          const shouldKeep = a.assignedBy === 'manual' || a.assignedBy === 'loaded' || a.isLocked;
+          
+          // Debug logging for assignments that might be incorrectly removed
+          if (!shouldKeep && !a.isTrainee) {
+            console.warn(`⚠️ REMOVING NON-TRAINEE: ${a.staffName} → ${a.studentName} (${a.session}) - assignedBy: ${a.assignedBy}, isLocked: ${a.isLocked}`);
+          }
+          
+          return shouldKeep;
+        });
+        
+        console.log('✅ Keeping these assignments (manual/loaded/locked):', manualAssignments.length);
+        console.log(`  Main staff: ${manualAssignments.filter(a => !a.isTrainee).length}`);
+        console.log(`  Trainees: ${manualAssignments.filter(a => a.isTrainee).length}`);
+        manualAssignments.forEach(a => {
+          console.log(`  KEEPING: ${a.staffName} → ${a.studentName} (${a.session}) - assignedBy: ${a.assignedBy}, isLocked: ${a.isLocked}, isTrainee: ${a.isTrainee}`);
+        });
         
         // Combine manual assignments with new auto-assignments
         let allAssignments = [...manualAssignments, ...result.assignments];
         
-        // SAFETY CHECK 1: Remove any assignments where staff is marked absent
+        // SAFETY CHECK 1: Remove any assignments where staff is marked absent or out of session
         // This is a failsafe in case of state sync issues
         allAssignments = allAssignments.filter(assignment => {
           const staffMember = staff.find(s => s.id === assignment.staffId);
           if (!staffMember) return true; // Keep if staff not found (shouldn't happen)
           
-          const isAbsent = assignment.session === 'AM' 
-            ? (staffMember.absentAM || staffMember.absentFullDay)
-            : (staffMember.absentPM || staffMember.absentFullDay);
+          // Check if staff is unavailable (absent OR out of session)
+          const isUnavailable = !staffMember.isAvailableForSession(assignment.session);
             
-          if (isAbsent) {
-            console.warn(`⚠️ SAFETY CHECK: Removed assignment for absent staff: ${staffMember.name} (${assignment.session})`);
+          if (isUnavailable) {
+            console.warn(`⚠️ SAFETY CHECK: Removed assignment for unavailable staff: ${staffMember.name} (${assignment.session})`);
             return false;
           }
           return true;
@@ -576,17 +598,32 @@ const ABAScheduler = () => {
           const ratio = session === 'AM' ? student.ratioAM : student.ratioPM;
           const maxStaff = ratio === '2:1' ? 2 : 1;
           
-          // Take only the first maxStaff assignments, prioritize manual/locked
-          const sorted = assignments.sort((a, b) => {
-            if (a.assignedBy === 'manual' || a.isLocked) return -1;
-            if (b.assignedBy === 'manual' || b.isLocked) return 1;
-            return 0;
+          // CRITICAL: Separate main staff from trainees
+          // Trainees don't count toward ratio limits - they're always extras
+          const mainStaff = assignments.filter(a => !a.isTrainee);
+          const trainees = assignments.filter(a => a.isTrainee);
+          
+          // Limit only main staff based on ratio, prioritize manual/locked/loaded
+          const sortedMainStaff = mainStaff.sort((a, b) => {
+            // Priority order: manual/locked > loaded > auto
+            const aPriority = (a.assignedBy === 'manual' || a.isLocked) ? 3 : (a.assignedBy === 'loaded') ? 2 : 1;
+            const bPriority = (b.assignedBy === 'manual' || b.isLocked) ? 3 : (b.assignedBy === 'loaded') ? 2 : 1;
+            return bPriority - aPriority;
           });
           
-          validAssignments.push(...sorted.slice(0, maxStaff));
+          const keptMainStaff = sortedMainStaff.slice(0, maxStaff);
+          const removedMainStaff = sortedMainStaff.slice(maxStaff);
           
-          if (sorted.length > maxStaff) {
-            console.warn(`⚠️ ${student.name} ${session}: Trimmed ${sorted.length} assignments to ${maxStaff} (ratio: ${ratio})`);
+          // Keep limited main staff + ALL trainees
+          validAssignments.push(...keptMainStaff, ...trainees);
+          
+          if (removedMainStaff.length > 0) {
+            console.warn(`⚠️ TRIMMING ${student.name} ${session} MAIN STAFF: ${mainStaff.length} → ${maxStaff} (ratio: ${ratio})`);
+            console.warn(`   KEEPING: ${keptMainStaff.map(a => `${a.staffName}(${a.assignedBy})`).join(', ')}`);
+            console.warn(`   REMOVED: ${removedMainStaff.map(a => `${a.staffName}(${a.assignedBy})`).join(', ')}`);
+          }
+          if (trainees.length > 0) {
+            console.log(`   ✅ KEEPING ${trainees.length} trainee(s): ${trainees.map(a => a.staffName).join(', ')}`);
           }
         });
 
@@ -659,19 +696,47 @@ const ABAScheduler = () => {
       
       if (result.swapsMade > 0 || result.newAssignments.length > 0) {
         console.log(`✅ Smart Swap Results: ${result.swapsMade} swaps, ${result.gapsFilled} gaps filled`);
+        console.log(`   📊 Starting with ${schedule.assignments.length} existing assignments`);
+        console.log(`   📊 Adding ${result.newAssignments.length} new assignments from swaps`);
         
         // Apply swaps and new assignments
         let updatedAssignments = [...schedule.assignments];
         
+        // SAFETY CHECK 0: Remove any assignments where staff is unavailable (absent or out of session)
+        const beforeSafetyCheck0 = updatedAssignments.length;
+        updatedAssignments = updatedAssignments.filter(assignment => {
+          const staffMember = staff.find(s => s.id === assignment.staffId);
+          if (!staffMember) return true;
+          
+          const isUnavailable = !staffMember.isAvailableForSession(assignment.session);
+          if (isUnavailable) {
+            console.warn(`⚠️ SMART SWAP SAFETY 0: Removed ${staffMember.name} → ${assignment.studentName || 'student'} (${assignment.session}) - unavailable`);
+            return false;
+          }
+          return true;
+        });
+        if (beforeSafetyCheck0 !== updatedAssignments.length) {
+          console.log(`   📊 After SAFETY CHECK 0: ${beforeSafetyCheck0} → ${updatedAssignments.length} (removed ${beforeSafetyCheck0 - updatedAssignments.length})`);
+        }
+        
         // Remove swapped assignments
+        console.log(`   📊 Processing ${result.swaps.length} swaps to remove old assignments...`);
         for (const swap of result.swaps) {
           if (swap.oldAssignment) {
+            const beforeCount = updatedAssignments.length;
             updatedAssignments = updatedAssignments.filter(a => a.id !== swap.oldAssignment.id);
+            const removed = beforeCount - updatedAssignments.length;
+            console.log(`   🗑️ Removing: ${swap.oldAssignment.staffName || swap.oldAssignment.staffId} → ${swap.oldAssignment.studentName || swap.oldAssignment.studentId} (${removed} removed)`);
           }
         }
         
         // Add all new assignments from swaps and gap fills
         updatedAssignments = [...updatedAssignments, ...result.newAssignments];
+        
+        console.log(`   📊 After adding new assignments: ${updatedAssignments.length} total`);
+        console.log(`   🔍 New assignments detail:`, result.newAssignments.map(a => 
+          `${a.staffName} → ${a.studentName} (${a.session}, ${a.assignedBy})`
+        ));
         
         // SAFETY CHECK 1: Limit assignments per student based on their ratio
         const assignmentsByStudent = {};
@@ -693,21 +758,39 @@ const ABAScheduler = () => {
           const ratio = session === 'AM' ? student.ratioAM : student.ratioPM;
           const maxStaff = ratio === '2:1' ? 2 : 1;
           
-          // Take only the first maxStaff assignments, prioritize manual/locked
-          const sorted = assignments.sort((a, b) => {
-            if (a.assignedBy === 'manual' || a.isLocked) return -1;
-            if (b.assignedBy === 'manual' || b.isLocked) return 1;
-            return 0;
+          // CRITICAL: Separate main staff from trainees
+          const mainStaff = assignments.filter(a => !a.isTrainee);
+          const trainees = assignments.filter(a => a.isTrainee);
+          
+          // Limit only main staff, prioritize manual/locked/loaded
+          const sortedMainStaff = mainStaff.sort((a, b) => {
+            const aPriority = (a.assignedBy === 'manual' || a.isLocked) ? 3 : (a.assignedBy === 'loaded') ? 2 : 1;
+            const bPriority = (b.assignedBy === 'manual' || b.isLocked) ? 3 : (b.assignedBy === 'loaded') ? 2 : 1;
+            return bPriority - aPriority;
           });
           
-          validAssignments.push(...sorted.slice(0, maxStaff));
+          const keptMainStaff = sortedMainStaff.slice(0, maxStaff);
+          const removedMainStaff = sortedMainStaff.slice(maxStaff);
           
-          if (sorted.length > maxStaff) {
-            console.warn(`⚠️ SMART SWAP: ${student.name} ${session}: Trimmed ${sorted.length} assignments to ${maxStaff} (ratio: ${ratio})`);
+          // Keep limited main staff + ALL trainees
+          validAssignments.push(...keptMainStaff, ...trainees);
+          
+          if (removedMainStaff.length > 0) {
+            console.warn(`⚠️ SMART SWAP SAFETY 1 TRIMMING ${student.name} ${session}: ${mainStaff.length} → ${maxStaff} (ratio: ${ratio})`);
+            console.warn(`   KEEPING: ${keptMainStaff.map(a => `${a.staffName}(${a.assignedBy}, id:${a.id})`).join(', ')}`);
+            console.warn(`   REMOVED: ${removedMainStaff.map(a => `${a.staffName}(${a.assignedBy}, id:${a.id})`).join(', ')}`);
+          } else if (mainStaff.length > 0) {
+            console.log(`   ✅ KEEPING ${student.name} ${session}: ${keptMainStaff.map(a => `${a.staffName}(${a.assignedBy})`).join(', ')}`);
+          }
+          if (trainees.length > 0) {
+            console.log(`   ✅ KEEPING ${trainees.length} trainee(s): ${trainees.map(a => a.staffName).join(', ')}`);
           }
         });
-
+        
+        console.log(`   📊 After SAFETY CHECK 1 (ratio limits): ${updatedAssignments.length} → ${validAssignments.length}`);
+        
         // SAFETY CHECK 2: Prevent double-booking of staff in the same session
+        const beforeSafetyCheck2 = validAssignments.length;
         const staffDoubleBookings = {};
         validAssignments = validAssignments.filter(assignment => {
           const key = `${assignment.staffId}-${assignment.session}`;
@@ -732,6 +815,12 @@ const ABAScheduler = () => {
           staffDoubleBookings[key] = assignment;
           return true;
         });
+        if (beforeSafetyCheck2 !== validAssignments.length) {
+          console.log(`   📊 After SAFETY CHECK 2 (double-booking): ${beforeSafetyCheck2} → ${validAssignments.length} (removed ${beforeSafetyCheck2 - validAssignments.length})`);
+        }
+        
+        console.log(`   📊 FINAL: ${validAssignments.length} assignments in schedule`);
+        
         
         // Create new schedule instance
         const newSchedule = new Schedule({
@@ -751,7 +840,157 @@ const ABAScheduler = () => {
         
         alert(`✅ Smart Swap Complete!\n\n${result.swapsMade} swaps made\n${result.gapsFilled} gaps filled\n\nCheck the schedule for improvements.`);
       } else {
-        alert('ℹ️ No beneficial swaps found.\n\nAll gaps may require staff who are already assigned or unavailable.');
+        // No swaps found - calculate remaining gaps manually
+        const activeStudents = preservedStudents.filter(s => s.isActive && s.isScheduledForDay(currentDate));
+        const sessions = ['AM', 'PM'];
+        const remainingGaps = [];
+        
+        for (const student of activeStudents) {
+          for (const session of sessions) {
+            if (student.isAvailableForSession(session, currentDate)) {
+              const hasAssignment = schedule.assignments.some(a => 
+                a.studentId === student.id && a.session === session
+              );
+              if (!hasAssignment) {
+                remainingGaps.push({ student, session });
+              }
+            }
+          }
+        }
+        
+        if (remainingGaps.length > 0) {
+          const shouldTraceAndSwap = window.confirm(
+            `⚠️ No simple swaps found.\n\n${remainingGaps.length} gap(s) remaining.\n\nWould you like to TRACE & CLEAR conflicting assignments?\n\nThis will:\n• Find staff assigned to the gap student's team\n• Clear their conflicting assignments (unlocked only)\n• Try to reassign those students with other team members\n• Assign freed staff to the gap student\n\nClick OK to proceed or Cancel to keep current schedule.`
+          );
+          
+          if (shouldTraceAndSwap) {
+            console.log('🔍 TRACE & SWAP MODE: Targeting staff conflicts for gaps...');
+            
+            let totalCleared = 0;
+            let totalFilled = 0;
+            const modifiedAssignments = [...schedule.assignments];
+            
+            // Process each gap
+            for (const gap of remainingGaps) {
+              const { student: gapStudent, session: gapSession } = gap;
+              
+              console.log(`\n🎯 Targeting gap: ${gapStudent.name} ${gapSession}`);
+              
+              // Find this student's team members
+              const gapTeamMembers = preservedStaff.filter(s => 
+                gapStudent.teamIds.includes(s.id) &&
+                s.isAvailableForSession(gapSession) &&
+                !s.isAbsentForSession(gapSession)
+              );
+              
+              console.log(`   Team members available: ${gapTeamMembers.map(s => s.name).join(', ')}`);
+              
+              // Find where each team member is currently assigned in this session
+              let staffFreed = false;
+              
+              for (const teamStaff of gapTeamMembers) {
+                const conflictingAssignment = modifiedAssignments.find(a => 
+                  a.staffId === teamStaff.id && 
+                  a.session === gapSession &&
+                  !a.isLocked &&
+                  a.assignedBy !== 'manual'
+                );
+                
+                if (conflictingAssignment) {
+                  const conflictStudent = activeStudents.find(s => s.id === conflictingAssignment.studentId);
+                  
+                  console.log(`   Found conflict: ${teamStaff.name} is with ${conflictStudent?.name}`);
+                  
+                  // Clear this assignment to free the staff
+                  const assignmentIndex = modifiedAssignments.findIndex(a => a.id === conflictingAssignment.id);
+                  if (assignmentIndex !== -1) {
+                    modifiedAssignments.splice(assignmentIndex, 1);
+                    totalCleared++;
+                    console.log(`   ✂️ Cleared ${teamStaff.name} from ${conflictStudent?.name}`);
+                    
+                    // Create new assignment for gap student
+                    const newAssignment = new Assignment({
+                      id: SchedulingUtils.generateAssignmentId(),
+                      staffId: teamStaff.id,
+                      staffName: teamStaff.name,
+                      studentId: gapStudent.id,
+                      studentName: gapStudent.name,
+                      session: gapSession,
+                      program: gapStudent.program,
+                      date: schedule.date,
+                      isLocked: false,
+                      assignedBy: 'auto-trace-swap'
+                    });
+                    
+                    modifiedAssignments.push(newAssignment);
+                    totalFilled++;
+                    console.log(`   ✅ Assigned ${teamStaff.name} to ${gapStudent.name}`);
+                    
+                    staffFreed = true;
+                    break; // Found and filled this gap, move to next
+                  }
+                } else if (!modifiedAssignments.some(a => a.staffId === teamStaff.id && a.session === gapSession)) {
+                  // Staff is free! Assign directly
+                  console.log(`   ✓ ${teamStaff.name} is free!`);
+                  
+                  const newAssignment = new Assignment({
+                    id: SchedulingUtils.generateAssignmentId(),
+                    staffId: teamStaff.id,
+                    staffName: teamStaff.name,
+                    studentId: gapStudent.id,
+                    studentName: gapStudent.name,
+                    session: gapSession,
+                    program: gapStudent.program,
+                    date: schedule.date,
+                    isLocked: false,
+                    assignedBy: 'auto-trace-swap'
+                  });
+                  
+                  modifiedAssignments.push(newAssignment);
+                  totalFilled++;
+                  console.log(`   ✅ Assigned ${teamStaff.name} to ${gapStudent.name}`);
+                  
+                  staffFreed = true;
+                  break;
+                }
+              }
+              
+              if (!staffFreed) {
+                console.log(`   ❌ Could not free any team member for ${gapStudent.name} ${gapSession}`);
+              }
+            }
+            
+            // Create new schedule with modified assignments
+            const newSchedule = new Schedule({
+              date: schedule.date,
+              assignments: modifiedAssignments,
+              traineeAssignments: [...(schedule.traineeAssignments || [])],
+              lockedAssignments: schedule.lockedAssignments,
+              isFinalized: schedule.isFinalized
+            });
+            
+            setSchedule(newSchedule);
+            
+            // Calculate remaining gaps
+            const newGaps = [];
+            for (const student of activeStudents) {
+              for (const session of sessions) {
+                if (student.isAvailableForSession(session, currentDate)) {
+                  const hasAssignment = newSchedule.assignments.some(a => 
+                    a.studentId === student.id && a.session === session
+                  );
+                  if (!hasAssignment) {
+                    newGaps.push({ student, session });
+                  }
+                }
+              }
+            }
+            
+            alert(`✅ Trace & Swap Complete!\n\n${totalCleared} assignments cleared\n${totalFilled} gaps filled\n${newGaps.length} gaps remaining\n\n${totalCleared > totalFilled ? 'Some students were unassigned in the process.' : ''}`);
+          }
+        } else {
+          alert('ℹ️ No gaps remaining. Schedule is fully assigned!');
+        }
       }
     } catch (error) {
       console.error('Smart swap failed:', error);
@@ -792,7 +1031,9 @@ const handleAssignmentUnlock = (assignmentId) => {
   setSchedule(newSchedule);
 };
 
-const handleManualAssignment = ({ staffId, studentId, session, program, bypassTeamCheck = false }) => {
+const handleManualAssignment = ({ staffId, studentId, session, program, bypassTeamCheck = false, isTrainee = false }) => {
+  console.log('📝 handleManualAssignment called:', { staffId, studentId, session, program, isTrainee });
+  
   // Get staff and student names
   const staffMember = staff.find(s => s.id === staffId);
   const student = students.find(s => s.id === studentId);
@@ -809,10 +1050,10 @@ const handleManualAssignment = ({ staffId, studentId, session, program, bypassTe
     return;
   }
 
-  // CRITICAL CHECK 2: Prevent double-booking of staff
+  // CRITICAL CHECK 2: Prevent double-booking of staff (skip for trainees - they're allowed to overlap)
   // Check if staff is already assigned in this session (any program)
-  const existingStaffAssignment = schedule.assignments.find(a => 
-    a.staffId === staffId && a.session === session
+  const existingStaffAssignment = !isTrainee && schedule.assignments.find(a => 
+    a.staffId === staffId && a.session === session && !a.isTrainee
   );
 
   if (existingStaffAssignment) {
@@ -840,7 +1081,8 @@ const handleManualAssignment = ({ staffId, studentId, session, program, bypassTe
     program,
     date: currentDate,
     isLocked: false, // Manual assignments start UNLOCKED - user must click lock icon to lock
-    assignedBy: 'manual'
+    assignedBy: 'manual',
+    isTrainee: isTrainee // Mark if this is a trainee assignment
   });
 
   // Add assignment to schedule
@@ -1705,6 +1947,7 @@ const handleAssignmentRemove = (assignmentId) => {
           <div className="flex space-x-8">
             {[
               { id: 'schedule', label: 'Schedule', icon: Clock },
+              { id: 'teams-grid', label: 'Teams Grid', icon: Users },
               { id: 'live-view', label: 'Live View', icon: ExternalLink },
               { id: 'staff', label: 'Staff', icon: Users },
               { id: 'students', label: 'Students', icon: Users },
@@ -1824,6 +2067,8 @@ const handleAssignmentRemove = (assignmentId) => {
                     session="AM" 
                     program="Primary"
                     selectedDate={currentDate}
+                    onManualAssignment={handleManualAssignment}
+                    onAssignmentRemove={handleAssignmentRemove}
                   />
                   <SessionSummary 
                     schedule={schedule} 
@@ -1832,6 +2077,8 @@ const handleAssignmentRemove = (assignmentId) => {
                     session="PM" 
                     program="Primary"
                     selectedDate={currentDate}
+                    onManualAssignment={handleManualAssignment}
+                    onAssignmentRemove={handleAssignmentRemove}
                   />
                   <SessionSummary 
                     schedule={schedule} 
@@ -1840,6 +2087,8 @@ const handleAssignmentRemove = (assignmentId) => {
                     session="AM" 
                     program="Secondary"
                     selectedDate={currentDate}
+                    onManualAssignment={handleManualAssignment}
+                    onAssignmentRemove={handleAssignmentRemove}
                   />
                   <SessionSummary 
                     schedule={schedule} 
@@ -1847,22 +2096,33 @@ const handleAssignmentRemove = (assignmentId) => {
                     students={students} 
                     session="PM" 
                     program="Secondary"
-                    selectedDate={currentDate} 
+                    selectedDate={currentDate}
+                    onManualAssignment={handleManualAssignment}
+                    onAssignmentRemove={handleAssignmentRemove}
                   />
                 </div>
                 
-                {/* Interactive Assignment Table */}
-                <ScheduleTableView
+                {/* Schedule Grid View */}
+                <ScheduleGridView
                   schedule={schedule}
                   staff={staff}
                   students={students}
+                  selectedDate={currentDate}
                   onAssignmentLock={handleAssignmentLock}
                   onAssignmentUnlock={handleAssignmentUnlock}
                   onAssignmentRemove={handleAssignmentRemove}
                   onManualAssignment={handleManualAssignment}
-                  selectedDate={currentDate}
                 />
               </div>
+            )}
+            
+            {/* Teams Grid Tab */}
+            {activeTab === 'teams-grid' && (
+              <TeamsGridView
+                students={students}
+                staff={staff}
+                selectedDate={currentDate}
+              />
             )}
 
             {/* Staff Tab */}

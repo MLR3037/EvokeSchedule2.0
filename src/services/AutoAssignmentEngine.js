@@ -9,13 +9,33 @@ import {
 
 /**
  * ULTIMATE Auto-assignment algorithm for ABA scheduling
- * Features deep cascading multi-level iteration until all students assigned
+ * Features:
+ * - Deep cascading multi-level iteration until all students assigned
+ * - Strong randomization for staff selection to create rotation/variability
+ * - Caseload balancing to distribute work evenly
+ * - Team membership and role hierarchy enforcement
+ * 
+ * CONSOLE LOGGING:
+ * - Critical logs (eligibility, blocking, assignments) always show
+ * - Verbose logs (detailed breakdowns) can be toggled with this.verboseLogging
+ * - To enable verbose logging: Set this.verboseLogging = true in constructor
  */
 export class AutoAssignmentEngine {
   constructor() {
     this.debugMode = false; // Enhanced debug mode
     this.maxIterations = 50; // Ultimate iteration limit
     this.maxChainDepth = 5; // How deep to search for swap chains
+    this.verboseLogging = false; // Set to TRUE to see detailed assignment logs
+  }
+  
+  /**
+   * Conditional logging - only logs if verbose mode is enabled
+   * Critical logs always show regardless
+   */
+  verboseLog(...args) {
+    if (this.verboseLogging) {
+      console.log(...args);
+    }
   }
 
   /**
@@ -86,7 +106,7 @@ export class AutoAssignmentEngine {
         
         // They have a solo case if status is 'solo' or 'trainer'
         if (trainingStatus === TRAINING_STATUS.SOLO || trainingStatus === TRAINING_STATUS.TRAINER) {
-          return true; // Found at least one solo case
+           return true; // Found at least one solo case
         }
       }
     }
@@ -842,6 +862,9 @@ export class AutoAssignmentEngine {
 
     const activeStaff = staff.filter(s => s.isActive);
     const activeStudents = students.filter(s => s.isActive && s.isScheduledForDay(selectedDate));
+    
+    // Store students for use in isStudentAssigned
+    this.currentStudents = activeStudents;
 
     console.log(`📊 Active: ${activeStaff.length} staff, ${activeStudents.length} students`);
     console.log(`📊 Attendance - Staff absent AM: ${activeStaff.filter(s => s.absentAM || s.absentFullDay).length}, PM: ${activeStaff.filter(s => s.absentPM || s.absentFullDay).length}`);
@@ -890,8 +913,26 @@ export class AutoAssignmentEngine {
             );
 
             if (assignments.length > 0) {
-              newAssignments.push(...assignments);
-              assignments.forEach(a => schedule.addAssignment(a));
+              // Validate each assignment before adding to schedule
+              const validAssignments = [];
+              for (const assignment of assignments) {
+                const validationErrors = SchedulingRules.validateAssignment(
+                  assignment, schedule, activeStaff, activeStudents
+                );
+                
+                if (validationErrors.length === 0) {
+                  schedule.addAssignment(assignment);
+                  validAssignments.push(assignment);
+                } else {
+                  console.log(`  🚫 BLOCKED assignment of ${assignment.staffName} to ${assignment.studentName}: ${validationErrors.join(', ')}`);
+                }
+              }
+              
+              newAssignments.push(...validAssignments);
+              
+              if (validAssignments.length === 0) {
+                errors.push(`Could not assign: ${student.name} in ${program} ${session} (validation failed)`);
+              }
             } else {
               errors.push(`Could not assign: ${student.name} in ${program} ${session}`);
             }
@@ -993,12 +1034,12 @@ export class AutoAssignmentEngine {
       // Block Teachers and Directors completely
       const blockedRoles = ['Teacher', 'Director', 'TEACHER', 'DIRECTOR'];
       if (blockedRoles.includes(staffMember.role)) {
-        console.log(`  🚫 BLOCKING ${staffMember.name}: ${staffMember.role} cannot do direct service`);
+        this.verboseLog(`  🚫 BLOCKING ${staffMember.name}: ${staffMember.role} cannot do direct service`);
         return false;
       }
 
       if (!staffMember.canDoDirectSessions()) {
-        console.log(`  🚫 BLOCKING ${staffMember.name}: Cannot do direct sessions`);
+        this.verboseLog(`  🚫 BLOCKING ${staffMember.name}: Cannot do direct sessions`);
         return false;
       }
 
@@ -1029,51 +1070,104 @@ export class AutoAssignmentEngine {
       return true;
     });
 
-    console.log(`  📊 Team staff breakdown:`);
-    console.log(`    Total available: ${availableStaff.length}`);
-    console.log(`    Team members: ${teamStaff.length}`);
+    this.verboseLog(`  📊 Team staff breakdown:`);
+    this.verboseLog(`    Total available: ${availableStaff.length}`);
+    console.log(`  📊 Team members available for ${student.name} ${session}: ${teamStaff.length}`);
 
     // Separate by role preference
     const rbtBsStaff = teamStaff.filter(s => s.role === 'RBT' || s.role === 'BS');
     const eaStaff = teamStaff.filter(s => s.role === 'EA');
     const otherStaff = teamStaff.filter(s => s.role !== 'RBT' && s.role !== 'BS' && s.role !== 'EA');
 
-    console.log(`    RBT/BS: ${rbtBsStaff.length}`);
-    console.log(`    EA: ${eaStaff.length}`);
-    console.log(`    Other: ${otherStaff.length}`);
+    this.verboseLog(`    RBT/BS: ${rbtBsStaff.length}`);
+    this.verboseLog(`    EA: ${eaStaff.length}`);
+    this.verboseLog(`    Other: ${otherStaff.length}`);
 
     // STRICT PRIORITY: Use RBT/BS first, EAs only if necessary
     let finalTeamStaff;
     if (rbtBsStaff.length >= staffCount) {
       finalTeamStaff = rbtBsStaff;
-      console.log(`  ✅ Using ONLY RBT/BS staff`);
+      this.verboseLog(`  ✅ Using ONLY RBT/BS staff`);
     } else if (rbtBsStaff.length + eaStaff.length >= staffCount) {
       finalTeamStaff = [...rbtBsStaff, ...eaStaff];
-      console.log(`  ⚠️ Using RBT/BS + EA staff (${rbtBsStaff.length} RBT/BS + ${Math.min(eaStaff.length, staffCount - rbtBsStaff.length)} EA)`);
+      this.verboseLog(`  ⚠️ Using RBT/BS + EA staff (${rbtBsStaff.length} RBT/BS + ${Math.min(eaStaff.length, staffCount - rbtBsStaff.length)} EA)`);
     } else {
       finalTeamStaff = teamStaff;
-      console.log(`  🚨 Using all available team staff (still short)`);
+      this.verboseLog(`  🚨 Using all available team staff (still short)`);
     }
 
     if (finalTeamStaff.length < staffCount) {
-      console.log(`  ❌ INSUFFICIENT: Need ${staffCount}, have ${finalTeamStaff.length} team members`);
+      console.log(`  ❌ INSUFFICIENT for ${student.name}: Need ${staffCount}, have ${finalTeamStaff.length} team members`);
       return [];
     }
 
     // Sort with hierarchy but add randomization for better distribution
     const sortedStaff = this.sortStaffForStudentWithShuffling(student, finalTeamStaff, session, schedule);
 
-    console.log(`  📋 Assignment order:`);
+    this.verboseLog(`  📋 Assignment order:`);
     sortedStaff.slice(0, staffCount).forEach((s, i) => {
-      console.log(`    ${i + 1}. ${s.name} (${s.role})`);
+      this.verboseLog(`    ${i + 1}. ${s.name} (${s.role})`);
     });
 
+    // CRITICAL: Before we start assigning, filter out any staff already with this student in the other session
+    const otherSession = session === 'AM' ? 'PM' : 'AM';
+    const staffAlreadyWithStudentInOtherSession = new Set(
+      schedule.assignments
+        .filter(a => a.studentId === student.id && a.session === otherSession)
+        .map(a => a.staffId)
+    );
+    
+    if (staffAlreadyWithStudentInOtherSession.size > 0) {
+      const blockedStaffNames = staff
+        .filter(s => staffAlreadyWithStudentInOtherSession.has(s.id))
+        .map(s => s.name)
+        .join(', ');
+      console.log(`  🚫 PRE-FILTERING: ${blockedStaffNames} already with ${student.name} in ${otherSession}`);
+    }
+
     // Assign exactly the number needed
-    for (let i = 0; i < staffCount && i < sortedStaff.length; i++) {
+    let assignedCount = 0;
+    let staffIndex = 0;
+    
+    while (assignedCount < staffCount && staffIndex < sortedStaff.length) {
+      const currentStaff = sortedStaff[staffIndex];
+      staffIndex++;
+      
+      // CRITICAL: Check if this staff is already assigned to this student in the OTHER session
+      // We don't want the same staff working with the same student all day
+      // This check ensures rotation and prevents burnout
+      const otherSession = session === 'AM' ? 'PM' : 'AM';
+      
+      // Skip if already filtered out
+      if (staffAlreadyWithStudentInOtherSession.has(currentStaff.id)) {
+        console.log(`  🚫 SAME-DAY SKIP: ${currentStaff.name} already with ${student.name} in ${otherSession} (pre-filtered)`);
+        continue;
+      }
+      
+      // Double-check both schedule assignments AND assignments we're creating in this function call
+      const alreadyWithStudentInOtherSessionInSchedule = schedule.assignments.some(a =>
+        a.staffId === currentStaff.id &&
+        a.studentId === student.id &&
+        a.session === otherSession
+      );
+      
+      const alreadyWithStudentInOtherSessionInCurrentRun = assignments.some(a =>
+        a.staffId === currentStaff.id &&
+        a.studentId === student.id &&
+        a.session === otherSession
+      );
+      
+      const alreadyWithStudentInOtherSession = alreadyWithStudentInOtherSessionInSchedule || alreadyWithStudentInOtherSessionInCurrentRun;
+      
+      if (alreadyWithStudentInOtherSession) {
+        console.log(`  🚫 SAME-DAY SKIP: ${currentStaff.name} already with ${student.name} in ${otherSession}`);
+        continue; // Skip this staff, try the next one
+      }
+      
       const assignment = new Assignment({
         id: SchedulingUtils.generateAssignmentId(),
-        staffId: sortedStaff[i].id,
-        staffName: sortedStaff[i].name,
+        staffId: currentStaff.id,
+        staffName: currentStaff.name,
         studentId: student.id,
         studentName: student.name,
         session,
@@ -1082,6 +1176,8 @@ export class AutoAssignmentEngine {
         isLocked: false,
         assignedBy: 'auto'
       });
+      
+      assignedCount++;
 
       const validationErrors = SchedulingRules.validateAssignment(
         assignment, schedule, staff, [student]
@@ -1089,10 +1185,19 @@ export class AutoAssignmentEngine {
 
       if (validationErrors.length === 0) {
         assignments.push(assignment);
-        console.log(`  ✅ Assigned ${sortedStaff[i].name} (${sortedStaff[i].role})`);
+        this.verboseLog(`  ✅ Assigned ${currentStaff.name} (${currentStaff.role})`);
       } else {
-        console.log(`  ❌ Cannot assign ${sortedStaff[i].name}: ${validationErrors.join(', ')}`);
+        this.verboseLog(`  ❌ Cannot assign ${currentStaff.name}: ${validationErrors.join(', ')}`);
       }
+    }
+    
+    // Summary log after all assignments
+    if (assignments.length === 0) {
+      console.log(`  ❌ NO STAFF assigned to ${student.name} ${session} (needed ${staffCount})`);
+    } else if (assignedCount < staffCount) {
+      console.log(`  ⚠️ PARTIAL ${student.name} ${session}: ${assignments.length}/${staffCount} - ${assignments.map(a => a.staffName).join(', ')}`);
+    } else {
+      console.log(`  ✅ ${student.name} ${session}: ${assignments.map(a => a.staffName).join(', ')}`);
     }
 
     return assignments;
@@ -1237,8 +1342,9 @@ export class AutoAssignmentEngine {
 
   /**
    * Enhanced staff sorting with session-based shuffling for better PM distribution
+   * IMPORTANT: This should ONLY receive team members - non-team members must be filtered out before calling
    * @param {Student} student - Student to assign
-   * @param {Staff[]} availableStaff - Available staff members
+   * @param {Staff[]} availableStaff - Available TEAM MEMBER staff (already filtered)
    * @param {string} session - 'AM' or 'PM'
    * @param {Schedule} schedule - Current schedule for caseload calculation
    * @returns {Staff[]} Sorted staff array
@@ -1250,41 +1356,36 @@ export class AutoAssignmentEngine {
     // Use preferred staff if available, otherwise fall back to all available staff
     const staffToUse = preferredStaff.length > 0 ? preferredStaff : availableStaff;
 
-    // ENHANCED: Stronger randomization to create variation between auto-assign runs
-    // Higher factor means more variation, but still respects team membership and role priorities
-    const randomizationFactor = session === 'PM' ? 3.5 : 2.5;
+    // ENHANCED: Much stronger randomization to create significant variation between auto-assign runs
+    // This ensures different staff are selected each time, creating better rotation
+    const randomizationFactor = session === 'PM' ? 8.0 : 6.0; // Increased for more variability
 
     const staffWithPriority = [...staffToUse].map(staff => ({
       staff,
-      isTeamMember: student.teamIds.includes(staff.id),
       roleLevel: staff.getRoleLevel(),
       isPreferred: staff.isPreferredDirectService(),
       caseload: schedule ? schedule.getStaffAssignments(staff.id).length : 0,
-      // Stronger random factor for more variation between runs
+      // Much stronger random factor for significant variation between runs
       randomFactor: Math.random() * randomizationFactor
     }));
 
     return staffWithPriority.sort((a, b) => {
-      // Team members first (always strict - this ensures quality)
-      if (a.isTeamMember && !b.isTeamMember) return -1;
-      if (!a.isTeamMember && b.isTeamMember) return 1;
-
       // Preferred direct service providers first (RBTs/BSs over EAs)
       if (a.isPreferred && !b.isPreferred) return -1;
       if (!a.isPreferred && b.isPreferred) return 1;
 
-      // NEW: Prioritize staff with smaller caseloads (fewer current assignments)
-      if (schedule && a.caseload !== b.caseload) {
+      // Balance caseload but with flexibility
+      // Only strongly prefer lower caseload if the difference is significant (2+ assignments)
+      if (schedule && Math.abs(a.caseload - b.caseload) >= 2) {
         return a.caseload - b.caseload;
       }
 
-      // ENHANCED: Within same preference/team level, use randomization to create variation
-      // This allows different staff to be selected on each auto-assign click
-      const aScore = a.roleLevel + a.randomFactor;
-      const bScore = b.roleLevel + b.randomFactor;
+      // ENHANCED: Use STRONG randomization to create variation
+      // The large randomization factor means staff order changes significantly on each run
+      // This creates natural rotation without being completely random
+      const aScore = (a.roleLevel * 0.5) + a.randomFactor; // Reduced role weight, increased random weight
+      const bScore = (b.roleLevel * 0.5) + b.randomFactor;
 
-      // Use randomized score directly (no threshold filtering)
-      // This ensures variation while still respecting role hierarchy through roleLevel
       return aScore - bScore;
     }).map(item => item.staff);
   }
@@ -1296,17 +1397,45 @@ export class AutoAssignmentEngine {
    * @returns {Student[]} Sorted students array
    */
   prioritizeStudents(students, session = 'AM') {
+    // Get staff reference from the first student if available
+    const allStaff = this.currentStudents && this.currentStudents.length > 0 
+      ? this.currentStudents[0].staff || [] 
+      : [];
+    
     return [...students].sort((a, b) => {
-      // 1. PRIORITY: Students with fewer team members first (harder to staff)
+      // 0. HIGHEST PRIORITY: Paired students (1:2 ratio) - they must be assigned together
+      const aIsPaired = a.isPaired && a.isPaired();
+      const bIsPaired = b.isPaired && b.isPaired();
+      if (aIsPaired && !bIsPaired) return -1;
+      if (!aIsPaired && bIsPaired) return 1;
+      
+      // 1. SECOND PRIORITY: 2:1 ratio students (they need 2 staff) - session-specific
+      const aIs2to1 = a.requiresMultipleStaff(session);
+      const bIs2to1 = b.requiresMultipleStaff(session);
+      if (aIs2to1 && !bIs2to1) return -1;
+      if (!aIs2to1 && bIs2to1) return 1;
+      
+      // 2. THIRD PRIORITY: Students with more absent team members first (harder to staff)
+      // Count how many of their team members are absent for this session
+      const aAbsentCount = a.teamIds.filter(staffId => {
+        const staffMember = allStaff.find(s => s.id === staffId);
+        return staffMember && !staffMember.isAvailableForSession(session);
+      }).length;
+      
+      const bAbsentCount = b.teamIds.filter(staffId => {
+        const staffMember = allStaff.find(s => s.id === staffId);
+        return staffMember && !staffMember.isAvailableForSession(session);
+      }).length;
+      
+      // More absences = higher priority (harder to staff)
+      if (aAbsentCount !== bAbsentCount) return bAbsentCount - aAbsentCount;
+
+      // 3. Students with fewer team members first (harder to staff)
       const aTeamSize = a.teamIds.length;
       const bTeamSize = b.teamIds.length;
       if (aTeamSize !== bTeamSize) return aTeamSize - bTeamSize;
 
-      // 2. Then 2:1 ratio students (they need more staff) - session-specific
-      if (a.requiresMultipleStaff(session) && !b.requiresMultipleStaff(session)) return -1;
-      if (!a.requiresMultipleStaff(session) && b.requiresMultipleStaff(session)) return 1;
-
-      // 3. Then alphabetically for consistency
+      // 4. Then alphabetically for consistency
       return a.name.localeCompare(b.name);
     });
   }
@@ -1345,7 +1474,35 @@ export class AutoAssignmentEngine {
     }
     
     const sessionAssignments = schedule.getAssignmentsForSession(session, program);
-    return sessionAssignments.some(assignment => assignment.studentId === studentId);
+    // CRITICAL: Only count main staff assignments, NOT trainee assignments
+    // Trainees don't provide coverage, so student still needs main staff
+    let studentAssignments = sessionAssignments.filter(assignment => 
+      assignment.studentId === studentId && !assignment.isTrainee
+    );
+    
+    // CRITICAL: Also check pending swap assignments being created in current pass
+    if (this._pendingSwapAssignments) {
+      const pendingForStudent = this._pendingSwapAssignments.filter(assignment =>
+        assignment.studentId === studentId && 
+        assignment.session === session && 
+        assignment.program === program &&
+        !assignment.isTrainee
+      );
+      studentAssignments = [...studentAssignments, ...pendingForStudent];
+    }
+    
+    if (studentAssignments.length === 0) return false;
+    
+    // For 2:1 students, check if they have the required number of staff
+    // Find the student to check their ratio
+    const student = this.currentStudents?.find(s => s.id === studentId);
+    if (student) {
+      const requiredStaff = this.getRequiredStaffCount(student, session);
+      return studentAssignments.length >= requiredStaff;
+    }
+    
+    // If we can't find the student, just check for any assignment
+    return studentAssignments.length > 0;
   }
 
   /**
@@ -1525,6 +1682,32 @@ export class AutoAssignmentEngine {
       // CRITICAL: Staff must be on BOTH students' teams (for paired students)
       if (!student2.teamIds.includes(staffMember.id)) {
         this.log(`  ❌ ${staffMember.name} is on ${student1.name}'s team but NOT on ${student2.name}'s team`);
+        return false;
+      }
+      
+      // CRITICAL: Check if staff is already assigned to student1 in the OTHER session
+      // We don't want the same staff working with the same student all day
+      const otherSession = session === 'AM' ? 'PM' : 'AM';
+      const alreadyWithStudent1InOtherSession = schedule.assignments.some(a =>
+        a.staffId === staffMember.id &&
+        a.studentId === student1.id &&
+        a.session === otherSession
+      );
+      
+      if (alreadyWithStudent1InOtherSession) {
+        this.log(`  🚫 SAME-DAY SKIP: ${staffMember.name} already with ${student1.name} in ${otherSession}`);
+        return false;
+      }
+      
+      // CRITICAL: Check if staff is already assigned to student2 in the OTHER session
+      const alreadyWithStudent2InOtherSession = schedule.assignments.some(a =>
+        a.staffId === staffMember.id &&
+        a.studentId === student2.id &&
+        a.session === otherSession
+      );
+      
+      if (alreadyWithStudent2InOtherSession) {
+        this.log(`  🚫 SAME-DAY SKIP: ${staffMember.name} already with ${student2.name} in ${otherSession}`);
         return false;
       }
       
@@ -1983,6 +2166,19 @@ export class AutoAssignmentEngine {
   }
 
   /**
+   * Helper to check if staff has already worked with student today (including pending swap assignments)
+   */
+  hasStaffWorkedWithStudentIncludingPending(schedule, staffId, studentId) {
+    // Check existing schedule
+    if (schedule.hasStaffWorkedWithStudentToday(staffId, studentId)) return true;
+    // Check pending swap assignments from current optimization pass
+    if (this._pendingSwapAssignments) {
+      return this._pendingSwapAssignments.some(a => a.staffId === staffId && a.studentId === studentId);
+    }
+    return false;
+  }
+
+  /**
    * Try to fill a gap by finding a cascading chain of reassignments
    * This method aggressively tries to redistribute staff to fill gaps
    * 
@@ -2011,7 +2207,7 @@ export class AutoAssignmentEngine {
       s.canWorkProgram(program) &&
       this.canStaffDoDirectService(s) &&
       !this.isStaffInTrainingForStudent(s, gapStudent) &&
-      !schedule.hasStaffWorkedWithStudentToday(s.id, gapStudent.id)
+      !this.hasStaffWorkedWithStudentIncludingPending(schedule, s.id, gapStudent.id)
     );
 
     console.log(`${'  '.repeat(depth)}   Team members available: ${gapTeamMembers.length}`);
@@ -2122,22 +2318,19 @@ export class AutoAssignmentEngine {
     const activeStaff = staff.filter(s => s.isActive);
     const activeStudents = students.filter(s => s.isActive && s.isScheduledForDay(selectedDate));
 
+    // Store newAssignments on instance so cascade function can access it
+    this._pendingSwapAssignments = newAssignments;
+
     // Find all unassigned students (gaps)
     const sessions = ['AM', 'PM'];
     const programs = [PROGRAMS.PRIMARY, PROGRAMS.SECONDARY];
 
-    // ITERATE until no more improvements can be made
-    let iterationCount = 0;
-    let madeProgress = true;
-    const MAX_ITERATIONS = 10; // Safety limit to prevent infinite loops
+    // Perform one pass of swap optimization
+    // User can click Smart Swap again if they want more improvements
+    let swapsMade = 0;
+    let gapsFilled = 0;
 
-    while (madeProgress && iterationCount < MAX_ITERATIONS) {
-      iterationCount++;
-      madeProgress = false;
-      let swapsMade = 0;
-      let gapsFilled = 0;
-
-      console.log(`\n🔄 SMART SWAP ITERATION ${iterationCount}...`);
+    console.log(`\n🔄 SMART SWAP: Starting optimization pass...`);
 
       for (const program of programs) {
         for (const session of sessions) {
@@ -2182,6 +2375,13 @@ export class AutoAssignmentEngine {
             
             if (alreadyAssigned) return false;
             
+            // CRITICAL: Must not be assigned in pending swap assignments either
+            const assignedInPending = this._pendingSwapAssignments && this._pendingSwapAssignments.some(a =>
+              a.staffId === staffMember.id && a.session === session
+            );
+            
+            if (assignedInPending) return false;
+            
             // CRITICAL: Must not be assigned as a trainee in this session
             const isAssignedAsTrainee = schedule.traineeAssignments && schedule.traineeAssignments.some(
               ta => ta.staffId === staffMember.id && ta.session === session
@@ -2195,53 +2395,55 @@ export class AutoAssignmentEngine {
             return true;
           });
 
-          if (unassignedStaff.length === 0) {
-            console.log(`   ❌ No unassigned staff available this session`);
-            continue;
-          }
-
-          console.log(`   ✓ Found ${unassignedStaff.length} unassigned staff:`, unassignedStaff.map(s => s.name).join(', '));
-
-          // STEP 2: First try DIRECT ASSIGNMENT (no swap needed)
+          // STEP 2: First try DIRECT ASSIGNMENT (no swap needed) if there are unassigned staff
           let gapFilled = false;
           
-          for (const unassignedStaffMember of unassignedStaff) {
-            // Check if this unassigned staff is on the gap student's team
-            const isOnGapTeam = gapStudent.teamIds.includes(unassignedStaffMember.id);
+          if (unassignedStaff.length > 0) {
+            console.log(`   ✓ Found ${unassignedStaff.length} unassigned staff:`, unassignedStaff.map(s => s.name).join(', '));
             
-            if (isOnGapTeam) {
-              // CRITICAL CHECK: Don't use staff who are in training for gap student
-              if (this.isStaffInTrainingForStudent(unassignedStaffMember, gapStudent)) {
-                console.log(`   🚫 EXCLUDING ${unassignedStaffMember.name} - in training for ${gapStudent.name} (trainee only)`);
-                continue;
+            for (const unassignedStaffMember of unassignedStaff) {
+              // Check if this unassigned staff is on the gap student's team
+              const isOnGapTeam = gapStudent.teamIds.includes(unassignedStaffMember.id);
+              
+              if (isOnGapTeam) {
+                // CRITICAL CHECK: Don't use staff who are in training for gap student
+                if (this.isStaffInTrainingForStudent(unassignedStaffMember, gapStudent)) {
+                  console.log(`   🚫 EXCLUDING ${unassignedStaffMember.name} - in training for ${gapStudent.name} (trainee only)`);
+                  continue;
+                }
+                
+                // DIRECT ASSIGNMENT - no swap needed!
+                console.log(`\n   ✅ DIRECT ASSIGNMENT: ${unassignedStaffMember.name} → ${gapStudent.name} (on team, available)`);
+                
+                const newAssignment = new Assignment({
+                  id: SchedulingUtils.generateAssignmentId(),
+                  staffId: unassignedStaffMember.id,
+                  staffName: unassignedStaffMember.name,
+                  studentId: gapStudent.id,
+                  studentName: gapStudent.name,
+                  session: session,
+                  program: program,
+                  date: schedule.date,
+                  isLocked: false,
+                  assignedBy: 'auto-swap'
+                });
+                
+                // Don't add to schedule here - let handleSmartSwap do it
+                // This prevents duplicates when the same assignments are in both
+                // schedule.assignments and result.newAssignments
+                // schedule.addAssignment(newAssignment);
+                newAssignments.push(newAssignment);
+                gapsFilled++;
+                gapFilled = true;
+                break; // Move to next gap
               }
-              
-              // DIRECT ASSIGNMENT - no swap needed!
-              console.log(`\n   ✅ DIRECT ASSIGNMENT: ${unassignedStaffMember.name} → ${gapStudent.name} (on team, available)`);
-              
-              const newAssignment = new Assignment({
-                id: SchedulingUtils.generateAssignmentId(),
-                staffId: unassignedStaffMember.id,
-                staffName: unassignedStaffMember.name,
-                studentId: gapStudent.id,
-                studentName: gapStudent.name,
-                session: session,
-                program: program,
-                date: schedule.date,
-                isLocked: false,
-                assignedBy: 'auto-swap'
-              });
-              
-              schedule.addAssignment(newAssignment);
-              newAssignments.push(newAssignment);
-              gapsFilled++;
-              gapFilled = true;
-              break; // Move to next gap
             }
-          }
-          
-          if (gapFilled) {
-            continue; // Move to next gap student
+            
+            if (gapFilled) {
+              continue; // Move to next gap student
+            }
+          } else {
+            console.log(`   ℹ️ No unassigned staff - will try swap opportunities`);
           }
 
           // STEP 3: If direct assignment not possible, look for swap opportunities
@@ -2307,14 +2509,14 @@ export class AutoAssignmentEngine {
               }
 
               // CRITICAL CHECK: Has staff already worked with this student today?
-              const hasWorkedTogether = schedule.hasStaffWorkedWithStudentToday(unassignedStaffMember.id, otherStudent.id);
+              const hasWorkedTogether = this.hasStaffWorkedWithStudentIncludingPending(schedule, unassignedStaffMember.id, otherStudent.id);
               if (hasWorkedTogether) {
                 console.log(`      ⚠️ Skipping - ${unassignedStaffMember.name} already worked with ${otherStudent.name} today`);
                 continue;
               }
 
               // CRITICAL CHECK: Has freed staff already worked with gap student today?
-              const freedStaffWorkedWithGap = schedule.hasStaffWorkedWithStudentToday(currentStaff.id, gapStudent.id);
+              const freedStaffWorkedWithGap = this.hasStaffWorkedWithStudentIncludingPending(schedule, currentStaff.id, gapStudent.id);
               if (freedStaffWorkedWithGap) {
                 console.log(`      ⚠️ Skipping - ${currentStaff.name} already worked with ${gapStudent.name} today`);
                 continue;
@@ -2334,7 +2536,8 @@ export class AutoAssignmentEngine {
                 console.log(`      SWAP: ${unassignedStaffMember.name} → ${otherStudent.name}, ${currentStaff.name} → ${gapStudent.name}`);
 
                 // Execute the swap
-                schedule.removeAssignment(currentAssignment.id);
+                // Don't mutate schedule here - let handleSmartSwap handle it
+                // schedule.removeAssignment(currentAssignment.id);
 
                 // Create new assignment: unassigned staff → other student
                 const newAssignment1 = new Assignment({
@@ -2364,8 +2567,9 @@ export class AutoAssignmentEngine {
                   assignedBy: 'auto-swap'
                 });
 
-                schedule.addAssignment(newAssignment1);
-                schedule.addAssignment(newAssignment2);
+                // Don't add to schedule here - let handleSmartSwap handle it
+                // schedule.addAssignment(newAssignment1);
+                // schedule.addAssignment(newAssignment2);
                 newAssignments.push(newAssignment1, newAssignment2);
 
                 swaps.push({
@@ -2425,7 +2629,7 @@ export class AutoAssignmentEngine {
                 this.canStaffDoDirectService(s) &&
                 !schedule.assignments.some(a => a.staffId === s.id && a.session === session) &&
                 !(schedule.traineeAssignments && schedule.traineeAssignments.some(ta => ta.staffId === s.id && ta.session === session)) &&
-                !schedule.hasStaffWorkedWithStudentToday(s.id, currentStudent.id)
+                !this.hasStaffWorkedWithStudentIncludingPending(schedule, s.id, currentStudent.id)
               );
               
               if (replacementCandidates.length > 0) {
@@ -2436,7 +2640,8 @@ export class AutoAssignmentEngine {
                 console.log(`      • ${gapTeamStaff.name} can move to ${gapStudent.name}`);
                 
                 // Execute swap
-                schedule.removeAssignment(gapTeamStaffAssignment.id);
+                // Don't mutate schedule here - let handleSmartSwap handle it
+                // schedule.removeAssignment(gapTeamStaffAssignment.id);
                 
                 const newAssignment1 = new Assignment({
                   id: SchedulingUtils.generateAssignmentId(),
@@ -2464,8 +2669,9 @@ export class AutoAssignmentEngine {
                   assignedBy: 'auto-swap'
                 });
                 
-                schedule.addAssignment(newAssignment1);
-                schedule.addAssignment(newAssignment2);
+                // Don't add to schedule here - let handleSmartSwap handle it
+                // schedule.addAssignment(newAssignment1);
+                // schedule.addAssignment(newAssignment2);
                 newAssignments.push(newAssignment1, newAssignment2);
                 
                 swaps.push({
@@ -2498,20 +2704,23 @@ export class AutoAssignmentEngine {
               
               // Remove old assignments
               for (const removal of cascadeResult.removals) {
-                schedule.removeAssignment(removal.id);
+                // Don't mutate schedule here - let handleSmartSwap handle it
+                // schedule.removeAssignment(removal.id);
                 swaps.push({
                   oldAssignment: removal,
                   description: `Cascaded removal for ${gapStudent.name}`
                 });
-                swapsMade++;
               }
               
               // Add new assignments
               for (const assignment of cascadeResult.assignments) {
-                schedule.addAssignment(assignment);
+                // Don't add to schedule here - let handleSmartSwap handle it
+                // schedule.addAssignment(assignment);
                 newAssignments.push(assignment);
               }
               
+              // Count as 1 swap (not one per removal)
+              swapsMade++;
               gapsFilled++;
               swapFound = true;
             } else {
@@ -2557,26 +2766,11 @@ export class AutoAssignmentEngine {
       }
     }
 
-      // Track progress from this iteration
-      if (swapsMade > 0 || gapsFilled > 0) {
-        madeProgress = true;
-        totalSwapsMade += swapsMade;
-        totalGapsFilled += gapsFilled;
-        console.log(`\n   📊 ITERATION ${iterationCount} RESULTS: ${swapsMade} swaps, ${gapsFilled} gaps filled`);
-      } else {
-        console.log(`\n   ℹ️ ITERATION ${iterationCount}: No improvements found, stopping.`);
-      }
-    }
-
-    if (iterationCount >= MAX_ITERATIONS) {
-      console.warn(`⚠️ SMART SWAP: Stopped after ${MAX_ITERATIONS} iterations (safety limit)`);
-    }
-
-    console.log(`\n✅ SMART SWAP COMPLETE: ${totalSwapsMade} total swaps, ${totalGapsFilled} total gaps filled across ${iterationCount} iteration(s)`);
+    console.log(`\n✅ SMART SWAP COMPLETE: ${swapsMade} swaps made, ${gapsFilled} gaps filled`);
 
     return {
-      swapsMade: totalSwapsMade,
-      gapsFilled: totalGapsFilled,
+      swapsMade: swapsMade,
+      gapsFilled: gapsFilled,
       swaps,
       newAssignments
     };
