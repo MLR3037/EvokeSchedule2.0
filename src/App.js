@@ -1002,7 +1002,12 @@ const ABAScheduler = () => {
 
 // Assignment management
 const handleAssignmentLock = (assignmentId) => {
-  schedule.lockAssignment(assignmentId);
+  // Check if this is a trainee assignment (starts with 'trainee_')
+  if (assignmentId && assignmentId.startsWith('trainee_')) {
+    schedule.lockTraineeAssignment(assignmentId);
+  } else {
+    schedule.lockAssignment(assignmentId);
+  }
   
   // Create new Schedule instance to trigger re-render
   const newSchedule = new Schedule({
@@ -1017,7 +1022,12 @@ const handleAssignmentLock = (assignmentId) => {
 };
 
 const handleAssignmentUnlock = (assignmentId) => {
-  schedule.unlockAssignment(assignmentId);
+  // Check if this is a trainee assignment (starts with 'trainee_')
+  if (assignmentId && assignmentId.startsWith('trainee_')) {
+    schedule.unlockTraineeAssignment(assignmentId);
+  } else {
+    schedule.unlockAssignment(assignmentId);
+  }
   
   // Create new Schedule instance to trigger re-render
   const newSchedule = new Schedule({
@@ -1094,7 +1104,26 @@ const handleManualAssignment = ({ staffId, studentId, session, program, bypassTe
   }
 
   // Add assignment to schedule
-  schedule.addAssignment(assignment);
+  // For trainees, add to traineeAssignments array; for regular staff, add to assignments array
+  if (isTrainee) {
+    console.log(`🎓 Adding trainee assignment: ${staffMember.name} → ${student.name} ${session}`);
+    // Generate unique ID for trainee assignment
+    const traineeAssignmentId = `trainee_${studentId}_${session}_${staffId}_${Date.now()}`;
+    schedule.addTraineeAssignment({
+      id: traineeAssignmentId,
+      staffId: staffId,
+      staffName: staffMember.name,
+      studentId: studentId,
+      studentName: student.name,
+      session: session,
+      program: program,
+      date: currentDate,
+      isTrainee: true,
+      isLocked: true // Trainee assignments are locked by default
+    });
+  } else {
+    schedule.addAssignment(assignment);
+  }
   
   // Force re-render with new Schedule instance
   const newSchedule = new Schedule({
@@ -1111,8 +1140,19 @@ const handleManualAssignment = ({ staffId, studentId, session, program, bypassTe
 const handleAssignmentRemove = (assignmentId) => {
   console.log('🗑️ Removing assignment:', assignmentId);
   
-  schedule.removeAssignment(assignmentId);
-  schedule.unlockAssignment(assignmentId); // Also unlock if it was locked
+  // Check if this is a trainee assignment (starts with 'trainee_')
+  if (assignmentId && assignmentId.startsWith('trainee_')) {
+    // Remove from traineeAssignments array
+    const traineeToRemove = schedule.traineeAssignments.find(a => a.id === assignmentId);
+    if (traineeToRemove) {
+      schedule.removeTraineeAssignment(traineeToRemove.studentId, traineeToRemove.session);
+      console.log('✅ Trainee assignment removed');
+    }
+  } else {
+    // Remove regular assignment
+    schedule.removeAssignment(assignmentId);
+    schedule.unlockAssignment(assignmentId); // Also unlock if it was locked
+  }
   
   // Force re-render with new Schedule instance
   const newSchedule = new Schedule({

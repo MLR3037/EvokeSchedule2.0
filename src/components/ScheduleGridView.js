@@ -54,7 +54,7 @@ const ScheduleGridView = ({
       });
     }
     
-    // Analyze all assignments
+    // Analyze all regular assignments
     schedule.assignments.forEach(assignment => {
       const { staffId, studentId, session, isTrainee } = assignment;
       
@@ -75,6 +75,26 @@ const ScheduleGridView = ({
         staffUsage[staffId].isTrainee = true;
       }
     });
+    
+    // Also analyze trainee assignments
+    if (schedule.traineeAssignments && schedule.traineeAssignments.length > 0) {
+      schedule.traineeAssignments.forEach(assignment => {
+        const { staffId, studentId, session } = assignment;
+        
+        if (!staffUsage[staffId]) {
+          staffUsage[staffId] = {
+            count: 0,
+            sessions: [],
+            isTrainee: true
+          };
+        }
+        
+        staffUsage[staffId].count++;
+        const student = students.find(s => s.id === studentId);
+        staffUsage[staffId].sessions.push({ studentId, session, student, isTrainee: true });
+        staffUsage[staffId].isTrainee = true;
+      });
+    }
     
     // Now determine highlighting for each staff member
     const highlighting = {}; // { staffId: 'yellow' | 'green' | 'red' }
@@ -204,10 +224,8 @@ const ScheduleGridView = ({
         } else if (count > 2 && hasAllowedPairedUsage) {
           // More than 2 uses but with paired students - still green (valid scenario)
           highlighting[staffId] = 'green';
-        } else {
-          // More than 2 uses without clear paired pattern - no special highlighting
-          highlighting[staffId] = 'none';
         }
+        // If count > 2 without paired usage, don't add highlighting (will default to no color)
       }
     });
     
@@ -422,8 +440,9 @@ const ScheduleGridView = ({
   
   // Get only trainee assignment
   const getTraineeAssignments = (student, session) => {
-    const trainees = schedule.assignments.filter(
-      a => a.studentId == student.id && a.session === session && a.isTrainee
+    // Look in schedule.traineeAssignments (where trainees are actually stored)
+    const trainees = schedule.traineeAssignments.filter(
+      a => a.studentId == student.id && a.session === session
     );
     
     // Debug logging for first few students only
@@ -433,8 +452,8 @@ const ScheduleGridView = ({
         studentIdType: typeof student.id,
         found: trainees.length,
         trainees: trainees.map(t => ({ staffId: t.staffId, staffName: t.staffName, isTrainee: t.isTrainee })),
-        totalAssignments: schedule.assignments.length,
-        allForStudent: schedule.assignments.filter(a => a.studentId == student.id && a.session === session).map(a => ({
+        totalTraineeAssignments: schedule.traineeAssignments.length,
+        allForStudent: schedule.traineeAssignments.filter(a => a.studentId == student.id && a.session === session).map(a => ({
           staffId: a.staffId, 
           staffName: a.staffName, 
           isTrainee: a.isTrainee,
@@ -632,14 +651,45 @@ const ScheduleGridView = ({
       }
     });
     
+    // Build staff out-of-session summary
+    const outStaffAM = [];
+    const outStaffPM = [];
+    const outStaffFullDay = [];
+    
+    // Check each staff member's out-of-session flags
+    staff.forEach(staffMember => {
+      if (!staffMember.isActive) return; // Skip inactive staff
+      
+      const staffName = formatNameShort(staffMember.name);
+      
+      if (staffMember.outOfSessionFullDay) {
+        outStaffFullDay.push(staffName);
+      } else if (staffMember.outOfSessionAM && staffMember.outOfSessionPM) {
+        outStaffFullDay.push(staffName);
+      } else if (staffMember.outOfSessionAM) {
+        outStaffAM.push(staffName);
+      } else if (staffMember.outOfSessionPM) {
+        outStaffPM.push(staffName);
+      }
+    });
+    
     let summaryHTML = '';
-    if (absentClients.length > 0 || outClients.length > 0) {
+    if (absentClients.length > 0 || outClients.length > 0 || outStaffAM.length > 0 || outStaffPM.length > 0 || outStaffFullDay.length > 0) {
       summaryHTML = '<div style="background: #fef3c7; border: 1px solid #fcd34d; border-radius: 4px; padding: 8px 12px; margin-bottom: 16px; font-size: 12px;">';
       if (absentClients.length > 0) {
-        summaryHTML += `<div style="margin-bottom: 4px;"><strong style="color: #991b1b;">Absent:</strong> ${absentClients.join(', ')}</div>`;
+        summaryHTML += `<div style="margin-bottom: 4px;"><strong style="color: #991b1b;">Absent Clients:</strong> ${absentClients.join(', ')}</div>`;
       }
       if (outClients.length > 0) {
-        summaryHTML += `<div><strong style="color: #92400e;">Out of Session:</strong> ${outClients.join(', ')}</div>`;
+        summaryHTML += `<div style="margin-bottom: 4px;"><strong style="color: #92400e;">Out of Session Clients:</strong> ${outClients.join(', ')}</div>`;
+      }
+      if (outStaffFullDay.length > 0) {
+        summaryHTML += `<div style="margin-bottom: 4px;"><strong style="color: #1e40af;">Out Full Day Staff:</strong> ${outStaffFullDay.join(', ')}</div>`;
+      }
+      if (outStaffAM.length > 0) {
+        summaryHTML += `<div style="margin-bottom: 4px;"><strong style="color: #1e40af;">Out AM Staff:</strong> ${outStaffAM.join(', ')}</div>`;
+      }
+      if (outStaffPM.length > 0) {
+        summaryHTML += `<div><strong style="color: #1e40af;">Out PM Staff:</strong> ${outStaffPM.join(', ')}</div>`;
       }
       summaryHTML += '</div>';
     }

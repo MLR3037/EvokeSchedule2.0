@@ -822,6 +822,11 @@ export const ScheduleTableView = ({
           [traineeKey]: staffId
         }));
         
+        // Remove any existing trainee assignment for this student/session
+        if (schedule.removeTraineeAssignment) {
+          schedule.removeTraineeAssignment(student.id, session);
+        }
+        
         // Update schedule object for current student
         const traineeAssignment = {
           staffId: staffId,
@@ -832,12 +837,13 @@ export const ScheduleTableView = ({
           isLocked: true // Manual trainee assignments are LOCKED
         };
         
-        if (schedule.removeTraineeAssignment) {
-          schedule.removeTraineeAssignment(student.id, session);
-        }
         if (schedule.addTraineeAssignment) {
           schedule.addTraineeAssignment(traineeAssignment);
         }
+        
+        // Force a unique timestamp to trigger parent re-render  
+        // This is a temporary marker that the schedule object has changed
+        schedule.traineeAssignmentUpdatedAt = Date.now();
         
         // If this student is paired, also assign the trainee to their pair partner
         if (student.isPaired && student.isPaired()) {
@@ -854,6 +860,10 @@ export const ScheduleTableView = ({
             }));
             
             // Update schedule object for paired student
+            if (schedule.removeTraineeAssignment) {
+              schedule.removeTraineeAssignment(pairedStudent.id, session);
+            }
+            
             const pairedTraineeAssignment = {
               staffId: staffId,
               studentId: pairedStudent.id,
@@ -863,9 +873,6 @@ export const ScheduleTableView = ({
               isLocked: true // Manual trainee assignments are LOCKED
             };
             
-            if (schedule.removeTraineeAssignment) {
-              schedule.removeTraineeAssignment(pairedStudent.id, session);
-            }
             if (schedule.addTraineeAssignment) {
               schedule.addTraineeAssignment(pairedTraineeAssignment);
             }
@@ -885,6 +892,9 @@ export const ScheduleTableView = ({
         if (schedule.removeTraineeAssignment) {
           schedule.removeTraineeAssignment(student.id, session);
         }
+        
+        // Force a unique timestamp to trigger parent re-render
+        schedule.traineeAssignmentUpdatedAt = Date.now();
         
         // If this student is paired, also remove trainee from their pair partner
         if (student.isPaired && student.isPaired()) {
@@ -1710,7 +1720,7 @@ const ManualAssignmentModal = ({
 /**
  * BS/BT Swap Finder Component - Identifies BSs in schedule who could swap with available BTs
  */
-const BSBTSwapFinder = ({ schedule, staff, students, session, program, assignments, availableStaff }) => {
+const BSBTSwapFinder = ({ schedule, staff, students, session, program, assignments, availableStaff, onManualAssignment, onAssignmentRemove }) => {
   const [searchTerm, setSearchTerm] = useState('');
   const [isExpanded, setIsExpanded] = useState(false);
   
@@ -1720,6 +1730,7 @@ const BSBTSwapFinder = ({ schedule, staff, students, session, program, assignmen
       const staffMember = staff.find(s => s.id === assignment.staffId);
       return staffMember && staffMember.role === 'BS' ? {
         ...staffMember,
+        assignmentId: assignment.id,
         studentId: assignment.studentId,
         student: students.find(s => s.id === assignment.studentId)
       } : null;
@@ -1767,6 +1778,20 @@ const BSBTSwapFinder = ({ schedule, staff, students, session, program, assignmen
     return opp.bs.name.toLowerCase().includes(search) || 
            opp.student.name.toLowerCase().includes(search);
   });
+  
+  const handleSwap = (bsAssignmentId, btId, studentId) => {
+    // Remove the BS assignment
+    onAssignmentRemove(bsAssignmentId);
+    
+    // Add the BT assignment
+    onManualAssignment({
+      staffId: btId,
+      studentId: studentId,
+      session: session,
+      program: program,
+      isTrainee: false
+    });
+  };
   
   if (swapOpportunities.length === 0) {
     return null;
@@ -1821,8 +1846,16 @@ const BSBTSwapFinder = ({ schedule, staff, students, session, program, assignmen
                     Available BTs on team ({opp.availableBTs.length}):
                     <div className="ml-2 mt-1 space-y-0.5">
                       {opp.availableBTs.map(bt => (
-                        <div key={bt.id} className="text-gray-600">
-                          • {bt.name}
+                        <div key={bt.id} className="flex items-center justify-between">
+                          <div className="text-gray-600">
+                            • {bt.name}
+                          </div>
+                          <button
+                            onClick={() => handleSwap(opp.bs.assignmentId, bt.id, opp.student.id)}
+                            className="ml-2 px-2 py-0.5 bg-blue-600 text-white rounded hover:bg-blue-700 transition-colors text-xs font-medium"
+                          >
+                            Swap
+                          </button>
                         </div>
                       ))}
                     </div>
@@ -1846,7 +1879,7 @@ const BSBTSwapFinder = ({ schedule, staff, students, session, program, assignmen
 /**
  * Session Summary Component - Shows summary statistics for a session
  */
-export const SessionSummary = ({ schedule, staff, students, session, program, selectedDate }) => {
+export const SessionSummary = ({ schedule, staff, students, session, program, selectedDate, onManualAssignment, onAssignmentRemove }) => {
   // State for collapsible sections
   const [isAbsentStaffOpen, setIsAbsentStaffOpen] = useState(false);
   const [isAbsentStudentsOpen, setIsAbsentStudentsOpen] = useState(false);
@@ -2028,6 +2061,16 @@ export const SessionSummary = ({ schedule, staff, students, session, program, se
   // Calculate staff utilization by role
   const staffByRole = {};
   const assignedStaffIds = new Set(assignments.map(a => a.staffId));
+  
+  // ALSO include trainee assignments in the assigned staff set
+  // Trainees are occupied/assigned, so they count as unavailable
+  if (schedule.traineeAssignments) {
+    schedule.traineeAssignments.forEach(traineeAssignment => {
+      if (traineeAssignment.session === session) {
+        assignedStaffIds.add(traineeAssignment.staffId);
+      }
+    });
+  }
   
   assignments.forEach(assignment => {
     const staffMember = staff.find(s => s.id === assignment.staffId);
@@ -2243,14 +2286,6 @@ export const SessionSummary = ({ schedule, staff, students, session, program, se
       return false;
     }
     
-    // EXCLUDE staff assigned as trainee (in any program for this session)
-    const isAssignedAsTrainee = schedule.traineeAssignments && schedule.traineeAssignments.some(
-      traineeAssignment => traineeAssignment.staffId === staffMember.id && traineeAssignment.session === session
-    );
-    if (isAssignedAsTrainee) {
-      return false;
-    }
-    
     // Check if this staff member is certified (solo) on at least one client
     let hasSoloCase = false;
     let hasAnyCase = false;
@@ -2276,6 +2311,17 @@ export const SessionSummary = ({ schedule, staff, students, session, program, se
       return true; // No cases yet, available for assignment
     }
     
+    // EXCLUDE staff assigned as trainee (they're occupied during this session)
+    // Even if they have solo cases elsewhere, they're not available for this session
+    const isAssignedAsTrainee = schedule.traineeAssignments && schedule.traineeAssignments.some(
+      traineeAssignment => traineeAssignment.staffId === staffMember.id && traineeAssignment.session === session
+    );
+    
+    if (isAssignedAsTrainee) {
+      // Trainee is busy - exclude from available staff count
+      return false;
+    }
+    
     return hasSoloCase; // Only count if they have at least one solo case
   });
   
@@ -2298,11 +2344,22 @@ export const SessionSummary = ({ schedule, staff, students, session, program, se
   });
   
   // Calculate net direct staff count
-  // Base: RBT/BS staff who are available (directStaff already excludes absent, out, borrowed, and training-only)
+  // Base: RBT/BS staff who are available (directStaff already excludes absent, out, borrowed, and trainee assignments)
   // Add: Temp staff borrowed FROM other programs (RBT/BS only)
   // NOTE: Don't subtract tempStaffBorrowedByOtherPrograms - they're already excluded from directStaff array
   // Add: Non-RBT/BS staff who are manually assigned to clients (e.g., BCBA working direct)
   const directStaffCount = directStaff.length + tempDirectStaffIds.size + nonDirectStaffAssignedIds.size;
+  
+  // DEBUG: Log trainee assignments and staff counts
+  console.log(`[ExtraStaff Debug] Session: ${session}, Program: ${program}`);
+  console.log(`  Schedule.traineeAssignments:`, schedule.traineeAssignments || []);
+  console.log(`  directStaff.length: ${directStaff.length}`);
+  console.log(`  tempDirectStaffIds.size: ${tempDirectStaffIds.size}`);
+  console.log(`  nonDirectStaffAssignedIds.size: ${nonDirectStaffAssignedIds.size}`);
+  console.log(`  directStaffCount: ${directStaffCount}`);
+  console.log(`  totalSessions: ${totalSessions}`);
+  console.log(`  Extra Staff calc: ${directStaffCount} - ${totalSessions} = ${directStaffCount - totalSessions}`);
+  
   // Check staff shortage: compare total spots needed (including 2:1) vs available direct staff
   const hasStaffShortage = totalAssignmentsNeeded > directStaffCount;
 
@@ -2671,6 +2728,8 @@ export const SessionSummary = ({ schedule, staff, students, session, program, se
         program={program}
         assignments={assignments}
         availableStaff={availableStaff}
+        onManualAssignment={onManualAssignment}
+        onAssignmentRemove={onAssignmentRemove}
       />
 
       {unassignedCount === 0 ? (

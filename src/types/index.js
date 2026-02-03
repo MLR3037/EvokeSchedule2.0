@@ -546,6 +546,20 @@ export class Schedule {
       a => a.studentId === studentId && a.session === session
     );
   }
+
+  lockTraineeAssignment(traineeAssignmentId) {
+    const traineeAssignment = this.traineeAssignments.find(a => a.id === traineeAssignmentId);
+    if (traineeAssignment) {
+      traineeAssignment.isLocked = true;
+    }
+  }
+
+  unlockTraineeAssignment(traineeAssignmentId) {
+    const traineeAssignment = this.traineeAssignments.find(a => a.id === traineeAssignmentId);
+    if (traineeAssignment) {
+      traineeAssignment.isLocked = false;
+    }
+  }
 }
 
 /**
