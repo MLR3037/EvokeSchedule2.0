@@ -252,6 +252,10 @@ export class Student {
 
   requiresMultipleStaff(session = 'AM') {
     const ratio = session === 'AM' ? this.ratioAM : this.ratioPM;
+    // If ratio is 2:1 but no paired student ID, treat as 1:1 (single assignment)
+    if (ratio === RATIOS.TWO_TO_ONE && !this.isPaired()) {
+      return false; // Treat as 1:1 since there's no paired student
+    }
     return ratio === RATIOS.TWO_TO_ONE;
   }
 

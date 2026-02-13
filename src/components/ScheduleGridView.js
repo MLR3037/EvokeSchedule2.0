@@ -111,53 +111,55 @@ const ScheduleGridView = ({
       let shouldBeRed = false;
       let hasAllowedPairedUsage = false; // Track if staff is with paired students (allowed scenario)
       
-      // EXCEPTION: Trainees are allowed to work with same student all day - skip all red flag checks
-      if (usage.isTrainee) {
-        console.log(`✅ ${staffName}: Trainee - allowed to work with same student all day`);
-        // Don't check for red flags, proceed directly to color assignment
-      } else {
-        // Red flag 1: Same kid AM and PM (UNLESS the kids are a paired 1:2 group)
+      // NOTE: Trainees can work with same student all day, but CANNOT be double-booked in same session
+      // So we still need to check Red Flag 2 (same session) even for trainees
+      
+      // Red flag 1: Same kid AM and PM (UNLESS the kids are a paired 1:2 group)
+      // Trainees get EXCEPTION - they're allowed to work with same student all day
+      if (!usage.isTrainee) {
         const studentSessionMap = {}; // { studentId: [sessions] }
         sessions.forEach(({ studentId, session }) => {
-        if (!studentSessionMap[studentId]) {
-          studentSessionMap[studentId] = [];
-        }
-        studentSessionMap[studentId].push(session);
-      });
-      
-      // Check if any student has this staff in both AM and PM
-      for (const studentId of Object.keys(studentSessionMap)) {
-        const studentSessions = studentSessionMap[studentId];
-        if (studentSessions.includes('AM') && studentSessions.includes('PM')) {
-          const student = students.find(s => s.id == studentId);
-          
-          // Check if this student is part of a paired 1:2 group
-          // If the student is paired AND staff is working with their paired partner in the same sessions,
-          // then this is ALLOWED (not a red flag)
-          let isAllowedPairedCase = false;
-          if (student && student.isPaired && student.isPaired()) {
-            // Find the paired partner
-            const pairedPartnerId = student.pairedWith;
-            const partnerSessions = studentSessionMap[pairedPartnerId];
-            
-            // Check if staff is also with the paired partner in both AM and PM
-            if (partnerSessions && partnerSessions.includes('AM') && partnerSessions.includes('PM')) {
-              // Staff is with BOTH paired students in both sessions - this is ALLOWED for 1:2 pairs
-              const partner = students.find(s => s.id == pairedPartnerId);
-              console.log(`✅ ${staffName}: With paired students ${student?.name} and ${partner?.name} in both AM and PM - ALLOWED`);
-              isAllowedPairedCase = true;
-              hasAllowedPairedUsage = true;
-            }
+          if (!studentSessionMap[studentId]) {
+            studentSessionMap[studentId] = [];
           }
-          
-          if (!isAllowedPairedCase) {
-            console.log(`🔴 ${staffName}: Same kid AM and PM detected - ${student?.name}`);
-            shouldBeRed = true;
+          studentSessionMap[studentId].push(session);
+        });
+        
+        // Check if any student has this staff in both AM and PM
+        for (const studentId of Object.keys(studentSessionMap)) {
+          const studentSessions = studentSessionMap[studentId];
+          if (studentSessions.includes('AM') && studentSessions.includes('PM')) {
+            const student = students.find(s => s.id == studentId);
+            
+            // Check if this student is part of a paired 1:2 group
+            // If the student is paired AND staff is working with their paired partner in the same sessions,
+            // then this is ALLOWED (not a red flag)
+            let isAllowedPairedCase = false;
+            if (student && student.isPaired && student.isPaired()) {
+              // Find the paired partner
+              const pairedPartnerId = student.pairedWith;
+              const partnerSessions = studentSessionMap[pairedPartnerId];
+              
+              // Check if staff is also with the paired partner in both AM and PM
+              if (partnerSessions && partnerSessions.includes('AM') && partnerSessions.includes('PM')) {
+                // Staff is with BOTH paired students in both sessions - this is ALLOWED for 1:2 pairs
+                const partner = students.find(s => s.id == pairedPartnerId);
+                console.log(`✅ ${staffName}: With paired students ${student?.name} and ${partner?.name} in both AM and PM - ALLOWED`);
+                isAllowedPairedCase = true;
+                hasAllowedPairedUsage = true;
+              }
+            }
+            
+            if (!isAllowedPairedCase) {
+              console.log(`🔴 ${staffName}: Same kid AM and PM detected - ${student?.name}`);
+              shouldBeRed = true;
+            }
           }
         }
       }
       
-      // Red flag 2: Used twice in the same session (unless with 2 PAIRED 1:2 kids)
+      // Red flag 2: Used twice in the same session (APPLIES TO EVERYONE including trainees)
+      // Trainees CANNOT be double-booked in the same session
       const sessionCounts = {}; // { 'AM': count, 'PM': count }
       const sessionStudents = {}; // { 'AM': [students], 'PM': [students] }
       sessions.forEach(({ session, student }) => {
@@ -202,7 +204,6 @@ const ScheduleGridView = ({
           }
         }
       }
-      } // End of trainee exception check
       
       // Determine color
       if (shouldBeRed) {

@@ -630,6 +630,7 @@ const ABAScheduler = () => {
         // SAFETY CHECK 3: Prevent double-booking of staff in the same session
         // Staff can only be assigned once per session UNLESS students are paired (1:2)
         const staffDoubleBookings = {};
+        
         validAssignments = validAssignments.filter(assignment => {
           const key = `${assignment.staffId}-${assignment.session}`;
           
@@ -1125,6 +1126,62 @@ const handleManualAssignment = ({ staffId, studentId, session, program, bypassTe
     schedule.addAssignment(assignment);
   }
   
+  // PAIRED STUDENT SYNC: If this student is paired with another, automatically assign the same staff to the paired student
+  if (student.isPaired()) {
+    const pairedStudent = students.find(s => s.id === student.pairedWith);
+    
+    if (pairedStudent) {
+      console.log(`🔗 PAIRED STUDENT SYNC: Syncing staff to paired student ${pairedStudent.name}`);
+      
+      // Check if this staff is already assigned to the paired student in this session
+      const existingPairedAssignment = isTrainee
+        ? schedule.traineeAssignments?.find(a => a.staffId === staffId && a.studentId === pairedStudent.id && a.session === session)
+        : schedule.assignments.find(a => a.staffId === staffId && a.studentId === pairedStudent.id && a.session === session && !a.isTrainee);
+      
+      if (!existingPairedAssignment) {
+        // Create corresponding assignment for the paired student
+        if (isTrainee) {
+          console.log(`🎓 Adding paired trainee assignment: ${staffMember.name} → ${pairedStudent.name} ${session}`);
+          const pairedTraineeAssignmentId = `trainee_${pairedStudent.id}_${session}_${staffId}_${Date.now()}`;
+          schedule.addTraineeAssignment({
+            id: pairedTraineeAssignmentId,
+            staffId: staffId,
+            staffName: staffMember.name,
+            studentId: pairedStudent.id,
+            studentName: pairedStudent.name,
+            session: session,
+            program: pairedStudent.program,
+            date: currentDate,
+            isTrainee: true,
+            isLocked: true
+          });
+        } else {
+          const pairedAssignment = new Assignment({
+            id: SchedulingUtils.generateAssignmentId(),
+            staffId,
+            staffName: staffMember.name,
+            studentId: pairedStudent.id,
+            studentName: pairedStudent.name,
+            session,
+            program: pairedStudent.program,
+            date: currentDate,
+            isLocked: false,
+            assignedBy: 'manual',
+            isTrainee: false,
+            isTempStaff: isTempStaff
+          });
+          
+          schedule.addAssignment(pairedAssignment);
+          console.log(`✅ Added paired assignment: ${staffMember.name} → ${pairedStudent.name} ${session}`);
+        }
+      } else {
+        console.log(`ℹ️ Paired assignment already exists for ${staffMember.name} → ${pairedStudent.name}`);
+      }
+    } else {
+      console.warn(`⚠️ Paired student with ID ${student.pairedWith} not found in students list`);
+    }
+  }
+  
   // Force re-render with new Schedule instance
   const newSchedule = new Schedule({
     date: schedule.date,
@@ -1140,18 +1197,62 @@ const handleManualAssignment = ({ staffId, studentId, session, program, bypassTe
 const handleAssignmentRemove = (assignmentId) => {
   console.log('🗑️ Removing assignment:', assignmentId);
   
+  let removedAssignment = null;
+  
   // Check if this is a trainee assignment (starts with 'trainee_')
   if (assignmentId && assignmentId.startsWith('trainee_')) {
     // Remove from traineeAssignments array
     const traineeToRemove = schedule.traineeAssignments.find(a => a.id === assignmentId);
     if (traineeToRemove) {
+      removedAssignment = traineeToRemove;
       schedule.removeTraineeAssignment(traineeToRemove.studentId, traineeToRemove.session);
       console.log('✅ Trainee assignment removed');
     }
   } else {
     // Remove regular assignment
+    removedAssignment = schedule.assignments.find(a => a.id === assignmentId);
     schedule.removeAssignment(assignmentId);
     schedule.unlockAssignment(assignmentId); // Also unlock if it was locked
+  }
+  
+  // PAIRED STUDENT SYNC: If the removed assignment was manual and the student is paired, also remove from paired student
+  if (removedAssignment && removedAssignment.assignedBy === 'manual') {
+    const student = students.find(s => s.id === removedAssignment.studentId);
+    
+    if (student && student.isPaired()) {
+      const pairedStudent = students.find(s => s.id === student.pairedWith);
+      
+      if (pairedStudent) {
+        console.log(`🔗 PAIRED STUDENT SYNC: Removing paired assignment from ${pairedStudent.name}`);
+        
+        // Find and remove the corresponding assignment from the paired student
+        if (removedAssignment.id && removedAssignment.id.startsWith('trainee_')) {
+          // Remove paired trainee assignment
+          const pairedTraineeAssignment = schedule.traineeAssignments.find(a => 
+            a.staffId === removedAssignment.staffId && 
+            a.studentId === pairedStudent.id && 
+            a.session === removedAssignment.session
+          );
+          if (pairedTraineeAssignment) {
+            schedule.removeTraineeAssignment(pairedTraineeAssignment.studentId, pairedTraineeAssignment.session);
+            console.log(`✅ Removed paired trainee assignment: ${removedAssignment.staffName} → ${pairedStudent.name}`);
+          }
+        } else {
+          // Remove paired regular assignment
+          const pairedAssignment = schedule.assignments.find(a => 
+            a.staffId === removedAssignment.staffId && 
+            a.studentId === pairedStudent.id && 
+            a.session === removedAssignment.session &&
+            !a.isTrainee
+          );
+          if (pairedAssignment) {
+            schedule.removeAssignment(pairedAssignment.id);
+            schedule.unlockAssignment(pairedAssignment.id);
+            console.log(`✅ Removed paired assignment: ${removedAssignment.staffName} → ${pairedStudent.name}`);
+          }
+        }
+      }
+    }
   }
   
   // Force re-render with new Schedule instance
