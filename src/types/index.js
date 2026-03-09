@@ -212,7 +212,12 @@ export class Student {
     scheduledTuesday = true,
     scheduledWednesday = true,
     scheduledThursday = true,
-    scheduledFriday = true
+    scheduledFriday = true,
+    // Custom schedule times (null = use program defaults)
+    amStartTime = null,
+    amEndTime = null,
+    pmStartTime = null,
+    pmEndTime = null
   }) {
     this.id = id;
     this.name = name;
@@ -248,6 +253,26 @@ export class Student {
     this.scheduledWednesday = scheduledWednesday;
     this.scheduledThursday = scheduledThursday;
     this.scheduledFriday = scheduledFriday;
+    
+    // Custom schedule times (null = use program defaults)
+    this.amStartTime = amStartTime;
+    this.amEndTime = amEndTime;
+    this.pmStartTime = pmStartTime;
+    this.pmEndTime = pmEndTime;
+  }
+
+  /**
+   * Get default times for this student based on program
+   * Returns custom times if set, otherwise program defaults
+   */
+  getScheduleTimes() {
+    const isPrimary = this.program === 'Primary';
+    return {
+      amStart: this.amStartTime || '8:45 AM',
+      amEnd: this.amEndTime || (isPrimary ? '12:05 PM' : '11:30 AM'),
+      pmStart: this.pmStartTime || (isPrimary ? '12:35 PM' : '12:00 PM'),
+      pmEnd: this.pmEndTime || '3:00 PM'
+    };
   }
 
   requiresMultipleStaff(session = 'AM') {

@@ -13,6 +13,37 @@ const LiveScheduleView = ({ schedule, students, staff, currentDate, onUpdateSche
   const [sortBy, setSortBy] = useState('name'); // 'name' or 'program'
   const [popupWindow, setPopupWindow] = useState(null); // Track popup window reference
 
+  // Generate a unique localStorage key based on the current date
+  const getStorageKey = (date) => {
+    const dateStr = date ? new Date(date).toISOString().split('T')[0] : 'default';
+    return `evoke-schedule-lunch-live-${dateStr}`;
+  };
+
+  // Load lunch data from localStorage when component mounts or date changes
+  useEffect(() => {
+    const storageKey = getStorageKey(currentDate);
+    const savedData = localStorage.getItem(storageKey);
+    if (savedData) {
+      try {
+        const parsed = JSON.parse(savedData);
+        setEditableData(parsed);
+      } catch (e) {
+        console.error('Failed to parse saved lunch data:', e);
+      }
+    } else {
+      // Reset editable data when switching to a new date with no saved data
+      setEditableData({});
+    }
+  }, [currentDate]);
+
+  // Save lunch data to localStorage whenever it changes
+  useEffect(() => {
+    const storageKey = getStorageKey(currentDate);
+    if (Object.keys(editableData).length > 0) {
+      localStorage.setItem(storageKey, JSON.stringify(editableData));
+    }
+  }, [editableData, currentDate]);
+
   // Helper function to format staff names as "FirstName L."
   const formatStaffNameShort = (fullName) => {
     if (!fullName || fullName === 'ABSENT' || fullName === 'OUT' || fullName === 'Unknown') {
@@ -121,12 +152,12 @@ const LiveScheduleView = ({ schedule, students, staff, currentDate, onUpdateSche
       const isAbsentAM = !student.isAvailableForSession('AM', currentDate);
       const isAbsentPM = !student.isAvailableForSession('PM', currentDate);
 
-      // Determine default times based on program
-      const isPrimary = student.program === 'Primary';
-      const defaultAmStart = '8:45 AM';
-      const defaultAmEnd = isPrimary ? '12:05 PM' : '11:30 AM';
-      const defaultPmStart = isPrimary ? '12:35 PM' : '12:00 PM';
-      const defaultPmEnd = '3:00 PM';
+      // Get schedule times (uses custom times if set, otherwise program defaults)
+      const scheduleTimes = student.getScheduleTimes();
+      const defaultAmStart = scheduleTimes.amStart;
+      const defaultAmEnd = scheduleTimes.amEnd;
+      const defaultPmStart = scheduleTimes.pmStart;
+      const defaultPmEnd = scheduleTimes.pmEnd;
 
       // Get stored editable data or use defaults
       const rowKey = `${student.id}`;
@@ -147,19 +178,22 @@ const LiveScheduleView = ({ schedule, students, staff, currentDate, onUpdateSche
           : (uniquePmStaff[i] || '');
 
         if (i === 0 || rowAmStaff || rowPmStaff) {
+          // Use the actual row ID for lookup to match what handleFieldChange saves
+          const rowId = `${student.id}-${i}`;
+          const rowData = editableData[rowId] || existingData;
           rows.push({
-            id: `${student.id}-${i}`,
+            id: rowId,
             studentId: student.id,
             studentName: student.name,
             program: student.program,
             amStaff: rowAmStaff,
             pmStaff: rowPmStaff,
-            amStart: existingData.amStart || (rowAmStaff ? defaultAmStart : ''),
-            amEnd: existingData.amEnd || (rowAmStaff ? defaultAmEnd : ''),
-            lunch1Cov: existingData.lunch1Cov || '',
-            lunch2Cov: existingData.lunch2Cov || '',
-            pmStart: existingData.pmStart || (rowPmStaff ? defaultPmStart : ''),
-            pmEnd: existingData.pmEnd || (rowPmStaff ? defaultPmEnd : ''),
+            amStart: rowData.amStart || (rowAmStaff ? defaultAmStart : ''),
+            amEnd: rowData.amEnd || (rowAmStaff ? defaultAmEnd : ''),
+            lunch1Cov: rowData.lunch1Cov || '',
+            lunch2Cov: rowData.lunch2Cov || '',
+            pmStart: rowData.pmStart || (rowPmStaff ? defaultPmStart : ''),
+            pmEnd: rowData.pmEnd || (rowPmStaff ? defaultPmEnd : ''),
             rowIndex: i
           });
         }

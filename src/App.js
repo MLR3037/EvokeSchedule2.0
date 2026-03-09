@@ -1867,6 +1867,14 @@ const handleAssignmentRemove = (assignmentId) => {
         return;
       }
 
+      // Get the CURRENT (old) training status before changing
+      const oldStatus = student.getStaffTrainingStatus ? 
+        student.getStaffTrainingStatus(staffId) : 'solo';
+
+      // Check if this is a completion (moving from overlap to solo)
+      const isCompletion = (oldStatus === 'overlap-bcba' || oldStatus === 'overlap-staff') && 
+                           newStatus === 'solo';
+
       // Update local state immediately
       const updatedStudents = students.map(s => {
         if (s.id === studentId) {
@@ -1884,6 +1892,28 @@ const handleAssignmentRemove = (assignmentId) => {
       await sharePointService.saveStudent(updatedStudent, true);
       
       console.log('✅ Training status updated:', student.name, staffId, newStatus);
+
+      // Record training completion if applicable
+      if (isCompletion) {
+        const staffMember = staff.find(s => s.id === staffId);
+        const staffName = staffMember ? staffMember.name : 'Unknown Staff';
+        
+        console.log(`🎓 Recording training completion: ${staffName} → ${student.name}`);
+        
+        // Get training session count and first session date
+        const { count, firstSessionDate } = await sharePointService.getTrainingSessionCount(staffId, studentId);
+        
+        // Record the completion (don't await - non-blocking)
+        sharePointService.recordTrainingCompletion({
+          staffId,
+          staffName,
+          clientId: studentId,
+          clientName: student.name,
+          trainingType: oldStatus,
+          totalSessions: count,
+          startDate: firstSessionDate
+        }).catch(err => console.warn('Failed to record completion:', err));
+      }
     } catch (error) {
       console.error('Error updating training status:', error);
       console.warn('⚠️ Training status updated locally but not saved to SharePoint');

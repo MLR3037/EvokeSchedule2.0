@@ -561,7 +561,7 @@ export class SharePointService {
       
       // Load students WITHOUT Team field (now using ClientTeamMembers list instead)
       const url = `${this.config.siteUrl}/_api/web/lists/getbytitle('${this.config.studentsListName}')/items?` +
-        `$select=Id,Title,Program,RatioAM,RatioPM,IsActive,PairedWith,AbsentAM,AbsentPM,AbsentFullDay,ScheduledMonday,ScheduledTuesday,ScheduledWednesday,ScheduledThursday,ScheduledFriday&` +
+        `$select=Id,Title,Program,RatioAM,RatioPM,IsActive,PairedWith,AbsentAM,AbsentPM,AbsentFullDay,ScheduledMonday,ScheduledTuesday,ScheduledWednesday,ScheduledThursday,ScheduledFriday,AMStartTime,AMEndTime,PMStartTime,PMEndTime&` +
         `$top=5000`;
 
       console.log('📋 Fetching students from:', url);
@@ -663,7 +663,12 @@ export class SharePointService {
         scheduledTuesday: item.ScheduledTuesday !== false,
         scheduledWednesday: item.ScheduledWednesday !== false,
         scheduledThursday: item.ScheduledThursday !== false,
-        scheduledFriday: item.ScheduledFriday !== false
+        scheduledFriday: item.ScheduledFriday !== false,
+        // Custom schedule times (null if not set = use program defaults)
+        amStartTime: item.AMStartTime || null,
+        amEndTime: item.AMEndTime || null,
+        pmStartTime: item.PMStartTime || null,
+        pmEndTime: item.PMEndTime || null
       });
 
       if (team.length > 0) {
@@ -2173,19 +2178,22 @@ export class SharePointService {
       console.log('📚 Fetching training history from SharePoint...');
 
       // Build date filter if provided
-      let dateFilter = '';
+      const dateFilters = [];
       if (startDate) {
         const startISO = new Date(startDate).toISOString();
-        dateFilter += `and ScheduleDate ge datetime'${startISO}'`;
+        dateFilters.push(`ScheduleDate ge datetime'${startISO}'`);
       }
       if (endDate) {
         const endISO = new Date(endDate).toISOString();
-        dateFilter += `and ScheduleDate le datetime'${endISO}'`;
+        dateFilters.push(`ScheduleDate le datetime'${endISO}'`);
       }
+      
+      const filterClause = dateFilters.length > 0 ? `&$filter=${dateFilters.join(' and ')}` : '';
 
-      // Get all schedule records
+      // Get all schedule records with trainee assignments JSON
+      // Note: Include all saved schedules, not just finalized ones, so training sessions count even from daily saves
       const scheduleUrl = `${this.siteUrl}/_api/web/lists/getbytitle('ScheduleHistory')/items?` +
-        `$select=Id,ScheduleDate&$filter=IsFinalized eq 1 ${dateFilter}&$orderby=ScheduleDate desc&$top=5000`;
+        `$select=Id,ScheduleDate,traineeAssignments${filterClause}&$orderby=ScheduleDate desc&$top=5000`;
 
       const scheduleResponse = await this.makeRequest(scheduleUrl, {
         headers: await this.getHeaders()
@@ -2205,40 +2213,31 @@ export class SharePointService {
 
       console.log(`Found ${schedules.length} historical schedules`);
 
-      // Get all trainee assignments for these schedules
-      const scheduleIds = schedules.map(s => s.Id);
+      // Parse trainee assignments from each schedule's JSON field
       const trainingHistory = [];
 
-      // Process in batches to avoid URL length limits
-      const batchSize = 50;
-      for (let i = 0; i < scheduleIds.length; i += batchSize) {
-        const batchIds = scheduleIds.slice(i, i + batchSize);
-        const idFilter = batchIds.map(id => `ScheduleId eq ${id}`).join(' or ');
-        
-        const assignmentsUrl = `${this.siteUrl}/_api/web/lists/getbytitle('DailyAssignments')/items?` +
-          `$select=Id,StaffId,StudentId,Session,Program,ScheduleId,IsTrainee&` +
-          `$filter=IsTrainee eq 1 and (${idFilter})&$top=5000`;
-
-        const assignmentsResponse = await this.makeRequest(assignmentsUrl, {
-          headers: await this.getHeaders()
-        });
-
-        if (assignmentsResponse.ok) {
-          const assignmentsData = await assignmentsResponse.json();
-          const assignments = assignmentsData.d.results;
-
-          // Map each assignment to include the schedule date
-          assignments.forEach(assignment => {
-            const schedule = schedules.find(s => s.Id === assignment.ScheduleId);
-            if (schedule) {
-              trainingHistory.push({
-                ...assignment,
-                ScheduleDate: schedule.ScheduleDate
+      schedules.forEach(schedule => {
+        if (schedule.traineeAssignments) {
+          try {
+            const traineeAssignments = JSON.parse(schedule.traineeAssignments);
+            if (Array.isArray(traineeAssignments)) {
+              traineeAssignments.forEach(assignment => {
+                trainingHistory.push({
+                  StaffId: assignment.staffId,
+                  StudentId: assignment.studentId,
+                  Session: assignment.session,
+                  Program: assignment.program || '',
+                  ScheduleId: schedule.Id,
+                  ScheduleDate: schedule.ScheduleDate,
+                  IsTrainee: true
+                });
               });
             }
-          });
+          } catch (e) {
+            console.warn('Failed to parse trainee assignments for schedule', schedule.Id, e);
+          }
         }
-      }
+      });
 
       console.log(`✅ Found ${trainingHistory.length} training sessions in history`);
       return trainingHistory;
@@ -2246,6 +2245,164 @@ export class SharePointService {
     } catch (error) {
       console.error('Error fetching training history:', error);
       return [];
+    }
+  }
+
+  /**
+   * Record a training completion when staff moves from overlap to solo
+   * @param {Object} params - Completion data
+   * @param {number} params.staffId - Staff member ID
+   * @param {string} params.staffName - Staff member name
+   * @param {number} params.clientId - Client ID
+   * @param {string} params.clientName - Client name
+   * @param {string} params.trainingType - Previous training type ('overlap-bcba' or 'overlap-staff')
+   * @param {number} params.totalSessions - Number of training sessions completed
+   * @param {Date} params.startDate - When training started (first session date)
+   */
+  async recordTrainingCompletion({ staffId, staffName, clientId, clientName, trainingType, totalSessions, startDate }) {
+    try {
+      if (!this.isAuthenticated()) {
+        console.error('Cannot record training completion - not authenticated');
+        return false;
+      }
+
+      console.log(`🎓 Recording training completion: ${staffName} → ${clientName}`);
+
+      const headers = await this.getHeaders(true);
+      const url = `${this.config.siteUrl}/_api/web/lists/getbytitle('TrainingCompletions')/items`;
+
+      // Convert training type to SharePoint format
+      const spTrainingType = trainingType === 'overlap-bcba' ? 'BCBA Overlap' : 
+                            trainingType === 'overlap-staff' ? 'Staff Overlap' : 'Unknown';
+
+      const body = {
+        __metadata: { type: 'SP.Data.TrainingCompletionsListItem' },
+        Title: `${staffName} - ${clientName}`,
+        StaffMemberId: staffId,
+        ClientId: clientId,
+        TrainingType: spTrainingType,
+        CompletedDate: new Date().toISOString(),
+        TotalSessions: totalSessions || 0,
+        StartDate: startDate ? new Date(startDate).toISOString() : null
+      };
+
+      const response = await this.makeRequest(url, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify(body)
+      });
+
+      if (!response.ok) {
+        const errorText = await response.text();
+        console.error('Failed to record training completion:', response.status, errorText);
+        // Don't throw - this is non-critical, just log
+        return false;
+      }
+
+      console.log(`✅ Training completion recorded: ${staffName} completed training on ${clientName}`);
+      return true;
+
+    } catch (error) {
+      console.error('Error recording training completion:', error);
+      // Don't throw - this is non-critical
+      return false;
+    }
+  }
+
+  /**
+   * Load training completions from SharePoint
+   * @param {number} daysBack - How many days back to load (default 90)
+   * @returns {Array} Array of completion records
+   */
+  async loadTrainingCompletions(daysBack = 90) {
+    try {
+      if (!this.isAuthenticated()) {
+        console.error('Cannot load training completions - not authenticated');
+        return [];
+      }
+
+      console.log(`📚 Loading training completions (last ${daysBack} days)...`);
+
+      const headers = await this.getHeaders();
+      
+      // Calculate date filter
+      const startDate = new Date();
+      startDate.setDate(startDate.getDate() - daysBack);
+      const startISO = startDate.toISOString();
+
+      const url = `${this.config.siteUrl}/_api/web/lists/getbytitle('TrainingCompletions')/items?` +
+        `$select=Id,Title,StaffMember/Id,StaffMember/Title,ClientId,TrainingType,CompletedDate,TotalSessions,StartDate&` +
+        `$expand=StaffMember&` +
+        `$filter=CompletedDate ge datetime'${startISO}'&` +
+        `$orderby=CompletedDate desc&` +
+        `$top=500`;
+
+      const response = await this.makeRequest(url, { headers });
+
+      if (!response.ok) {
+        // If list doesn't exist yet, return empty array (non-critical)
+        if (response.status === 404) {
+          console.warn('⚠️ TrainingCompletions list not found - create it to track completions');
+          return [];
+        }
+        const errorText = await response.text();
+        console.error('Failed to load training completions:', response.status, errorText);
+        return [];
+      }
+
+      const data = await response.json();
+      const items = data.d.results || [];
+
+      console.log(`✅ Loaded ${items.length} training completions`);
+
+      // Map to normalized format
+      return items.map(item => ({
+        id: item.Id,
+        staffId: item.StaffMember?.Id,
+        staffName: item.StaffMember?.Title || 'Unknown',
+        clientId: item.ClientId,
+        trainingType: item.TrainingType,
+        completedDate: item.CompletedDate ? new Date(item.CompletedDate) : null,
+        totalSessions: item.TotalSessions || 0,
+        startDate: item.StartDate ? new Date(item.StartDate) : null
+      }));
+
+    } catch (error) {
+      console.error('Error loading training completions:', error);
+      return [];
+    }
+  }
+
+  /**
+   * Get training session count for a specific staff-client pair
+   * Uses the schedule history to count trainee assignments
+   */
+  async getTrainingSessionCount(staffId, clientId) {
+    try {
+      // Get all historical trainee assignments for this staff-client pair
+      const trainingHistory = await this.getTrainingHistory();
+      
+      const sessions = trainingHistory.filter(
+        h => h.StaffId === staffId && h.StudentId === clientId
+      );
+
+      // Get the first session date
+      let firstSessionDate = null;
+      if (sessions.length > 0) {
+        const sortedSessions = sessions.sort((a, b) => 
+          new Date(a.ScheduleDate) - new Date(b.ScheduleDate)
+        );
+        firstSessionDate = new Date(sortedSessions[0].ScheduleDate);
+      }
+
+      return {
+        count: sessions.length,
+        firstSessionDate
+      };
+
+    } catch (error) {
+      console.error('Error getting training session count:', error);
+      return { count: 0, firstSessionDate: null };
     }
   }
 }

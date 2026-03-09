@@ -20,6 +20,37 @@ const ScheduleGridView = ({
   const [expandedProgram, setExpandedProgram] = useState('Primary'); // 'Primary', 'Secondary', or null for both
   const [fullScreenMode, setFullScreenMode] = useState(false); // Toggle for full screen view
 
+  // Generate a unique localStorage key based on the selected date
+  const getStorageKey = (date) => {
+    const dateStr = date ? new Date(date).toISOString().split('T')[0] : 'default';
+    return `evoke-schedule-lunch-${dateStr}`;
+  };
+
+  // Load lunch data from localStorage when component mounts or date changes
+  useEffect(() => {
+    const storageKey = getStorageKey(selectedDate);
+    const savedData = localStorage.getItem(storageKey);
+    if (savedData) {
+      try {
+        const parsed = JSON.parse(savedData);
+        setEditableData(parsed);
+      } catch (e) {
+        console.error('Failed to parse saved lunch data:', e);
+      }
+    } else {
+      // Reset editable data when switching to a new date with no saved data
+      setEditableData({});
+    }
+  }, [selectedDate]);
+
+  // Save lunch data to localStorage whenever it changes
+  useEffect(() => {
+    const storageKey = getStorageKey(selectedDate);
+    if (Object.keys(editableData).length > 0) {
+      localStorage.setItem(storageKey, JSON.stringify(editableData));
+    }
+  }, [editableData, selectedDate]);
+
   // Helper function to format name as "First Last Initial"
   const formatNameShort = (fullName) => {
     if (!fullName) return '';
@@ -569,15 +600,11 @@ const ScheduleGridView = ({
     }));
   };
 
-  // Get default times based on program
+  // Get default times based on program (uses custom times if set on student)
   const getDefaultTimes = (student) => {
-    const isPrimary = student.program === 'Primary';
-    return {
-      amStart: '8:45 AM',
-      amEnd: isPrimary ? '12:05 PM' : '11:30 AM',
-      pmStart: isPrimary ? '12:35 PM' : '12:00 PM',
-      pmEnd: '3:00 PM'
-    };
+    // Use student's getScheduleTimes() method which returns custom times if set,
+    // or falls back to program defaults
+    return student.getScheduleTimes();
   };
 
   // Helper function to convert time string to minutes since midnight
@@ -839,17 +866,17 @@ const ScheduleGridView = ({
                   <td ${isAbsentAM ? 'class="' + (student.outOfSessionAM || student.outOfSessionFullDay ? 'out' : 'absent') + '"' : ''}>
                     ${amStaffDisplay}
                   </td>
-                  <td>${amTraineeName}</td>
-                  <td>${data.amStart || defaults.amStart}</td>
-                  <td>${data.amEnd || defaults.amEnd}</td>
+                  <td ${isAbsentAM ? 'class="' + (student.outOfSessionAM || student.outOfSessionFullDay ? 'out' : 'absent') + '"' : ''}>${amTraineeName}</td>
+                  <td ${isAbsentAM ? 'class="' + (student.outOfSessionAM || student.outOfSessionFullDay ? 'out' : 'absent') + '"' : ''}>${data.amStart || defaults.amStart}</td>
+                  <td ${isAbsentAM ? 'class="' + (student.outOfSessionAM || student.outOfSessionFullDay ? 'out' : 'absent') + '"' : ''}>${data.amEnd || defaults.amEnd}</td>
                   <td style="${!isL1Needed ? 'background-color: #f3f4f6; color: #9ca3af;' : ''}">${data.lunch1Cov || ''}</td>
                   <td style="${!isL2Needed ? 'background-color: #f3f4f6; color: #9ca3af;' : ''}">${data.lunch2Cov || ''}</td>
                   <td ${isAbsentPM ? 'class="' + (student.outOfSessionPM || student.outOfSessionFullDay ? 'out' : 'absent') + '"' : ''}>
                     ${pmStaffDisplay}
                   </td>
-                  <td>${pmTraineeName}</td>
-                  <td>${data.pmStart || defaults.pmStart}</td>
-                  <td>${data.pmEnd || defaults.pmEnd}</td>
+                  <td ${isAbsentPM ? 'class="' + (student.outOfSessionPM || student.outOfSessionFullDay ? 'out' : 'absent') + '"' : ''}>${pmTraineeName}</td>
+                  <td ${isAbsentPM ? 'class="' + (student.outOfSessionPM || student.outOfSessionFullDay ? 'out' : 'absent') + '"' : ''}>${data.pmStart || defaults.pmStart}</td>
+                  <td ${isAbsentPM ? 'class="' + (student.outOfSessionPM || student.outOfSessionFullDay ? 'out' : 'absent') + '"' : ''}>${data.pmEnd || defaults.pmEnd}</td>
                 </tr>
               `;
             }).join('')}
@@ -925,17 +952,17 @@ const ScheduleGridView = ({
                   <td ${isAbsentAM ? 'class="' + (student.outOfSessionAM || student.outOfSessionFullDay ? 'out' : 'absent') + '"' : ''}>
                     ${amStaffDisplay}
                   </td>
-                  <td>${amTraineeName}</td>
-                  <td>${data.amStart || defaults.amStart}</td>
-                  <td>${data.amEnd || defaults.amEnd}</td>
+                  <td ${isAbsentAM ? 'class="' + (student.outOfSessionAM || student.outOfSessionFullDay ? 'out' : 'absent') + '"' : ''}>${amTraineeName}</td>
+                  <td ${isAbsentAM ? 'class="' + (student.outOfSessionAM || student.outOfSessionFullDay ? 'out' : 'absent') + '"' : ''}>${data.amStart || defaults.amStart}</td>
+                  <td ${isAbsentAM ? 'class="' + (student.outOfSessionAM || student.outOfSessionFullDay ? 'out' : 'absent') + '"' : ''}>${data.amEnd || defaults.amEnd}</td>
                   <td style="${!isL1Needed ? 'background-color: #f3f4f6; color: #9ca3af;' : ''}">${data.lunch1Cov || ''}</td>
                   <td style="${!isL2Needed ? 'background-color: #f3f4f6; color: #9ca3af;' : ''}">${data.lunch2Cov || ''}</td>
                   <td ${isAbsentPM ? 'class="' + (student.outOfSessionPM || student.outOfSessionFullDay ? 'out' : 'absent') + '"' : ''}>
                     ${pmStaffDisplay}
                   </td>
-                  <td>${pmTraineeName}</td>
-                  <td>${data.pmStart || defaults.pmStart}</td>
-                  <td>${data.pmEnd || defaults.pmEnd}</td>
+                  <td ${isAbsentPM ? 'class="' + (student.outOfSessionPM || student.outOfSessionFullDay ? 'out' : 'absent') + '"' : ''}>${pmTraineeName}</td>
+                  <td ${isAbsentPM ? 'class="' + (student.outOfSessionPM || student.outOfSessionFullDay ? 'out' : 'absent') + '"' : ''}>${data.pmStart || defaults.pmStart}</td>
+                  <td ${isAbsentPM ? 'class="' + (student.outOfSessionPM || student.outOfSessionFullDay ? 'out' : 'absent') + '"' : ''}>${data.pmEnd || defaults.pmEnd}</td>
                 </tr>
               `;
             }).join('')}
