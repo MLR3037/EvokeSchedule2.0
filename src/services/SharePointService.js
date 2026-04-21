@@ -350,15 +350,33 @@ export class SharePointService {
       
       const headers = await this.getHeaders();
       
-      // Staff list uses Person/Group field, so we need to expand it
-      const url = `${this.config.siteUrl}/_api/web/lists/getbytitle('${this.config.staffListName}')/items?` +
-        `$select=Id,StaffPerson/Id,StaffPerson/Title,StaffPerson/EMail,Role,PrimaryProgram,SecondaryProgram,IsActive,AbsentAM,AbsentPM,AbsentFullDay,OutOfSessionAM,OutOfSessionPM,OutOfSessionFullDay&` +
+      // Staff list uses Person/Group field, so we need to expand it.
+      // New partial-day time columns may not exist in every environment yet,
+      // so we try the extended select first, then fall back to legacy fields.
+      const extendedSelect = 'Id,StaffPerson/Id,StaffPerson/Title,StaffPerson/EMail,Role,PrimaryProgram,SecondaryProgram,IsActive,AbsentAM,AbsentPM,AbsentFullDay,AbsentAMArrivalTime,AbsentPMDepartureTime,OutOfSessionAM,OutOfSessionPM,OutOfSessionFullDay';
+      const legacySelect = 'Id,StaffPerson/Id,StaffPerson/Title,StaffPerson/EMail,Role,PrimaryProgram,SecondaryProgram,IsActive,AbsentAM,AbsentPM,AbsentFullDay,OutOfSessionAM,OutOfSessionPM,OutOfSessionFullDay';
+      const makeUrl = (selectFields) => `${this.config.siteUrl}/_api/web/lists/getbytitle('${this.config.staffListName}')/items?` +
+        `$select=${selectFields}&` +
         `$expand=StaffPerson&` +
         `$top=5000`;
 
+      let url = makeUrl(extendedSelect);
       console.log('📋 Fetching staff from:', url);
 
-      const response = await this.makeRequest(url, { headers });
+      let response = await this.makeRequest(url, { headers });
+
+      if (!response.ok) {
+        const errorText = await response.text();
+        const missingNewColumns = /AbsentAMArrivalTime|AbsentPMDepartureTime|does not exist/i.test(errorText);
+        if (missingNewColumns) {
+          console.warn('⚠️ Staff time columns not found; retrying with legacy staff fields.');
+          url = makeUrl(legacySelect);
+          response = await this.makeRequest(url, { headers });
+        } else {
+          console.error('SharePoint Staff API Error:', response.status, errorText);
+          throw new Error(`Failed to load staff: ${response.status} - ${errorText}`);
+        }
+      }
 
       if (!response.ok) {
         const errorText = await response.text();
@@ -394,6 +412,8 @@ export class SharePointService {
           absentAM: item.AbsentAM === true,
           absentPM: item.AbsentPM === true,
           absentFullDay: item.AbsentFullDay === true,
+          absentAMArrivalTime: item.AbsentAMArrivalTime || '',
+          absentPMDepartureTime: item.AbsentPMDepartureTime || '',
           outOfSessionAM: item.OutOfSessionAM === true,
           outOfSessionPM: item.OutOfSessionPM === true,
           outOfSessionFullDay: item.OutOfSessionFullDay === true
@@ -873,16 +893,38 @@ export class SharePointService {
         AbsentAM: staff.absentAM || false,
         AbsentPM: staff.absentPM || false,
         AbsentFullDay: staff.absentFullDay || false,
+        AbsentAMArrivalTime: staff.absentAMArrivalTime || '',
+        AbsentPMDepartureTime: staff.absentPMDepartureTime || '',
         OutOfSessionAM: staff.outOfSessionAM || false,
         OutOfSessionPM: staff.outOfSessionPM || false,
         OutOfSessionFullDay: staff.outOfSessionFullDay || false
       };
 
-      const response = await this.makeRequest(url, {
+      let response = await this.makeRequest(url, {
         method: 'POST',
         headers,
         body: JSON.stringify(body)
       });
+
+      if (!response.ok) {
+        const errorText = await response.text();
+        const missingNewColumns = /AbsentAMArrivalTime|AbsentPMDepartureTime|does not exist/i.test(errorText);
+
+        if (missingNewColumns) {
+          console.warn('⚠️ Staff time columns not found; saving without partial-day time fields.');
+          const fallbackBody = { ...body };
+          delete fallbackBody.AbsentAMArrivalTime;
+          delete fallbackBody.AbsentPMDepartureTime;
+
+          response = await this.makeRequest(url, {
+            method: 'POST',
+            headers,
+            body: JSON.stringify(fallbackBody)
+          });
+        } else {
+          throw new Error(`Failed to save staff: ${response.status} - ${errorText}`);
+        }
+      }
 
       if (!response.ok) {
         throw new Error(`Failed to save staff: ${response.status}`);
@@ -2133,7 +2175,9 @@ export class SharePointService {
             ...staffMember,
             absentAM: false,
             absentPM: false,
-            absentFullDay: false
+            absentFullDay: false,
+            absentAMArrivalTime: '',
+            absentPMDepartureTime: ''
           });
           return this.saveStaff(clearedStaff, true).catch(err => {
             console.error(`Failed to clear attendance for staff ${staffMember.name}:`, err);

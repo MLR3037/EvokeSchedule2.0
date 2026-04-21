@@ -59,6 +59,8 @@ export class Staff {
     absentAM = false, // Absent for AM session
     absentPM = false, // Absent for PM session
     absentFullDay = false, // Absent for full day (both sessions)
+    absentAMArrivalTime = '', // Expected arrival time when absent AM (HH:MM)
+    absentPMDepartureTime = '', // Expected departure time when absent PM (HH:MM)
     outOfSessionAM = false, // Out of session for AM (meetings, etc.)
     outOfSessionPM = false, // Out of session for PM (meetings, etc.)
     outOfSessionFullDay = false // Out of session for full day (meetings, etc.)
@@ -96,6 +98,8 @@ export class Staff {
     this.absentFullDay = absentFullDay;
     this.absentAM = absentFullDay ? true : absentAM; // If full day absent, AM is also absent
     this.absentPM = absentFullDay ? true : absentPM; // If full day absent, PM is also absent
+    this.absentAMArrivalTime = absentFullDay ? '' : (absentAMArrivalTime || '');
+    this.absentPMDepartureTime = absentFullDay ? '' : (absentPMDepartureTime || '');
     
     // Out of session tracking (meetings, trainings, etc.)
     this.outOfSessionFullDay = outOfSessionFullDay;

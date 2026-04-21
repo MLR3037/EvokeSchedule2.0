@@ -250,10 +250,41 @@ const ABAScheduler = () => {
         })
       ]);
 
+      // Check if this is a new day — clear stale attendance flags if the date has changed
+      const today = formatDateLocal(new Date());
+      const lastSessionDate = localStorage.getItem('lastAttendanceDate');
+      let finalStaffData = staffData;
+      let finalStudentsData = studentsData;
+
+      if (lastSessionDate && lastSessionDate !== today) {
+        console.log(`📅 New day detected (was ${lastSessionDate}, now ${today}) — clearing stale attendance flags`);
+        finalStaffData = staffData.map(s => new Staff({
+          ...s,
+          absentAM: false,
+          absentPM: false,
+          absentFullDay: false,
+          absentAMArrivalTime: '',
+          absentPMDepartureTime: '',
+          outOfSessionAM: false,
+          outOfSessionPM: false,
+          outOfSessionFullDay: false
+        }));
+        finalStudentsData = studentsData.map(s => new Student({
+          ...s,
+          absentAM: false,
+          absentPM: false,
+          absentFullDay: false
+        }));
+        // Clear stale flags in SharePoint in the background
+        sharePointService.clearAllAttendanceInSharePoint(finalStaffData, finalStudentsData)
+          .catch(err => console.error('Error clearing stale attendance in SharePoint:', err));
+      }
+      localStorage.setItem('lastAttendanceDate', today);
+
       // Update staff and students
-      setStaff(staffData);
-      setStudents(studentsData);
-      
+      setStaff(finalStaffData);
+      setStudents(finalStudentsData);
+
       // CRITICAL: Clean up schedule by removing assignments for absent staff/students
       let removedCount = 0;
       
@@ -262,26 +293,26 @@ const ABAScheduler = () => {
         
         // Filter out assignments where staff or student is unavailable
         const validAssignments = schedule.assignments.filter(assignment => {
-          const staffMember = staffData.find(s => s.id === assignment.staffId);
-          const student = studentsData.find(s => s.id === assignment.studentId);
-          
+          const staffMember = finalStaffData.find(s => s.id === assignment.staffId);
+          const student = finalStudentsData.find(s => s.id === assignment.studentId);
+
           // Remove if staff doesn't exist or is unavailable for this session
           if (!staffMember || !staffMember.isAvailableForSession(assignment.session, currentDate)) {
             console.log(`🗑️ Removing assignment: ${assignment.staffName || 'Staff'} (unavailable) → ${assignment.studentName || 'Student'} ${assignment.session}`);
             return false;
           }
-          
+
           // Remove if student doesn't exist or is unavailable for this session
           if (!student || !student.isAvailableForSession(assignment.session, currentDate)) {
             console.log(`🗑️ Removing assignment: ${assignment.staffName || 'Staff'} → ${assignment.studentName || 'Student'} (unavailable) ${assignment.session}`);
             return false;
           }
-          
+
           return true;
         });
-        
+
         removedCount = originalCount - validAssignments.length;
-        
+
         if (removedCount > 0) {
           console.log(`🧹 Cleaned up ${removedCount} invalid assignment(s) based on current attendance`);
           const cleanedSchedule = new Schedule({
@@ -291,19 +322,19 @@ const ABAScheduler = () => {
           setSchedule(cleanedSchedule);
         }
       }
-      
+
       setDataLoadedAt(new Date()); // Track when data was loaded
-      
-      console.log(`✅ Smart refresh complete: ${staffData.length} staff, ${studentsData.length} students loaded. ${removedCount > 0 ? removedCount + ' assignments removed.' : 'Schedule preserved.'}`);
-      
+
+      console.log(`✅ Smart refresh complete: ${finalStaffData.length} staff, ${finalStudentsData.length} students loaded. ${removedCount > 0 ? removedCount + ' assignments removed.' : 'Schedule preserved.'}`);
+
       // Log attendance status after refresh
-      const absentStaff = staffData.filter(s => s.absentAM || s.absentPM || s.absentFullDay);
-      const absentStudents = studentsData.filter(s => s.absentAM || s.absentPM || s.absentFullDay);
+      const absentStaff = finalStaffData.filter(s => s.absentAM || s.absentPM || s.absentFullDay);
+      const absentStudents = finalStudentsData.filter(s => s.absentAM || s.absentPM || s.absentFullDay);
       if (absentStaff.length > 0 || absentStudents.length > 0) {
         console.log(`📊 Attendance after refresh: ${absentStaff.length} staff absent, ${absentStudents.length} students absent`);
       }
       
-      if (staffData.length === 0 && studentsData.length === 0) {
+      if (finalStaffData.length === 0 && finalStudentsData.length === 0) {
         console.warn('⚠️ No data loaded. Check authentication and SharePoint list names.');
       }
     } catch (error) {
@@ -335,6 +366,8 @@ const ABAScheduler = () => {
             absentAM: false,
             absentPM: false,
             absentFullDay: false,
+            absentAMArrivalTime: '',
+            absentPMDepartureTime: '',
             outOfSessionAM: false,
             outOfSessionPM: false,
             outOfSessionFullDay: false
@@ -388,6 +421,8 @@ const ABAScheduler = () => {
                   absentAM: attendance.absentAM,
                   absentPM: attendance.absentPM,
                   absentFullDay: attendance.absentFullDay,
+                  absentAMArrivalTime: attendance.absentAMArrivalTime || '',
+                  absentPMDepartureTime: attendance.absentPMDepartureTime || '',
                   outOfSessionAM: attendance.outOfSessionAM,
                   outOfSessionPM: attendance.outOfSessionPM,
                   outOfSessionFullDay: attendance.outOfSessionFullDay
@@ -439,6 +474,8 @@ const ABAScheduler = () => {
         absentAM: false,
         absentPM: false,
         absentFullDay: false,
+        absentAMArrivalTime: '',
+        absentPMDepartureTime: '',
         outOfSessionAM: false,
         outOfSessionPM: false,
         outOfSessionFullDay: false
@@ -1382,6 +1419,8 @@ const handleAssignmentRemove = (assignmentId) => {
                 absentAM: attendance.absentAM,
                 absentPM: attendance.absentPM,
                 absentFullDay: attendance.absentFullDay,
+                absentAMArrivalTime: attendance.absentAMArrivalTime || '',
+                absentPMDepartureTime: attendance.absentPMDepartureTime || '',
                 outOfSessionAM: attendance.outOfSessionAM,
                 outOfSessionPM: attendance.outOfSessionPM,
                 outOfSessionFullDay: attendance.outOfSessionFullDay
@@ -1647,6 +1686,8 @@ const handleAssignmentRemove = (assignmentId) => {
             absentAM: attendanceData.absentAM,
             absentPM: attendanceData.absentPM,
             absentFullDay: attendanceData.absentFullDay,
+            absentAMArrivalTime: attendanceData.absentAMArrivalTime || '',
+            absentPMDepartureTime: attendanceData.absentPMDepartureTime || '',
             outOfSessionAM: attendanceData.outOfSessionAM,
             outOfSessionPM: attendanceData.outOfSessionPM,
             outOfSessionFullDay: attendanceData.outOfSessionFullDay
@@ -1693,6 +1734,8 @@ const handleAssignmentRemove = (assignmentId) => {
         absentAM: attendanceData.absentAM,
         absentPM: attendanceData.absentPM,
         absentFullDay: attendanceData.absentFullDay,
+        absentAMArrivalTime: attendanceData.absentAMArrivalTime || '',
+        absentPMDepartureTime: attendanceData.absentPMDepartureTime || '',
         outOfSessionAM: attendanceData.outOfSessionAM,
         outOfSessionPM: attendanceData.outOfSessionPM,
         outOfSessionFullDay: attendanceData.outOfSessionFullDay
