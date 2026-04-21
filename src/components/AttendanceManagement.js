@@ -13,19 +13,44 @@ export const AttendanceManagement = ({
   onUpdateStudentAttendance,
   onResetAllAttendance
 }) => {
+  const DEFAULT_EXPECTED_TIME = '12:00 PM';
   const [view, setView] = useState('staff'); // 'staff' or 'clients'
   const [searchTerm, setSearchTerm] = useState('');
 
-  const isValidTime = (value) => /^([01]\d|2[0-3]):([0-5]\d)$/.test(value || '');
+  const normalizeTime12Hour = (value) => {
+    const raw = (value || '').trim();
+    if (!raw) return '';
+
+    // Accept already-entered 12-hour values like "9:05 AM" or "09:05pm".
+    const twelve = raw.match(/^(0?[1-9]|1[0-2]):([0-5]\d)\s*([AP]M)$/i);
+    if (twelve) {
+      const hour = String(parseInt(twelve[1], 10));
+      const minute = twelve[2];
+      const meridiem = twelve[3].toUpperCase();
+      return `${hour}:${minute} ${meridiem}`;
+    }
+
+    // Backward compatibility: convert legacy 24-hour HH:MM values.
+    const twentyFour = raw.match(/^([01]?\d|2[0-3]):([0-5]\d)$/);
+    if (twentyFour) {
+      const hour24 = parseInt(twentyFour[1], 10);
+      const minute = twentyFour[2];
+      const meridiem = hour24 >= 12 ? 'PM' : 'AM';
+      const hour12 = hour24 % 12 === 0 ? 12 : hour24 % 12;
+      return `${hour12}:${minute} ${meridiem}`;
+    }
+
+    return null;
+  };
 
   const promptForTime = (message, defaultValue = '') => {
-    // Keep prompting until user enters a valid HH:MM value or cancels.
+    // Keep prompting until user enters a valid h:mm AM/PM value or cancels.
     while (true) {
       const response = window.prompt(message, defaultValue || '');
       if (response === null) return null;
-      const normalized = response.trim();
-      if (isValidTime(normalized)) return normalized;
-      window.alert('Please enter time as HH:MM (24-hour), for example 10:30 or 13:15.');
+      const normalized = normalizeTime12Hour(response);
+      if (normalized) return normalized;
+      window.alert('Please enter time as h:mm AM/PM in MST, for example 10:30 AM.');
     }
   };
 
@@ -67,8 +92,8 @@ export const AttendanceManagement = ({
       absentAM: staffMember.absentAM || false,
       absentPM: staffMember.absentPM || false,
       absentFullDay: staffMember.absentFullDay || false,
-      absentAMArrivalTime: staffMember.absentAMArrivalTime || '',
-      absentPMDepartureTime: staffMember.absentPMDepartureTime || '',
+      absentAMArrivalTime: staffMember.absentAMArrivalTime || DEFAULT_EXPECTED_TIME,
+      absentPMDepartureTime: staffMember.absentPMDepartureTime || DEFAULT_EXPECTED_TIME,
       outOfSessionAM: staffMember.outOfSessionAM || false,
       outOfSessionPM: staffMember.outOfSessionPM || false,
       outOfSessionFullDay: staffMember.outOfSessionFullDay || false
@@ -84,7 +109,7 @@ export const AttendanceManagement = ({
       }
     } else if (field === 'absentAM') {
       if (value) {
-        const arrival = promptForTime(`Enter expected ARRIVAL time for ${staffMember.name} (HH:MM, 24-hour):`, updates.absentAMArrivalTime);
+        const arrival = promptForTime(`Enter expected ARRIVAL time for ${staffMember.name} in MST (h:mm AM/PM):`, updates.absentAMArrivalTime || DEFAULT_EXPECTED_TIME);
         if (arrival === null) return;
         updates.absentAMArrivalTime = arrival;
       } else {
@@ -96,7 +121,7 @@ export const AttendanceManagement = ({
       }
     } else if (field === 'absentPM') {
       if (value) {
-        const departure = promptForTime(`Enter expected DEPARTURE time for ${staffMember.name} (HH:MM, 24-hour):`, updates.absentPMDepartureTime);
+        const departure = promptForTime(`Enter expected DEPARTURE time for ${staffMember.name} in MST (h:mm AM/PM):`, updates.absentPMDepartureTime || DEFAULT_EXPECTED_TIME);
         if (departure === null) return;
         updates.absentPMDepartureTime = departure;
       } else {
@@ -107,9 +132,19 @@ export const AttendanceManagement = ({
         updates.absentFullDay = false;
       }
     } else if (field === 'absentAMArrivalTime') {
-      updates.absentAMArrivalTime = value;
+      const normalized = normalizeTime12Hour(value);
+      if (value && !normalized) {
+        window.alert('Please use h:mm AM/PM format in MST, for example 10:30 AM.');
+        return;
+      }
+      updates.absentAMArrivalTime = normalized || '';
     } else if (field === 'absentPMDepartureTime') {
-      updates.absentPMDepartureTime = value;
+      const normalized = normalizeTime12Hour(value);
+      if (value && !normalized) {
+        window.alert('Please use h:mm AM/PM format in MST, for example 1:45 PM.');
+        return;
+      }
+      updates.absentPMDepartureTime = normalized || '';
     } else if (field === 'outOfSessionFullDay') {
       updates.outOfSessionFullDay = value;
       updates.outOfSessionAM = value;
@@ -428,22 +463,24 @@ export const AttendanceManagement = ({
 
                   <div className="mt-3 grid grid-cols-1 md:grid-cols-2 gap-3">
                     <label className="text-xs text-gray-600">
-                      Expected Arrival Time (if Absent AM)
+                      Expected Arrival Time (MST, if Absent AM)
                       <input
-                        type="time"
+                        type="text"
                         value={staffMember.absentAMArrivalTime || ''}
                         onChange={(e) => handleStaffAttendanceChange(staffMember, 'absentAMArrivalTime', e.target.value)}
+                        placeholder={DEFAULT_EXPECTED_TIME}
                         disabled={!(staffMember.absentAM || staffMember.absentFullDay) || staffMember.absentFullDay}
                         className="mt-1 w-full px-2 py-1 border border-gray-300 rounded text-sm disabled:bg-gray-100 disabled:text-gray-400"
                       />
                     </label>
 
                     <label className="text-xs text-gray-600">
-                      Expected Departure Time (if Absent PM)
+                      Expected Departure Time (MST, if Absent PM)
                       <input
-                        type="time"
+                        type="text"
                         value={staffMember.absentPMDepartureTime || ''}
                         onChange={(e) => handleStaffAttendanceChange(staffMember, 'absentPMDepartureTime', e.target.value)}
+                        placeholder={DEFAULT_EXPECTED_TIME}
                         disabled={!(staffMember.absentPM || staffMember.absentFullDay) || staffMember.absentFullDay}
                         className="mt-1 w-full px-2 py-1 border border-gray-300 rounded text-sm disabled:bg-gray-100 disabled:text-gray-400"
                       />
