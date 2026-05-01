@@ -16,6 +16,8 @@ export const AttendanceManagement = ({
   const DEFAULT_EXPECTED_TIME = '12:00 PM';
   const [view, setView] = useState('staff'); // 'staff' or 'clients'
   const [searchTerm, setSearchTerm] = useState('');
+  const [programFilter, setProgramFilter] = useState('All'); // 'All' | 'Primary' | 'Secondary'
+  const [sortOrder, setSortOrder] = useState('asc'); // 'asc' | 'desc'
 
   const normalizeTime12Hour = (value) => {
     const raw = (value || '').trim();
@@ -54,20 +56,30 @@ export const AttendanceManagement = ({
     }
   };
 
-  // Filter active staff and students
-  const activeStaff = useMemo(() => 
-    staff.filter(s => s.isActive && 
-      s.name.toLowerCase().includes(searchTerm.toLowerCase())
-    ),
-    [staff, searchTerm]
-  );
+  // Filter and sort active staff and students
+  const activeStaff = useMemo(() => {
+    const term = searchTerm.toLowerCase();
+    const filtered = staff.filter(s => s.isActive && s.name.toLowerCase().includes(term));
+    return filtered.sort((a, b) =>
+      sortOrder === 'asc'
+        ? (a?.name || '').localeCompare(b?.name || '')
+        : (b?.name || '').localeCompare(a?.name || '')
+    );
+  }, [staff, searchTerm, sortOrder]);
 
-  const activeStudents = useMemo(() => 
-    students.filter(s => s.isActive && 
-      s.name.toLowerCase().includes(searchTerm.toLowerCase())
-    ),
-    [students, searchTerm]
-  );
+  const activeStudents = useMemo(() => {
+    const term = searchTerm.toLowerCase();
+    const filtered = students.filter(s =>
+      s.isActive &&
+      s.name.toLowerCase().includes(term) &&
+      (programFilter === 'All' || s.program === programFilter)
+    );
+    return filtered.sort((a, b) =>
+      sortOrder === 'asc'
+        ? (a?.name || '').localeCompare(b?.name || '')
+        : (b?.name || '').localeCompare(a?.name || '')
+    );
+  }, [students, searchTerm, programFilter, sortOrder]);
 
   // Count absences
   const counts = useMemo(() => {
@@ -261,6 +273,9 @@ export const AttendanceManagement = ({
             day: 'numeric' 
           })}
         </p>
+        <p className="text-yellow-300 text-sm mt-2 font-medium">
+          ⚠️ Please <span className="underline font-bold">SAVE the schedule</span> after making attendance changes to update the attendance history.
+        </p>
       </div>
 
       <div className="p-6">
@@ -379,6 +394,34 @@ export const AttendanceManagement = ({
             placeholder="Search..."
             className="flex-1 px-4 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-purple-500"
           />
+
+          {/* Program filter — clients view only */}
+          {view === 'clients' && (
+            <div className="flex bg-gray-100 rounded-lg p-1">
+              {['All', 'Primary', 'Secondary'].map(prog => (
+                <button
+                  key={prog}
+                  onClick={() => setProgramFilter(prog)}
+                  className={`px-3 py-1.5 rounded-md text-sm font-medium transition-colors ${
+                    programFilter === prog
+                      ? 'bg-white text-purple-600 shadow-sm'
+                      : 'text-gray-600 hover:text-gray-900'
+                  }`}
+                >
+                  {prog}
+                </button>
+              ))}
+            </div>
+          )}
+
+          {/* A-Z / Z-A sort toggle */}
+          <button
+            onClick={() => setSortOrder(o => o === 'asc' ? 'desc' : 'asc')}
+            title={sortOrder === 'asc' ? 'Sorted A → Z (click for Z → A)' : 'Sorted Z → A (click for A → Z)'}
+            className="px-3 py-2 border border-gray-300 rounded-md text-sm font-medium text-gray-700 hover:bg-gray-50 transition-colors whitespace-nowrap"
+          >
+            {sortOrder === 'asc' ? 'A → Z' : 'Z → A'}
+          </button>
 
           {onResetAllAttendance && (
             <button

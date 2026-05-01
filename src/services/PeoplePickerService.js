@@ -229,7 +229,7 @@ export class PeoplePickerService {
           loginName: user.LoginName,
           principalType: user.PrincipalType
         }))
-        .sort((a, b) => a.title.localeCompare(b.title)); // Sort alphabetically
+        .sort((a, b) => (a?.title || '').localeCompare(b?.title || '')); // Sort alphabetically
     } catch (error) {
       console.error('Error getting all site users:', error);
       // Don't throw - return empty array so the app can continue

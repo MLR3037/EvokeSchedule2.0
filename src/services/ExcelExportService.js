@@ -118,7 +118,7 @@ export class ExcelExportService {
     // Get all active students, sorted by name
     const activeStudents = students
       .filter(s => s.isActive)
-      .sort((a, b) => a.name.localeCompare(b.name));
+      .sort((a, b) => (a?.name || '').localeCompare(b?.name || ''));
 
     // Process each student
     activeStudents.forEach(student => {
@@ -309,7 +309,7 @@ export class ExcelExportService {
       });
 
       // Convert to array and sort by name
-      const outStaffList = Array.from(outStaffMap.values()).sort((a, b) => a.name.localeCompare(b.name));
+      const outStaffList = Array.from(outStaffMap.values()).sort((a, b) => (a?.name || '').localeCompare(b?.name || ''));
 
       // Add one row per staff member
       outStaffList.forEach((staffInfo, index) => {
@@ -387,7 +387,7 @@ export class ExcelExportService {
     });
 
     // Sort staff by name
-    staffList.sort((a, b) => a.name.localeCompare(b.name));
+    staffList.sort((a, b) => (a?.name || '').localeCompare(b?.name || ''));
 
     // Add to data array
     staffList.forEach(staff => {
@@ -471,7 +471,7 @@ export class ExcelExportService {
     });
 
     // Sort clients by name
-    clientList.sort((a, b) => a.name.localeCompare(b.name));
+    clientList.sort((a, b) => (a?.name || '').localeCompare(b?.name || ''));
 
     // Add to data array
     clientList.forEach(client => {

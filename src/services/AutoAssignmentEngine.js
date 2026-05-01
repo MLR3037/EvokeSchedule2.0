@@ -143,7 +143,7 @@ export class AutoAssignmentEngine {
       }
 
       // 5. Alphabetically for consistency
-      return a.name.localeCompare(b.name);
+      return (a?.name || '').localeCompare(b?.name || '');
     });
   }
 
@@ -848,6 +848,226 @@ export class AutoAssignmentEngine {
   }
 
   /**
+   * Phase 0: Place a single training pair (trainee + trainer) into the schedule and lock both.
+   * Adds the trainee to schedule.traineeAssignments and the trainer to schedule.assignments.
+   * Returns true on success, false if the trainer slot is no longer available.
+   */
+  placeTrainingPair(trainee, trainer, student, session, schedule) {
+    // Re-check trainer availability at placement time (state may have changed during loop)
+    if (!schedule.isStaffAvailable(trainer.id, session, student.program)) {
+      console.log(`  ⚠️ Trainer ${trainer.name} no longer available for ${session} — skipping`);
+      return false;
+    }
+
+    // Add trainee as a locked trainee assignment
+    const traineeAssignmentId = `trainee_auto_${student.id}_${session}_${trainee.id}_${Date.now()}`;
+    schedule.addTraineeAssignment({
+      id: traineeAssignmentId,
+      staffId: trainee.id,
+      staffName: trainee.name,
+      studentId: student.id,
+      studentName: student.name,
+      session,
+      program: student.program,
+      date: schedule.date,
+      isLocked: true,
+      isTrainee: true,
+      assignedBy: 'auto-training'
+    });
+
+    // Add trainer as a locked main-staff assignment
+    const trainerAssignment = new Assignment({
+      id: SchedulingUtils.generateAssignmentId(),
+      staffId: trainer.id,
+      staffName: trainer.name,
+      studentId: student.id,
+      studentName: student.name,
+      session,
+      program: student.program,
+      date: schedule.date,
+      isLocked: true,
+      assignedBy: 'auto-training'
+    });
+    schedule.addAssignment(trainerAssignment);
+    schedule.lockAssignment(trainerAssignment.id);
+
+    console.log(`  ✅ Locked pair: ${trainee.name} (trainee) + ${trainer.name} (trainer) → ${student.name} ${session}`);
+    return true;
+  }
+
+  /**
+   * Phase 0: Auto-assign training pairs before regular scheduling.
+   *
+   * Rules enforced:
+   * - Trainees with NO solo cases MUST be placed with a trainer every available session.
+   * - Trainees WITH solo cases get placed with a trainer when possible; can work solo otherwise.
+   * - Trainers (and all solo staff) may NOT work with the same student in both AM and PM.
+   * - A trainer-trainee pair CAN follow each other across students all day
+   *   (e.g. Student A AM → Student B PM with the same trainer).
+   * - Any manually pre-placed training assignments are respected and not overridden.
+   * - All placed pairs are locked.
+   *
+   * Priority for trainer selection:
+   *   1. Same trainer the trainee is already paired with today (keeps pairs together cross-session)
+   *   2. Designated trainer (TRAINER status) for that specific training student
+   *   3. Any staff with TRAINER status who is on the training student's team and available
+   */
+  autoAssignTrainingPairs(schedule, staff, students, selectedDate = new Date()) {
+    console.log('\n🎓 ========== PHASE 0: TRAINING PAIR ASSIGNMENT ==========');
+
+    const activeStaff = staff.filter(s => s.isActive);
+    const activeStudents = students.filter(s => s.isActive && s.isScheduledForDay(selectedDate));
+
+    // Identify all trainees: staff who are overlap-staff or overlap-bcba for at least one student
+    const trainees = activeStaff.filter(trainee =>
+      activeStudents.some(student => {
+        const status = student.getStaffTrainingStatus ? student.getStaffTrainingStatus(trainee.id) : null;
+        return status === TRAINING_STATUS.OVERLAP_STAFF || status === TRAINING_STATUS.OVERLAP_BCBA;
+      })
+    );
+
+    if (trainees.length === 0) {
+      console.log('  ℹ️ No trainees found — skipping Phase 0');
+      return { placed: [], skipped: [] };
+    }
+
+    console.log(`  📊 Found ${trainees.length} trainee(s)`);
+
+    // Sort: trainees with NO solo cases first — they have stricter requirements
+    trainees.sort((a, b) => {
+      const aHasSolo = this.staffHasAnySoloCase(a, students);
+      const bHasSolo = this.staffHasAnySoloCase(b, students);
+      if (!aHasSolo && bHasSolo) return -1;
+      if (aHasSolo && !bHasSolo) return 1;
+      return 0;
+    });
+
+    const placed = [];
+    const skipped = [];
+
+    for (const trainee of trainees) {
+      const hasSoloCases = this.staffHasAnySoloCase(trainee, students);
+      console.log(`\n  👤 ${trainee.name} (has solo cases: ${hasSoloCases})`);
+
+      for (const session of ['AM', 'PM']) {
+        if (!trainee.isAvailableForSession(session)) {
+          console.log(`    ⏭️ Unavailable for ${session}`);
+          continue;
+        }
+
+        // Skip if already placed as trainee in this session (manual or prior Phase 0 run)
+        const alreadyPlaced = schedule.traineeAssignments &&
+          schedule.traineeAssignments.some(ta => ta.staffId === trainee.id && ta.session === session);
+        if (alreadyPlaced) {
+          console.log(`    ✅ Already placed as trainee in ${session} — skipping`);
+          continue;
+        }
+
+        // Find students where this trainee has overlap status AND student is available this session
+        const trainingCandidates = activeStudents.filter(student => {
+          const status = student.getStaffTrainingStatus ? student.getStaffTrainingStatus(trainee.id) : null;
+          if (status !== TRAINING_STATUS.OVERLAP_STAFF && status !== TRAINING_STATUS.OVERLAP_BCBA) return false;
+          if (!student.isAvailableForSession(session, selectedDate)) return false;
+          // Skip if student already has a main-staff assignment this session
+          if (schedule.assignments.some(a => a.studentId === student.id && a.session === session)) return false;
+          return true;
+        });
+
+        console.log(`    🔍 ${session}: ${trainingCandidates.length} training candidate(s)`);
+
+        if (trainingCandidates.length === 0) {
+          if (!hasSoloCases) {
+            console.log(`    ⚠️ No candidates and no solo cases — ${trainee.name} unplaceable in ${session}`);
+            skipped.push({ trainee: trainee.name, session, reason: 'No training candidates available' });
+          }
+          continue;
+        }
+
+        let placedThisSession = false;
+
+        // ── Priority 1: Designated trainer (TRAINER status) for this specific student ──
+        // Trainer-trainee pairing is per student, not per day.
+        // Each student has its own designated trainer(s); we always use that student's trainer.
+        for (const student of trainingCandidates) {
+          const designatedTrainers = activeStaff.filter(s => {
+            const trainerStatus = student.getStaffTrainingStatus ? student.getStaffTrainingStatus(s.id) : null;
+            if (trainerStatus !== TRAINING_STATUS.TRAINER) return false;
+            if (!s.isAvailableForSession(session)) return false;
+            if (!schedule.isStaffAvailable(s.id, session, student.program)) return false;
+            // Trainer cannot work with the same student AM + PM
+            if (schedule.hasStaffWorkedWithStudentToday(s.id, student.id)) return false;
+            return true;
+          });
+
+          if (designatedTrainers.length === 0) continue;
+
+          // Pick trainer with the lightest current load
+          designatedTrainers.sort((a, b) =>
+            schedule.getStaffAssignments(a.id).length - schedule.getStaffAssignments(b.id).length
+          );
+
+          const success = this.placeTrainingPair(trainee, designatedTrainers[0], student, session, schedule);
+          if (success) {
+            placed.push({ trainee: trainee.name, trainer: designatedTrainers[0].name, student: student.name, session });
+            placedThisSession = true;
+            break;
+          }
+        }
+        if (placedThisSession) continue;
+
+        // ── Priority 2: Any staff with TRAINER status on the training student's team ──
+        // Used as fallback — especially critical when trainee has no solo cases.
+        if (!hasSoloCases) {
+          for (const student of trainingCandidates) {
+            const anyTrainer = activeStaff.find(s => {
+              // Must have TRAINER designation for at least one active student
+              const isTrainer = activeStudents.some(st => {
+                const st_status = st.getStaffTrainingStatus ? st.getStaffTrainingStatus(s.id) : null;
+                return st_status === TRAINING_STATUS.TRAINER;
+              });
+              if (!isTrainer) return false;
+              if (!student.teamIds.includes(s.id)) return false;
+              if (!s.isAvailableForSession(session)) return false;
+              if (!schedule.isStaffAvailable(s.id, session, student.program)) return false;
+              if (schedule.hasStaffWorkedWithStudentToday(s.id, student.id)) return false;
+              return true;
+            });
+
+            if (anyTrainer) {
+              const success = this.placeTrainingPair(trainee, anyTrainer, student, session, schedule);
+              if (success) {
+                placed.push({ trainee: trainee.name, trainer: anyTrainer.name, student: student.name, session, note: 'non-usual trainer' });
+                placedThisSession = true;
+                break;
+              }
+            }
+          }
+        }
+
+        if (!placedThisSession) {
+          if (!hasSoloCases) {
+            console.log(`    ⚠️ UNPLACED: ${trainee.name} has no solo cases and no trainer found for ${session}`);
+            skipped.push({ trainee: trainee.name, session, reason: 'No trainer available' });
+          } else {
+            console.log(`    ℹ️ ${trainee.name} not placed in training for ${session} — has solo cases, can work solo`);
+          }
+        }
+      }
+    }
+
+    console.log(`\n  ✅ PHASE 0 COMPLETE: ${placed.length} training pair(s) placed`);
+    placed.forEach(p =>
+      console.log(`    🎓 ${p.trainee} + ${p.trainer} → ${p.student} ${p.session}${p.note ? ` (${p.note})` : ''}`)
+    );
+    if (skipped.length > 0) {
+      console.log(`  ⚠️ ${skipped.length} trainee(s) could not be placed:`);
+      skipped.forEach(s => console.log(`    ❌ ${s.trainee} ${s.session}: ${s.reason}`));
+    }
+
+    return { placed, skipped };
+  }
+
+  /**
    * Auto-assign all unassigned students for a given date
    * @param {Schedule} schedule - Current schedule
    * @param {Staff[]} staff - Array of staff members
@@ -869,6 +1089,14 @@ export class AutoAssignmentEngine {
     console.log(`📊 Active: ${activeStaff.length} staff, ${activeStudents.length} students`);
     console.log(`📊 Attendance - Staff absent AM: ${activeStaff.filter(s => s.absentAM || s.absentFullDay).length}, PM: ${activeStaff.filter(s => s.absentPM || s.absentFullDay).length}`);
     console.log(`📊 Attendance - Students absent AM: ${activeStudents.filter(s => s.absentAM || s.absentFullDay).length}, PM: ${activeStudents.filter(s => s.absentPM || s.absentFullDay).length}`);
+
+    // PHASE 0: Auto-assign training pairs (must run before regular scheduling)
+    const trainingResult = this.autoAssignTrainingPairs(schedule, activeStaff, activeStudents, selectedDate);
+    if (trainingResult.skipped.length > 0) {
+      trainingResult.skipped.forEach(s =>
+        errors.push(`Training pair unplaced: ${s.trainee} ${s.session} — ${s.reason}`)
+      );
+    }
 
     // PHASE 1: Initial assignment pass
     const sessions = ['AM', 'PM'];
@@ -1336,7 +1564,7 @@ export class AutoAssignmentEngine {
       if (aLevel !== bLevel) return aLevel - bLevel;
 
       // Then alphabetically by name for consistency
-      return a.name.localeCompare(b.name);
+      return (a?.name || '').localeCompare(b?.name || '');
     });
   }
 
@@ -1436,7 +1664,7 @@ export class AutoAssignmentEngine {
       if (aTeamSize !== bTeamSize) return aTeamSize - bTeamSize;
 
       // 4. Then alphabetically for consistency
-      return a.name.localeCompare(b.name);
+      return (a?.name || '').localeCompare(b?.name || '');
     });
   }
 

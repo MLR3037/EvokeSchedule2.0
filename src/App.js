@@ -126,7 +126,7 @@ const ABAScheduler = () => {
       }
       
       if (isAuth) {
-        await refreshDataOnly(); // Load staff/students only, start with blank schedule
+        await refreshDataOnly({ reloadSavedSchedule: true });
       }
     } catch (error) {
       console.error('Error initializing app:', error);
@@ -234,12 +234,12 @@ const ABAScheduler = () => {
   };
 
   // Smart refresh: Update staff/students without clearing schedule
-  const refreshDataOnly = async () => {
-    console.log('🔄 Smart refresh: Updating data without clearing schedule...');
+  const refreshDataOnly = async ({ reloadSavedSchedule = false } = {}) => {
+    console.log(`🔄 Smart refresh: Updating data${reloadSavedSchedule ? ' and reloading the saved schedule' : ' without clearing schedule'}...`);
     setLoading(true);
     try {
-      // Load staff and students in parallel
-      const [staffData, studentsData] = await Promise.all([
+      // Load staff, students, and optionally the saved schedule for the selected date.
+      const [staffData, studentsData, loadedSchedule] = await Promise.all([
         sharePointService.loadStaff().catch(err => {
           console.error('Failed to load staff:', err);
           return [];
@@ -247,7 +247,13 @@ const ABAScheduler = () => {
         sharePointService.loadStudents().catch(err => {
           console.error('Failed to load students:', err);
           return [];
-        })
+        }),
+        reloadSavedSchedule
+          ? sharePointService.loadSchedule(currentDate).catch(err => {
+              console.error('Failed to load saved schedule:', err);
+              return new Schedule({ date: formatDateLocal(currentDate), assignments: [], traineeAssignments: [], lockedAssignments: new Set(), isFinalized: false });
+            })
+          : Promise.resolve(null)
       ]);
 
       // Check if this is a new day — clear stale attendance flags if the date has changed
@@ -285,14 +291,16 @@ const ABAScheduler = () => {
       setStaff(finalStaffData);
       setStudents(finalStudentsData);
 
+      const scheduleToUse = reloadSavedSchedule && loadedSchedule ? loadedSchedule : schedule;
+
       // CRITICAL: Clean up schedule by removing assignments for absent staff/students
       let removedCount = 0;
       
-      if (schedule && schedule.assignments && schedule.assignments.length > 0) {
-        const originalCount = schedule.assignments.length;
+      if (scheduleToUse && scheduleToUse.assignments && scheduleToUse.assignments.length > 0) {
+        const originalCount = scheduleToUse.assignments.length;
         
         // Filter out assignments where staff or student is unavailable
-        const validAssignments = schedule.assignments.filter(assignment => {
+        const validAssignments = scheduleToUse.assignments.filter(assignment => {
           const staffMember = finalStaffData.find(s => s.id === assignment.staffId);
           const student = finalStudentsData.find(s => s.id === assignment.studentId);
 
@@ -316,16 +324,20 @@ const ABAScheduler = () => {
         if (removedCount > 0) {
           console.log(`🧹 Cleaned up ${removedCount} invalid assignment(s) based on current attendance`);
           const cleanedSchedule = new Schedule({
-            ...schedule,
+            ...scheduleToUse,
             assignments: validAssignments
           });
           setSchedule(cleanedSchedule);
+        } else if (reloadSavedSchedule) {
+          setSchedule(scheduleToUse);
         }
+      } else if (reloadSavedSchedule) {
+        setSchedule(scheduleToUse || new Schedule({ date: formatDateLocal(currentDate), assignments: [], traineeAssignments: [], lockedAssignments: new Set(), isFinalized: false }));
       }
 
       setDataLoadedAt(new Date()); // Track when data was loaded
 
-      console.log(`✅ Smart refresh complete: ${finalStaffData.length} staff, ${finalStudentsData.length} students loaded. ${removedCount > 0 ? removedCount + ' assignments removed.' : 'Schedule preserved.'}`);
+      console.log(`✅ Smart refresh complete: ${finalStaffData.length} staff, ${finalStudentsData.length} students loaded. ${reloadSavedSchedule ? 'Saved schedule reloaded.' : removedCount > 0 ? removedCount + ' assignments removed.' : 'Schedule preserved.'}`);
 
       // Log attendance status after refresh
       const absentStaff = finalStaffData.filter(s => s.absentAM || s.absentPM || s.absentFullDay);
@@ -2112,9 +2124,10 @@ const handleAssignmentRemove = (assignmentId) => {
                 </button>
                 
                 <button
-                  onClick={refreshDataOnly}
+                  onClick={() => refreshDataOnly({ reloadSavedSchedule: true })}
                   disabled={loading}
                   className="bg-gray-600 text-white px-3 py-1.5 rounded hover:bg-gray-700 disabled:opacity-50 flex items-center gap-1.5 text-sm"
+                  title="Reload staff, clients, and the saved schedule for this date"
                 >
                   <RefreshCw className={`w-3.5 h-3.5 ${loading ? 'animate-spin' : ''}`} />
                   Refresh
@@ -2403,7 +2416,7 @@ const handleAssignmentRemove = (assignmentId) => {
                       </tr>
                     </thead>
                     <tbody className="bg-white divide-y divide-gray-200">
-                      {[...staff].sort((a, b) => a.name.localeCompare(b.name)).map(staffMember => (
+                      {[...staff].sort((a, b) => (a?.name || '').localeCompare(b?.name || '')).map(staffMember => (
                         <tr key={staffMember.id}>
                           <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">
                             {staffMember.name}

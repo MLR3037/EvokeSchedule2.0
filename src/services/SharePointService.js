@@ -664,16 +664,24 @@ export class SharePointService {
         console.error(`  ❌ Please ensure the ClientTeamMembers SharePoint list exists.`);
       }
 
+      const normalizedName = typeof item.Title === 'string' && item.Title.trim().length > 0
+        ? item.Title.trim()
+        : `Client ${item.Id}`;
+      const normalizedProgram = item.Program === PROGRAMS.SECONDARY ? PROGRAMS.SECONDARY : PROGRAMS.PRIMARY;
+      const normalizedRatioAM = ['1:1', '2:1', '1:2'].includes(item.RatioAM) ? item.RatioAM : '1:1';
+      const normalizedRatioPM = ['1:1', '2:1', '1:2'].includes(item.RatioPM) ? item.RatioPM : '1:1';
+      const normalizedPairedWith = Number.isFinite(Number(item.PairedWith)) ? Number(item.PairedWith) : null;
+
       const student = new Student({
         id: item.Id,
-        name: item.Title,
-        program: item.Program || PROGRAMS.PRIMARY,
-        ratioAM: item.RatioAM || '1:1',
-        ratioPM: item.RatioPM || '1:1',
+        name: normalizedName,
+        program: normalizedProgram,
+        ratioAM: normalizedRatioAM,
+        ratioPM: normalizedRatioPM,
         isActive: item.IsActive !== false,
         team: team,
         teamIds: teamIds,
-        pairedWith: item.PairedWith || null,
+        pairedWith: normalizedPairedWith,
         absentAM: item.AbsentAM === true,
         absentPM: item.AbsentPM === true,
         absentFullDay: item.AbsentFullDay === true,
@@ -805,11 +813,14 @@ export class SharePointService {
 
       // Step 3: Convert SharePoint items to Assignment objects
       const assignments = assignmentItems.map(item => {
+        const normalizedStaffId = Number.isFinite(Number(item.StaffID)) ? Number(item.StaffID) : item.StaffID;
+        const normalizedStudentId = Number.isFinite(Number(item.StudentID)) ? Number(item.StudentID) : item.StudentID;
+
         return new Assignment({
           id: `${item.StaffID}_${item.StudentID}_${item.Session}_${item.Program}`,
-          staffId: item.StaffID,
+          staffId: normalizedStaffId,
           staffName: item.StaffName,
-          studentId: item.StudentID,
+          studentId: normalizedStudentId,
           studentName: item.StudentName,
           session: item.Session,
           program: item.Program,
@@ -1424,26 +1435,29 @@ export class SharePointService {
         console.log('✅ Schedule metadata saved with ID:', scheduleId);
       }
 
-      // ✅ NEW: Delete existing assignments for this schedule before saving new ones
-      if (isUpdate) {
-        console.log('🗑️ Deleting existing assignments for schedule ID:', scheduleId);
-        await this.deleteAssignmentsForSchedule(scheduleId);
+      // Synchronize DailyAssignments in-place so we don't delete everything up front.
+      // This prevents data loss when only some writes fail.
+      const cleanupResult = await this.cleanupAssignmentsForDate(schedule.date, scheduleId);
+      if (!cleanupResult.success) {
+        console.error('❌ Pre-sync assignment cleanup failed; schedule save aborted.');
+        return false;
       }
 
-      // Save individual assignments to DailyAssignments list
-      const assignmentPromises = schedule.assignments.map(assignment => 
-        this.saveAssignmentToHistory(assignment, scheduleId, schedule.date)
+      const assignmentSyncResult = await this.syncAssignmentsForSchedule(
+        scheduleId,
+        schedule.assignments,
+        schedule.date
       );
 
-      const assignmentResults = await Promise.allSettled(assignmentPromises);
-      const successfulAssignments = assignmentResults.filter(result => result.status === 'fulfilled');
-      const failedAssignments = assignmentResults.filter(result => result.status === 'rejected');
-
-      console.log(`✅ Saved ${successfulAssignments.length} assignments, ${failedAssignments.length} failed`);
-
-      if (failedAssignments.length > 0) {
-        console.warn('Some assignments failed to save:', failedAssignments);
+      if (!assignmentSyncResult.success) {
+        console.error('❌ Assignment sync failed; schedule save aborted to avoid partial state.');
+        return false;
       }
+
+      console.log(
+        `✅ Assignment sync complete (created: ${assignmentSyncResult.created}, ` +
+        `updated: ${assignmentSyncResult.updated}, deleted: ${assignmentSyncResult.deleted})`
+      );
 
       // ✅ NEW: Save attendance data to DailyAttendance
       // Note: This will save whatever attendance state is currently in SharePoint
@@ -1524,6 +1538,286 @@ export class SharePointService {
     } catch (error) {
       console.error('❌ Error saving assignment:', error);
       return { success: false, assignment, error: error.message };
+    }
+  }
+
+  async updateAssignmentInHistory(itemId, assignment, scheduleId, scheduleDate) {
+    try {
+      const assignmentData = {
+        __metadata: { type: this.dailyAssignmentsEntityType || 'SP.Data.DailyAssignmentsListItem' },
+        Title: `Assignment_${assignment.staffId}_${assignment.studentId}_${assignment.session}`,
+        ScheduleID: scheduleId,
+        ScheduleDate: scheduleDate,
+        StaffID: assignment.staffId,
+        StaffName: assignment.staffName || '',
+        StudentID: assignment.studentId,
+        StudentName: assignment.studentName || '',
+        Session: assignment.session,
+        Program: assignment.program,
+        AssignmentType: assignment.type || 'Standard',
+        IsLocked: assignment.isLocked || false,
+        IsTempStaff: assignment.isTempStaff || false
+      };
+
+      const response = await fetch(
+        `${this.siteUrl}/_api/web/lists/getbytitle('DailyAssignments')/items(${itemId})`,
+        {
+          method: 'POST',
+          headers: {
+            'Authorization': `Bearer ${this.accessToken}`,
+            'Accept': 'application/json;odata=verbose',
+            'Content-Type': 'application/json;odata=verbose',
+            'X-RequestDigest': await this.getRequestDigest(),
+            'X-HTTP-Method': 'MERGE',
+            'If-Match': '*'
+          },
+          body: JSON.stringify(assignmentData)
+        }
+      );
+
+      if (!response.ok) {
+        const errorText = await response.text();
+        console.error(`❌ Failed to update assignment ${itemId}:`, response.status, errorText);
+        return { success: false, assignment, error: errorText };
+      }
+
+      return { success: true, id: itemId, assignment };
+    } catch (error) {
+      console.error(`❌ Error updating assignment ${itemId}:`, error);
+      return { success: false, assignment, error: error.message };
+    }
+  }
+
+  async deleteAssignmentById(itemId) {
+    try {
+      const response = await fetch(
+        `${this.siteUrl}/_api/web/lists/getbytitle('DailyAssignments')/items(${itemId})`,
+        {
+          method: 'POST',
+          headers: {
+            'Authorization': `Bearer ${this.accessToken}`,
+            'X-RequestDigest': await this.getRequestDigest(),
+            'X-HTTP-Method': 'DELETE',
+            'If-Match': '*'
+          }
+        }
+      );
+
+      if (!response.ok) {
+        const errorText = await response.text();
+        console.error(`❌ Failed to delete assignment ${itemId}:`, response.status, errorText);
+        return { success: false, id: itemId, error: errorText };
+      }
+
+      return { success: true, id: itemId };
+    } catch (error) {
+      console.error(`❌ Error deleting assignment ${itemId}:`, error);
+      return { success: false, id: itemId, error: error.message };
+    }
+  }
+
+  buildAssignmentSyncKey(data) {
+    return `${data.staffId}__${data.studentId}__${data.session}__${data.program || ''}`;
+  }
+
+  async loadAssignmentsForDate(scheduleDate) {
+    const assignmentsUrl = `${this.siteUrl}/_api/web/lists/getbytitle('DailyAssignments')/items?` +
+      `$filter=ScheduleDate eq '${scheduleDate}'&` +
+      `$select=ID,ScheduleID,ScheduleDate,StaffID,StaffName,StudentID,StudentName,Session,Program,AssignmentType,IsLocked,IsTempStaff`;
+
+    const response = await this.retryFetch(assignmentsUrl, {
+      method: 'GET',
+      headers: {
+        'Authorization': `Bearer ${this.accessToken}`,
+        'Accept': 'application/json;odata=verbose'
+      }
+    });
+
+    if (!response.ok) {
+      throw new Error(`Failed to load assignments for date ${scheduleDate}: ${response.status}`);
+    }
+
+    const data = await response.json();
+    return data.d.results || [];
+  }
+
+  async cleanupAssignmentsForDate(scheduleDate, keepScheduleId) {
+    try {
+      const rows = await this.loadAssignmentsForDate(scheduleDate);
+      if (rows.length === 0) {
+        return { success: true, deleted: 0 };
+      }
+
+      // Keep only rows for the active schedule ID, and dedupe by assignment key within that schedule.
+      const toDelete = [];
+      const seenKeys = new Set();
+
+      rows.forEach(row => {
+        if (Number(row.ScheduleID) !== Number(keepScheduleId)) {
+          toDelete.push(row.ID);
+          return;
+        }
+
+        const key = this.buildAssignmentSyncKey({
+          staffId: row.StaffID,
+          studentId: row.StudentID,
+          session: row.Session,
+          program: row.Program
+        });
+
+        if (seenKeys.has(key)) {
+          toDelete.push(row.ID);
+          return;
+        }
+
+        seenKeys.add(key);
+      });
+
+      if (toDelete.length === 0) {
+        return { success: true, deleted: 0 };
+      }
+
+      const deleteResults = await Promise.all(toDelete.map(itemId => this.deleteAssignmentById(itemId)));
+      const failedDeletes = deleteResults.filter(r => !r.success);
+
+      if (failedDeletes.length > 0) {
+        console.error('❌ Failed to cleanup some assignment duplicates/legacy rows:', failedDeletes);
+        return {
+          success: false,
+          deleted: deleteResults.filter(r => r.success).length,
+          failedDeletes
+        };
+      }
+
+      return { success: true, deleted: deleteResults.length };
+    } catch (error) {
+      console.error('❌ Error in cleanupAssignmentsForDate:', error);
+      return { success: false, deleted: 0, failedDeletes: [{ error: error.message }] };
+    }
+  }
+
+  async loadAssignmentsForSchedule(scheduleId) {
+    const assignmentsUrl = `${this.siteUrl}/_api/web/lists/getbytitle('DailyAssignments')/items?` +
+      `$filter=ScheduleID eq ${scheduleId}&` +
+      `$select=ID,ScheduleID,ScheduleDate,StaffID,StaffName,StudentID,StudentName,Session,Program,AssignmentType,IsLocked,IsTempStaff`;
+
+    const response = await this.retryFetch(assignmentsUrl, {
+      method: 'GET',
+      headers: {
+        'Authorization': `Bearer ${this.accessToken}`,
+        'Accept': 'application/json;odata=verbose'
+      }
+    });
+
+    if (!response.ok) {
+      throw new Error(`Failed to load existing assignments for schedule ${scheduleId}: ${response.status}`);
+    }
+
+    const data = await response.json();
+    return data.d.results || [];
+  }
+
+  async syncAssignmentsForSchedule(scheduleId, assignments, scheduleDate) {
+    try {
+      const existingItems = await this.loadAssignmentsForSchedule(scheduleId);
+
+      const existingByKey = new Map();
+      const duplicateExistingIds = [];
+      existingItems.forEach(item => {
+        const key = this.buildAssignmentSyncKey({
+          staffId: item.StaffID,
+          studentId: item.StudentID,
+          session: item.Session,
+          program: item.Program
+        });
+        if (!existingByKey.has(key)) {
+          existingByKey.set(key, item);
+        } else {
+          duplicateExistingIds.push(item.ID);
+        }
+      });
+
+      const desiredByKey = new Map();
+      assignments.forEach(assignment => {
+        const key = this.buildAssignmentSyncKey(assignment);
+        if (!desiredByKey.has(key)) {
+          desiredByKey.set(key, assignment);
+        } else {
+          console.warn(`⚠️ Duplicate assignment key in schedule payload ignored: ${key}`);
+        }
+      });
+
+      const toCreate = [];
+      const toUpdate = [];
+      const toDelete = [];
+
+      desiredByKey.forEach((assignment, key) => {
+        const existing = existingByKey.get(key);
+        if (!existing) {
+          toCreate.push(assignment);
+          return;
+        }
+
+        const needsUpdate =
+          (existing.StaffName || '') !== (assignment.staffName || '') ||
+          (existing.StudentName || '') !== (assignment.studentName || '') ||
+          (existing.AssignmentType || 'Standard') !== (assignment.type || 'Standard') ||
+          !!existing.IsLocked !== !!assignment.isLocked ||
+          !!existing.IsTempStaff !== !!assignment.isTempStaff;
+
+        if (needsUpdate) {
+          toUpdate.push({ itemId: existing.ID, assignment });
+        }
+      });
+
+      existingByKey.forEach((item, key) => {
+        if (!desiredByKey.has(key)) {
+          toDelete.push(item.ID);
+        }
+      });
+
+      duplicateExistingIds.forEach(itemId => {
+        toDelete.push(itemId);
+      });
+
+      const createResults = await Promise.all(toCreate.map(a => this.saveAssignmentToHistory(a, scheduleId, scheduleDate)));
+      const updateResults = await Promise.all(toUpdate.map(entry => this.updateAssignmentInHistory(entry.itemId, entry.assignment, scheduleId, scheduleDate)));
+      const deleteResults = await Promise.all(toDelete.map(itemId => this.deleteAssignmentById(itemId)));
+
+      const failedCreates = createResults.filter(r => !r.success);
+      const failedUpdates = updateResults.filter(r => !r.success);
+      const failedDeletes = deleteResults.filter(r => !r.success);
+
+      const hasFailures = failedCreates.length > 0 || failedUpdates.length > 0 || failedDeletes.length > 0;
+
+      if (hasFailures) {
+        console.error('❌ Assignment sync failures:', {
+          failedCreates,
+          failedUpdates,
+          failedDeletes
+        });
+      }
+
+      return {
+        success: !hasFailures,
+        created: createResults.filter(r => r.success).length,
+        updated: updateResults.filter(r => r.success).length,
+        deleted: deleteResults.filter(r => r.success).length,
+        failedCreates,
+        failedUpdates,
+        failedDeletes
+      };
+    } catch (error) {
+      console.error('❌ Error in syncAssignmentsForSchedule:', error);
+      return {
+        success: false,
+        created: 0,
+        updated: 0,
+        deleted: 0,
+        failedCreates: [],
+        failedUpdates: [],
+        failedDeletes: [{ error: error.message }]
+      };
     }
   }
 
@@ -1637,7 +1931,9 @@ export class SharePointService {
       }
       
       if (deleteResult.failed > 0) {
-        console.warn(`⚠️ ${deleteResult.failed} attendance records failed to delete - proceeding with save but duplicates may occur`);
+        throw new Error(
+          `Cannot save attendance: ${deleteResult.failed} existing DailyAttendance record(s) failed to delete for ${dateStr}`
+        );
       }
       
       console.log(`✅ Deletion complete (${deleteResult.deleted} records removed), now saving new attendance records...`);
@@ -1823,8 +2119,10 @@ export class SharePointService {
         console.warn('Could not fetch debug info:', debugError);
       }
       
+      const start = `${dateStr}T00:00:00Z`;
+      const end = `${dateStr}T23:59:59Z`;
       const attendanceUrl = `${this.siteUrl}/_api/web/lists/getbytitle('DailyAttendance')/items?` +
-        `$filter=AttendanceDate eq '${dateStr}'&` +
+        `$filter=AttendanceDate ge datetime'${start}' and AttendanceDate le datetime'${end}'&` +
         `$select=ID,PersonName,AttendanceDate`;
 
       const response = await this.retryFetch(attendanceUrl, {
@@ -1897,7 +2195,7 @@ export class SharePointService {
           results.filter(r => !r.success).map(r => `ID ${r.id}: ${r.error}`));
       }
       
-      return { success: true, deleted: successCount, failed: failCount };
+      return { success: failCount === 0, deleted: successCount, failed: failCount };
     } catch (error) {
       console.error(`❌ Error in deleteAttendanceForDate for ${dateStr}:`, error);
       return { success: false, deleted: 0, failed: 0, error: error.message };

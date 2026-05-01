@@ -64,11 +64,11 @@ const ScheduleGridView = ({
   // Separate students by program
   const primaryStudents = students
     .filter(s => s.isActive && s.program === 'Primary')
-    .sort((a, b) => a.name.localeCompare(b.name));
+    .sort((a, b) => (a?.name || '').localeCompare(b?.name || ''));
   
   const secondaryStudents = students
     .filter(s => s.isActive && s.program === 'Secondary')
-    .sort((a, b) => a.name.localeCompare(b.name));
+    .sort((a, b) => (a?.name || '').localeCompare(b?.name || ''));
 
   // Calculate staff usage and determine highlighting colors
   const getStaffHighlighting = () => {
@@ -459,14 +459,14 @@ const ScheduleGridView = ({
   // Get current assignments for student/session
   const getAssignments = (student, session) => {
     return schedule.assignments.filter(
-      a => a.studentId === student.id && a.session === session
+      a => String(a.studentId) === String(student.id) && a.session === session
     );
   };
-  
+
   // Get only regular staff assignments (not trainees)
   const getStaffAssignments = (student, session) => {
     return schedule.assignments.filter(
-      a => a.studentId === student.id && a.session === session && !a.isTrainee
+      a => String(a.studentId) === String(student.id) && a.session === session && !a.isTrainee
     );
   };
   
@@ -474,7 +474,7 @@ const ScheduleGridView = ({
   const getTraineeAssignments = (student, session) => {
     // Look in schedule.traineeAssignments (where trainees are actually stored)
     const trainees = schedule.traineeAssignments.filter(
-      a => a.studentId == student.id && a.session === session
+      a => String(a.studentId) === String(student.id) && a.session === session
     );
     
     // Debug logging for first few students only
@@ -485,7 +485,7 @@ const ScheduleGridView = ({
         found: trainees.length,
         trainees: trainees.map(t => ({ staffId: t.staffId, staffName: t.staffName, isTrainee: t.isTrainee })),
         totalTraineeAssignments: schedule.traineeAssignments.length,
-        allForStudent: schedule.traineeAssignments.filter(a => a.studentId == student.id && a.session === session).map(a => ({
+        allForStudent: schedule.traineeAssignments.filter(a => String(a.studentId) === String(student.id) && a.session === session).map(a => ({
           staffId: a.staffId, 
           staffName: a.staffName, 
           isTrainee: a.isTrainee,

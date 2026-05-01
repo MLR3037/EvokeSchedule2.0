@@ -214,17 +214,17 @@ export const ScheduleTableView = ({
 
   const getCurrentAssignment = (student, session) => {
     const assignment = schedule.assignments.find(a => 
-      a.studentId === student.id && 
-      a.session === session && 
+      String(a.studentId) === String(student.id) &&
+      a.session === session &&
       a.program === student.program
     );
-    
+
     // If assignment exists but staff member doesn't (e.g., temp staff was removed on refresh), return null
-    if (assignment && !staff.find(s => s.id === assignment.staffId)) {
+    if (assignment && !staff.find(s => String(s.id) === String(assignment.staffId))) {
       console.warn(`Assignment found but staff member ${assignment.staffId} no longer exists - likely temp staff removed on refresh`);
       return null;
     }
-    
+
     return assignment;
   };
 
@@ -535,13 +535,13 @@ export const ScheduleTableView = ({
   // Helper function to get all assignments for a student in a session
   const getStudentAssignments = (student, session) => {
     if (!schedule || !schedule.assignments) return [];
-    
+
     // Get direct assignments for this student
-    const directAssignments = schedule.assignments.filter(assignment => 
-      assignment.studentId === student.id && 
-      assignment.session === session && 
+    const directAssignments = schedule.assignments.filter(assignment =>
+      String(assignment.studentId) === String(student.id) &&
+      assignment.session === session &&
       assignment.program === student.program &&
-      staff.find(s => s.id === assignment.staffId) // Only include assignments where staff member still exists
+      staff.find(s => String(s.id) === String(assignment.staffId)) // Only include assignments where staff member still exists
     );
     
     // PAIRED STUDENT FIX: If student is paired and has no assignments, check if paired partner has assignments
@@ -557,11 +557,11 @@ export const ScheduleTableView = ({
           
           // If paired partner also has 1:2 ratio, they should share staff
           if (pairedRatio === '1:2') {
-            const pairedAssignments = schedule.assignments.filter(assignment => 
-              assignment.studentId === pairedStudent.id && 
-              assignment.session === session && 
+            const pairedAssignments = schedule.assignments.filter(assignment =>
+              String(assignment.studentId) === String(pairedStudent.id) &&
+              assignment.session === session &&
               assignment.program === pairedStudent.program &&
-              staff.find(s => s.id === assignment.staffId)
+              staff.find(s => String(s.id) === String(assignment.staffId))
             );
             
             if (pairedAssignments.length > 0) {
@@ -666,8 +666,8 @@ export const ScheduleTableView = ({
         .filter((_, idx) => idx !== staffIndex)
         .map(a => a.staffId);
       
-      const availableForThisDropdown = availableTeamMembers.filter(member => 
-        !assignedStaffIds.includes(member.id) || member.id === selectedStaffId
+      const availableForThisDropdown = availableTeamMembers.filter(member =>
+        !assignedStaffIds.some(id => String(id) === String(member.id)) || String(member.id) === String(selectedStaffId)
       );
 
       dropdowns.push(
@@ -1060,7 +1060,7 @@ export const ScheduleTableView = ({
       {programs.map(program => {
         const programStudents = students
           .filter(s => s.program === program && s.isActive)
-          .sort((a, b) => a.name.localeCompare(b.name));
+          .sort((a, b) => (a?.name || '').localeCompare(b?.name || ''));
         
         return (
           <div key={program} className="bg-white rounded-lg shadow-lg overflow-hidden">

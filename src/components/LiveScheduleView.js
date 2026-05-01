@@ -76,12 +76,12 @@ const LiveScheduleView = ({ schedule, students, staff, currentDate, onUpdateSche
     if (sortBy === 'program') {
       activeStudents.sort((a, b) => {
         if (a.program === b.program) {
-          return a.name.localeCompare(b.name);
+          return (a?.name || '').localeCompare(b?.name || '');
         }
-        return a.program.localeCompare(b.program);
+        return (a?.program || '').localeCompare(b?.program || '');
       });
     } else {
-      activeStudents.sort((a, b) => a.name.localeCompare(b.name));
+      activeStudents.sort((a, b) => (a?.name || '').localeCompare(b?.name || ''));
     }
 
     activeStudents.forEach(student => {
@@ -686,7 +686,7 @@ const LiveScheduleView = ({ schedule, students, staff, currentDate, onUpdateSche
               let filteredRows = [...window.scheduleState.allRows];
               
               // Debug: Show all Milo rows
-              const miloRows = window.scheduleState.allRows.filter(r => r.studentName === 'Milo' || r.studentName.includes('Milo'));
+              const miloRows = window.scheduleState.allRows.filter(r => r.studentName === 'Milo' || (r.studentName || '').includes('Milo'));
               if (miloRows.length > 0) {
                 console.log('🔍 All Milo rows in data:', miloRows.map(r => 'AM: "' + r.amStaff + '" PM: "' + r.pmStaff + '"'));
               }
@@ -700,12 +700,12 @@ const LiveScheduleView = ({ schedule, students, staff, currentDate, onUpdateSche
               if (window.scheduleState.currentSort === 'program') {
                 filteredRows.sort((a, b) => {
                   if (a.program === b.program) {
-                    return a.studentName.localeCompare(b.studentName);
+                    return (a?.studentName || '').localeCompare(b?.studentName || '');
                   }
-                  return a.program.localeCompare(b.program);
+                  return (a?.program || '').localeCompare(b?.program || '');
                 });
               } else {
-                filteredRows.sort((a, b) => a.studentName.localeCompare(b.studentName));
+                filteredRows.sort((a, b) => (a?.studentName || '').localeCompare(b?.studentName || ''));
               }
               
               // Generate HTML
@@ -730,7 +730,7 @@ const LiveScheduleView = ({ schedule, students, staff, currentDate, onUpdateSche
               
               filteredRows.forEach(row => {
                 // Debug logging for specific students
-                if (row.studentName === 'Milo' || row.studentName.includes('Milo')) {
+                if (row.studentName === 'Milo' || (row.studentName || '').includes('Milo')) {
                   console.log('🔍 Rendering Milo:', 'AM:', row.amStaff, 'PM:', row.pmStaff);
                 }
                 

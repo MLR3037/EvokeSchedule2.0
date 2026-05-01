@@ -196,39 +196,44 @@ export const TRAINING_STATUS = {
  * Student/Kid data structure
  */
 export class Student {
-  constructor({
-    id,
-    name,
-    program,
-    ratio, // Backward compatibility - single ratio for both sessions
-    ratioAM = RATIOS.ONE_TO_ONE, // Separate ratio for AM
-    ratioPM = RATIOS.ONE_TO_ONE, // Separate ratio for PM
-    isActive = true,
-    team = [], // Team members (People Picker array)
-    teamIds = [], // Array of staff IDs extracted from team
-    pairedWith = null, // ID of paired student (for shared staff assignments)
-    absentAM = false, // Absent for AM session
-    absentPM = false, // Absent for PM session
-    absentFullDay = false, // Absent for full day (both sessions)
-    teamTrainingStatus = {}, // Training status for each team member: { staffId: 'certified' | 'overlap-bcba' | 'overlap-staff' }
-    // Days of week schedule (all default to true = scheduled)
-    scheduledMonday = true,
-    scheduledTuesday = true,
-    scheduledWednesday = true,
-    scheduledThursday = true,
-    scheduledFriday = true,
-    // Custom schedule times (null = use program defaults)
-    amStartTime = null,
-    amEndTime = null,
-    pmStartTime = null,
-    pmEndTime = null
-  }) {
+  constructor(data = {}) {
+    const {
+      id,
+      name,
+      program,
+      ratio, // Backward compatibility - single ratio for both sessions
+      ratioAM = RATIOS.ONE_TO_ONE, // Separate ratio for AM
+      ratioPM = RATIOS.ONE_TO_ONE, // Separate ratio for PM
+      isActive = true,
+      team = [], // Team members (People Picker array)
+      teamIds = [], // Array of staff IDs extracted from team
+      pairedWith = null, // ID of paired student (for shared staff assignments)
+      absentAM = false, // Absent for AM session
+      absentPM = false, // Absent for PM session
+      absentFullDay = false, // Absent for full day (both sessions)
+      teamTrainingStatus = {}, // Training status for each team member: { staffId: 'certified' | 'overlap-bcba' | 'overlap-staff' }
+      // Days of week schedule (all default to true = scheduled)
+      scheduledMonday = true,
+      scheduledTuesday = true,
+      scheduledWednesday = true,
+      scheduledThursday = true,
+      scheduledFriday = true,
+      // Custom schedule times (null = use program defaults)
+      amStartTime = null,
+      amEndTime = null,
+      pmStartTime = null,
+      pmEndTime = null
+    } = data;
+
+    const hasExplicitRatioAM = Object.prototype.hasOwnProperty.call(data, 'ratioAM');
+    const hasExplicitRatioPM = Object.prototype.hasOwnProperty.call(data, 'ratioPM');
+
     this.id = id;
     this.name = name;
     this.program = program; // PRIMARY or SECONDARY
     
-    // Handle backward compatibility - if ratio is provided, use it for both sessions
-    if (ratio) {
+    // Preserve explicit AM/PM ratios when present and only fall back to legacy single ratio.
+    if (!hasExplicitRatioAM && !hasExplicitRatioPM && ratio) {
       this.ratioAM = ratio;
       this.ratioPM = ratio;
       this.ratio = ratio; // Keep for backward compatibility
@@ -465,11 +470,11 @@ export class Schedule {
   }
 
   getStaffAssignments(staffId) {
-    return this.assignments.filter(a => a.staffId === staffId);
+    return this.assignments.filter(a => String(a.staffId) === String(staffId));
   }
 
   getStudentAssignments(studentId) {
-    return this.assignments.filter(a => a.studentId === studentId);
+    return this.assignments.filter(a => String(a.studentId) === String(studentId));
   }
 
   isStaffAvailable(staffId, session, program) {
@@ -487,7 +492,7 @@ export class Schedule {
 
   hasStaffWorkedWithStudentToday(staffId, studentId) {
     return this.assignments.some(a => 
-      a.staffId === staffId && a.studentId === studentId
+      String(a.staffId) === String(staffId) && String(a.studentId) === String(studentId)
     );
   }
 
