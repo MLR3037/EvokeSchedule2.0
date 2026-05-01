@@ -735,8 +735,9 @@ export class SharePointService {
       }
 
       // Step 1: Find the schedule record in ScheduleHistory for this date
+      const { start: scheduleStart, end: scheduleEnd } = this.getDateRangeForDay(dateString);
       const scheduleUrl = `${this.siteUrl}/_api/web/lists/getbytitle('ScheduleHistory')/items?` +
-        `$filter=ScheduleDate eq '${dateString}'&` +
+        `$filter=ScheduleDate ge datetime'${scheduleStart}' and ScheduleDate le datetime'${scheduleEnd}'&` +
         `$orderby=Created desc&` +
         `$top=1`;
 
@@ -815,15 +816,17 @@ export class SharePointService {
       const assignments = assignmentItems.map(item => {
         const normalizedStaffId = Number.isFinite(Number(item.StaffID)) ? Number(item.StaffID) : item.StaffID;
         const normalizedStudentId = Number.isFinite(Number(item.StudentID)) ? Number(item.StudentID) : item.StudentID;
+        const normalizedSession = this.normalizeAssignmentSession(item.Session);
+        const normalizedProgram = this.normalizeAssignmentProgram(item.Program);
 
         return new Assignment({
-          id: `${item.StaffID}_${item.StudentID}_${item.Session}_${item.Program}`,
+          id: `${normalizedStaffId}_${normalizedStudentId}_${normalizedSession}_${normalizedProgram}`,
           staffId: normalizedStaffId,
           staffName: item.StaffName,
           studentId: normalizedStudentId,
           studentName: item.StudentName,
-          session: item.Session,
-          program: item.Program,
+          session: normalizedSession,
+          program: normalizedProgram,
           date: item.ScheduleDate,
           isLocked: item.IsLocked || false,
           assignedBy: 'loaded',
@@ -1336,8 +1339,9 @@ export class SharePointService {
 
       // ✅ NEW: Check if schedule already exists for this date
       console.log('🔍 Checking for existing schedule record for', schedule.date);
+      const { start: existingStart, end: existingEnd } = this.getDateRangeForDay(schedule.date);
       const existingScheduleUrl = `${this.siteUrl}/_api/web/lists/getbytitle('ScheduleHistory')/items?` +
-        `$filter=ScheduleDate eq '${schedule.date}'&` +
+        `$filter=ScheduleDate ge datetime'${existingStart}' and ScheduleDate le datetime'${existingEnd}'&` +
         `$orderby=Created desc&` +
         `$top=1`;
 
@@ -1494,17 +1498,20 @@ export class SharePointService {
 
   async saveAssignmentToHistory(assignment, scheduleId, scheduleDate) {
     try {
+      const normalizedSession = this.normalizeAssignmentSession(assignment.session);
+      const normalizedProgram = this.normalizeAssignmentProgram(assignment.program);
+
       const assignmentData = {
         __metadata: { type: this.dailyAssignmentsEntityType || 'SP.Data.DailyAssignmentsListItem' },
-        Title: `Assignment_${assignment.staffId}_${assignment.studentId}_${assignment.session}`,
+        Title: `Assignment_${assignment.staffId}_${assignment.studentId}_${normalizedSession}`,
         ScheduleID: scheduleId,
         ScheduleDate: scheduleDate,
         StaffID: assignment.staffId,
         StaffName: assignment.staffName || '',
         StudentID: assignment.studentId,
         StudentName: assignment.studentName || '',
-        Session: assignment.session,
-        Program: assignment.program,
+        Session: normalizedSession,
+        Program: normalizedProgram,
         AssignmentType: assignment.type || 'Standard',
         IsLocked: assignment.isLocked || false,
         IsTempStaff: assignment.isTempStaff || false // NEW: Save temp staff flag
@@ -1543,17 +1550,20 @@ export class SharePointService {
 
   async updateAssignmentInHistory(itemId, assignment, scheduleId, scheduleDate) {
     try {
+      const normalizedSession = this.normalizeAssignmentSession(assignment.session);
+      const normalizedProgram = this.normalizeAssignmentProgram(assignment.program);
+
       const assignmentData = {
         __metadata: { type: this.dailyAssignmentsEntityType || 'SP.Data.DailyAssignmentsListItem' },
-        Title: `Assignment_${assignment.staffId}_${assignment.studentId}_${assignment.session}`,
+        Title: `Assignment_${assignment.staffId}_${assignment.studentId}_${normalizedSession}`,
         ScheduleID: scheduleId,
         ScheduleDate: scheduleDate,
         StaffID: assignment.staffId,
         StaffName: assignment.staffName || '',
         StudentID: assignment.studentId,
         StudentName: assignment.studentName || '',
-        Session: assignment.session,
-        Program: assignment.program,
+        Session: normalizedSession,
+        Program: normalizedProgram,
         AssignmentType: assignment.type || 'Standard',
         IsLocked: assignment.isLocked || false,
         IsTempStaff: assignment.isTempStaff || false
@@ -1616,13 +1626,57 @@ export class SharePointService {
     }
   }
 
+  normalizeAssignmentId(id) {
+    const numericId = Number(id);
+    if (Number.isFinite(numericId)) {
+      return String(numericId);
+    }
+
+    return String(id || '').trim();
+  }
+
+  normalizeAssignmentSession(session) {
+    return String(session || '').trim().toUpperCase();
+  }
+
+  normalizeAssignmentProgram(program) {
+    const normalized = String(program || '').trim().toLowerCase();
+    if (normalized === 'primary') {
+      return 'Primary';
+    }
+    if (normalized === 'secondary') {
+      return 'Secondary';
+    }
+
+    return String(program || '').trim();
+  }
+
+  getDateRangeForDay(date) {
+    const dateStr = typeof date === 'string'
+      ? date
+      : `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
+
+    return {
+      start: `${dateStr}T00:00:00`,
+      end: `${dateStr}T23:59:59`,
+      dateStr
+    };
+  }
+
   buildAssignmentSyncKey(data) {
-    return `${data.staffId}__${data.studentId}__${data.session}__${data.program || ''}`;
+    const staffId = this.normalizeAssignmentId(data.staffId);
+    const studentId = this.normalizeAssignmentId(data.studentId);
+    const session = this.normalizeAssignmentSession(data.session);
+    const program = this.normalizeAssignmentProgram(data.program);
+
+    return `${staffId}__${studentId}__${session}__${program}`;
   }
 
   async loadAssignmentsForDate(scheduleDate) {
+    const { start, end } = this.getDateRangeForDay(scheduleDate);
+
     const assignmentsUrl = `${this.siteUrl}/_api/web/lists/getbytitle('DailyAssignments')/items?` +
-      `$filter=ScheduleDate eq '${scheduleDate}'&` +
+      `$filter=ScheduleDate ge datetime'${start}' and ScheduleDate le datetime'${end}'&` +
       `$select=ID,ScheduleID,ScheduleDate,StaffID,StaffName,StudentID,StudentName,Session,Program,AssignmentType,IsLocked,IsTempStaff`;
 
     const response = await this.retryFetch(assignmentsUrl, {
