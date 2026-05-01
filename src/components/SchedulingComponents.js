@@ -15,6 +15,14 @@ export const ScheduleTableView = ({
   onManualAssignment,
   selectedDate 
 }) => {
+  const normalizeSession = (value) => String(value || '').trim().toUpperCase();
+  const normalizeProgram = (value) => {
+    const normalized = String(value || '').trim().toLowerCase();
+    if (normalized === 'primary') return 'Primary';
+    if (normalized === 'secondary') return 'Secondary';
+    return String(value || '').trim();
+  };
+
   console.log('🔍 ScheduleTableView rendering with:', { 
     studentsCount: students.length, 
     staffCount: staff.length,
@@ -215,15 +223,9 @@ export const ScheduleTableView = ({
   const getCurrentAssignment = (student, session) => {
     const assignment = schedule.assignments.find(a => 
       String(a.studentId) === String(student.id) &&
-      a.session === session &&
-      a.program === student.program
+      normalizeSession(a.session) === normalizeSession(session) &&
+      normalizeProgram(a.program) === normalizeProgram(student.program)
     );
-
-    // If assignment exists but staff member doesn't (e.g., temp staff was removed on refresh), return null
-    if (assignment && !staff.find(s => String(s.id) === String(assignment.staffId))) {
-      console.warn(`Assignment found but staff member ${assignment.staffId} no longer exists - likely temp staff removed on refresh`);
-      return null;
-    }
 
     return assignment;
   };
@@ -539,9 +541,8 @@ export const ScheduleTableView = ({
     // Get direct assignments for this student
     const directAssignments = schedule.assignments.filter(assignment =>
       String(assignment.studentId) === String(student.id) &&
-      assignment.session === session &&
-      assignment.program === student.program &&
-      staff.find(s => String(s.id) === String(assignment.staffId)) // Only include assignments where staff member still exists
+      normalizeSession(assignment.session) === normalizeSession(session) &&
+      normalizeProgram(assignment.program) === normalizeProgram(student.program)
     );
     
     // PAIRED STUDENT FIX: If student is paired and has no assignments, check if paired partner has assignments
@@ -559,9 +560,8 @@ export const ScheduleTableView = ({
           if (pairedRatio === '1:2') {
             const pairedAssignments = schedule.assignments.filter(assignment =>
               String(assignment.studentId) === String(pairedStudent.id) &&
-              assignment.session === session &&
-              assignment.program === pairedStudent.program &&
-              staff.find(s => String(s.id) === String(assignment.staffId))
+              normalizeSession(assignment.session) === normalizeSession(session) &&
+              normalizeProgram(assignment.program) === normalizeProgram(pairedStudent.program)
             );
             
             if (pairedAssignments.length > 0) {
@@ -670,6 +670,23 @@ export const ScheduleTableView = ({
         !assignedStaffIds.some(id => String(id) === String(member.id)) || String(member.id) === String(selectedStaffId)
       );
 
+      const selectedStaffRecord = currentAssignment
+        ? staff.find(s => String(s.id) === String(currentAssignment.staffId))
+        : null;
+      const hasSelectedStaffOption = availableForThisDropdown.some(
+        member => String(member.id) === String(selectedStaffId)
+      );
+      const dropdownOptions = !selectedStaffRecord || hasSelectedStaffOption
+        ? availableForThisDropdown
+        : [
+            {
+              id: selectedStaffRecord.id,
+              name: `${selectedStaffRecord.name} (assigned)`,
+              role: selectedStaffRecord.role
+            },
+            ...availableForThisDropdown
+          ];
+
       dropdowns.push(
         <div key={key} className="flex items-center gap-2 mb-1">
           <select
@@ -679,7 +696,7 @@ export const ScheduleTableView = ({
             className={`text-sm border rounded px-2 py-1 min-w-[160px] ${
               currentAssignment 
                 ? (() => {
-                    const staffMember = staff.find(s => s.id === currentAssignment.staffId);
+                    const staffMember = staff.find(s => String(s.id) === String(currentAssignment.staffId));
                     if (!staffMember) return 'bg-gray-100 text-gray-600 font-bold';
                     const roleColors = {
                       'RBT': 'bg-purple-100 text-purple-700 font-bold',
@@ -697,7 +714,10 @@ export const ScheduleTableView = ({
             }`}
           >
             <option value="">Select staff...</option>
-            {availableForThisDropdown.map((staffMember, idx) => {
+            {!selectedStaffRecord && currentAssignment && selectedStaffId && (
+              <option value={selectedStaffId}>{`Missing staff (${selectedStaffId})`}</option>
+            )}
+            {dropdownOptions.map((staffMember, idx) => {
               const trainingStatus = student.getStaffTrainingStatus ? student.getStaffTrainingStatus(staffMember.id) : TRAINING_STATUS.SOLO;
               const isTrainer = trainingStatus === TRAINING_STATUS.TRAINER;
               return (

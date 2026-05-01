@@ -16,6 +16,14 @@ const ScheduleGridView = ({
   onAssignmentRemove,
   onManualAssignment
 }) => {
+  const normalizeSession = (value) => String(value || '').trim().toUpperCase();
+  const normalizeProgram = (value) => {
+    const normalized = String(value || '').trim().toLowerCase();
+    if (normalized === 'primary') return 'Primary';
+    if (normalized === 'secondary') return 'Secondary';
+    return String(value || '').trim();
+  };
+
   const [editableData, setEditableData] = useState({});
   const [expandedProgram, setExpandedProgram] = useState('Primary'); // 'Primary', 'Secondary', or null for both
   const [fullScreenMode, setFullScreenMode] = useState(false); // Toggle for full screen view
@@ -459,14 +467,14 @@ const ScheduleGridView = ({
   // Get current assignments for student/session
   const getAssignments = (student, session) => {
     return schedule.assignments.filter(
-      a => String(a.studentId) === String(student.id) && a.session === session
+      a => String(a.studentId) === String(student.id) && normalizeSession(a.session) === normalizeSession(session)
     );
   };
 
   // Get only regular staff assignments (not trainees)
   const getStaffAssignments = (student, session) => {
     return schedule.assignments.filter(
-      a => String(a.studentId) === String(student.id) && a.session === session && !a.isTrainee
+      a => String(a.studentId) === String(student.id) && normalizeSession(a.session) === normalizeSession(session) && !a.isTrainee
     );
   };
   
@@ -474,7 +482,7 @@ const ScheduleGridView = ({
   const getTraineeAssignments = (student, session) => {
     // Look in schedule.traineeAssignments (where trainees are actually stored)
     const trainees = schedule.traineeAssignments.filter(
-      a => String(a.studentId) === String(student.id) && a.session === session
+      a => String(a.studentId) === String(student.id) && normalizeSession(a.session) === normalizeSession(session)
     );
     
     // Debug logging for first few students only
@@ -485,7 +493,7 @@ const ScheduleGridView = ({
         found: trainees.length,
         trainees: trainees.map(t => ({ staffId: t.staffId, staffName: t.staffName, isTrainee: t.isTrainee })),
         totalTraineeAssignments: schedule.traineeAssignments.length,
-        allForStudent: schedule.traineeAssignments.filter(a => String(a.studentId) === String(student.id) && a.session === session).map(a => ({
+        allForStudent: schedule.traineeAssignments.filter(a => String(a.studentId) === String(student.id) && normalizeSession(a.session) === normalizeSession(session)).map(a => ({
           staffId: a.staffId, 
           staffName: a.staffName, 
           isTrainee: a.isTrainee,
@@ -502,7 +510,7 @@ const ScheduleGridView = ({
   const getTraineeAssignment = (student, session) => {
     if (!schedule.traineeAssignments) return null;
     return schedule.traineeAssignments.find(
-      ta => ta.studentId === student.id && ta.session === session
+      ta => String(ta.studentId) === String(student.id) && normalizeSession(ta.session) === normalizeSession(session)
     );
   };
 
@@ -993,7 +1001,9 @@ const ScheduleGridView = ({
     
     const handleLockEntireProgram = () => {
       // Get all assignments for this program (both AM and PM)
-      const programAssignments = schedule.assignments.filter(a => a.program === programName);
+      const programAssignments = schedule.assignments.filter(
+        a => normalizeProgram(a.program) === normalizeProgram(programName)
+      );
       
       // Lock all assignments
       programAssignments.forEach(assignment => {
