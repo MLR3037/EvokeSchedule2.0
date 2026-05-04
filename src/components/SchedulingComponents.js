@@ -234,6 +234,42 @@ export const ScheduleTableView = ({
     return `${studentId}_${session}_${staffIndex}`;
   };
 
+  const areStudentsPaired = (studentAId, studentBId) => {
+    const studentA = students.find(s => String(s.id) === String(studentAId));
+    const studentB = students.find(s => String(s.id) === String(studentBId));
+    if (!studentA || !studentB) return false;
+    return studentA.isPaired && studentA.isPaired() && String(studentA.pairedWith) === String(studentB.id);
+  };
+
+  const isStaffBusyElsewhereForSession = (staffId, currentStudentId, session) => {
+    const normalizedStaffId = String(staffId);
+    const normalizedSession = normalizeSession(session);
+
+    const busyInSchedule = schedule.assignments.some(a => {
+      if (String(a.staffId) !== normalizedStaffId) return false;
+      if (normalizeSession(a.session) !== normalizedSession) return false;
+      if (String(a.studentId) === String(currentStudentId)) return false;
+      if (areStudentsPaired(currentStudentId, a.studentId)) return false;
+      return true;
+    });
+
+    if (busyInSchedule) return true;
+
+    const busyInPreAssignments = Object.entries(preAssignments).some(([key, selectedStaffId]) => {
+      if (!selectedStaffId) return false;
+      if (String(selectedStaffId) !== normalizedStaffId) return false;
+
+      const [preStudentId, preSession] = key.split('_');
+      if (normalizeSession(preSession) !== normalizedSession) return false;
+      if (String(preStudentId) === String(currentStudentId)) return false;
+      if (areStudentsPaired(currentStudentId, preStudentId)) return false;
+
+      return true;
+    });
+
+    return busyInPreAssignments;
+  };
+
   const handleStaffSelection = (studentId, session, staffId, staffIndex = 0) => {
     const key = getPreAssignmentKey(studentId, session, staffIndex);
     
@@ -271,9 +307,40 @@ export const ScheduleTableView = ({
       }));
       return;
     }
-    
-    // Check if there's an existing assignment for this position
+
     const student = students.find(s => s.id === studentId);
+    const teamMember = student ? getStudentTeam(student).find(tm => String(tm.id) === String(staffId)) : null;
+
+    // Safety guard: do not allow selecting unavailable staff (must match disabled option logic)
+    if (student && teamMember) {
+      const trainingStatus = student.getStaffTrainingStatus ? student.getStaffTrainingStatus(teamMember.id) : TRAINING_STATUS.SOLO;
+      const isInTraining = trainingStatus === TRAINING_STATUS.OVERLAP_STAFF || trainingStatus === TRAINING_STATUS.OVERLAP_BCBA;
+      const staffRecord = staff.find(s => String(s.id) === String(teamMember.id));
+      const isTempSessionMismatch = Boolean(teamMember.isTemp && teamMember.tempSessions && !teamMember.tempSessions.includes(session));
+      const isAbsentOrOut = Boolean(staffRecord && !staffRecord.isAvailableForSession(session, selectedDate));
+      const isBusyElsewhere = isStaffBusyElsewhereForSession(staffId, studentId, session);
+
+      const studentAssignmentsForGuard = getStudentAssignments(student, session);
+      const usedInOtherDropdown = studentAssignmentsForGuard.some((assignment, idx) =>
+        idx !== staffIndex && String(assignment.staffId) === String(staffId)
+      ) || Object.entries(preAssignments).some(([preKey, preValue]) => {
+        if (!preValue) return false;
+        const [preStudentId, preSession, preStaffIndex] = preKey.split('_');
+        return (
+          String(preStudentId) === String(student.id) &&
+          normalizeSession(preSession) === normalizeSession(session) &&
+          Number(preStaffIndex) !== staffIndex &&
+          String(preValue) === String(staffId)
+        );
+      });
+
+      if (isInTraining || isTempSessionMismatch || isAbsentOrOut || isBusyElsewhere || usedInOtherDropdown) {
+        console.log(`🚫 Blocked selection: staff ${staffId} is unavailable for ${studentId} ${session}`);
+        return;
+      }
+    }
+
+    // Check if there's an existing assignment for this position
     const studentAssignments = getStudentAssignments(student, session);
     
     if (studentAssignments.length > staffIndex) {
@@ -599,56 +666,16 @@ export const ScheduleTableView = ({
     console.log(`  Required staff:`, requiredStaffCount);
     console.log(`  Current assignments:`, currentAssignments.length);
 
-    // FILTER TEAM TO ONLY AVAILABLE MEMBERS
-    const availableTeamMembers = team.filter(teamMember => {
-      // Always include currently assigned staff
-      const isCurrentlyAssigned = currentAssignments.some(assignment => 
-        assignment.staffId === teamMember.id || assignment.staffId == teamMember.id
-      );
-      if (isCurrentlyAssigned) {
-        return true;
-      }
-      
-      // NEW: For temp staff, check if they're available for this specific session
-      if (teamMember.isTemp && teamMember.tempSessions) {
-        if (!teamMember.tempSessions.includes(session)) {
-          console.log(`🚫 Excluding temp staff ${teamMember.name} from ${session} dropdown - only available for ${teamMember.tempSessions.join(', ')}`);
-          return false;
-        }
-      }
-      
-      // EXCLUDE staff who are in training for THIS student (overlap-staff or overlap-bcba)
-      // They should only appear in the trainee dropdown, not the regular staff dropdown
-      const trainingStatus = student.getStaffTrainingStatus ? student.getStaffTrainingStatus(teamMember.id) : TRAINING_STATUS.SOLO;
-      const isInTraining = trainingStatus === TRAINING_STATUS.OVERLAP_STAFF || trainingStatus === TRAINING_STATUS.OVERLAP_BCBA;
-      
-      if (isInTraining) {
-        console.log(`🚫 Excluding ${teamMember.name} from regular staff dropdown - in training (${trainingStatus})`);
-        return false; // Don't show in regular dropdown if they're in training
-      }
-      
-      // Check if staff is available for this session
-      const staffMember = staff.find(s => s.id === teamMember.id || s.id == teamMember.id);
-      
-      // If this is temp staff (not in main staff array), they're automatically available for their designated sessions
-      if (!staffMember && teamMember.isTemp) {
-        console.log(`✅ Including temp staff ${teamMember.name} in ${session} dropdown`);
-        return true; // Temp staff are always available for their designated sessions (already filtered above)
-      }
-      
-      if (!staffMember) return false;
-      
-      // EXCLUDE staff who are absent for this session
-      if (!staffMember.isAvailableForSession(session, selectedDate)) {
-        console.log(`🚫 Excluding ${teamMember.name} from dropdown - absent for ${session}`);
-        return false;
-      }
-      
-      return schedule.isStaffAvailable(staffMember.id, session, student.program);
+    // Show full team list in dropdown; unavailable entries are disabled/grayed out at render time.
+    const teamDropdownMembers = team.filter(teamMember => {
+      const staffMember = staff.find(s => String(s.id) === String(teamMember.id));
+      if (staffMember) return true;
+      if (teamMember.isTemp) return true;
+      return false;
     });
 
-    if (availableTeamMembers.length === 0) {
-      return <span className="text-gray-400 text-sm">No available team</span>;
+    if (teamDropdownMembers.length === 0) {
+      return <span className="text-gray-400 text-sm">No team members</span>;
     }
 
     // Render multiple dropdowns for 2:1 students
@@ -661,14 +688,24 @@ export const ScheduleTableView = ({
       // Get the selected staff ID for this dropdown
       const selectedStaffId = currentAssignment?.staffId || preAssignments[key] || '';
 
-      // Filter out staff already assigned to other dropdowns for this student/session
+      // Track staff already used in other dropdowns for this student/session
       const assignedStaffIds = currentAssignments
         .filter((_, idx) => idx !== staffIndex)
         .map(a => a.staffId);
+
+      const preAssignedStaffIds = Object.entries(preAssignments)
+        .filter(([preKey, preValue]) => {
+          if (!preValue) return false;
+          const [preStudentId, preSession, preStaffIndex] = preKey.split('_');
+          return (
+            String(preStudentId) === String(student.id) &&
+            normalizeSession(preSession) === normalizeSession(session) &&
+            Number(preStaffIndex) !== staffIndex
+          );
+        })
+        .map(([, preValue]) => preValue);
       
-      const availableForThisDropdown = availableTeamMembers.filter(member =>
-        !assignedStaffIds.some(id => String(id) === String(member.id)) || String(member.id) === String(selectedStaffId)
-      );
+      const availableForThisDropdown = teamDropdownMembers;
 
       const selectedStaffRecord = currentAssignment
         ? staff.find(s => String(s.id) === String(currentAssignment.staffId))
@@ -720,8 +757,21 @@ export const ScheduleTableView = ({
             {dropdownOptions.map((staffMember, idx) => {
               const trainingStatus = student.getStaffTrainingStatus ? student.getStaffTrainingStatus(staffMember.id) : TRAINING_STATUS.SOLO;
               const isTrainer = trainingStatus === TRAINING_STATUS.TRAINER;
+              const isInTraining = trainingStatus === TRAINING_STATUS.OVERLAP_STAFF || trainingStatus === TRAINING_STATUS.OVERLAP_BCBA;
+              const staffRecord = staff.find(s => String(s.id) === String(staffMember.id));
+              const isTempSessionMismatch = Boolean(staffMember.isTemp && staffMember.tempSessions && !staffMember.tempSessions.includes(session));
+              const isAbsentOrOut = Boolean(staffRecord && !staffRecord.isAvailableForSession(session, selectedDate));
+              const isBusyElsewhere = isStaffBusyElsewhereForSession(staffMember.id, student.id, session);
+              const usedInOtherDropdown = assignedStaffIds.some(id => String(id) === String(staffMember.id)) || preAssignedStaffIds.some(id => String(id) === String(staffMember.id));
+              const isUnavailable = isInTraining || isTempSessionMismatch || isAbsentOrOut || isBusyElsewhere || usedInOtherDropdown;
+
               return (
-                <option key={`${staffMember.id}-${idx}`} value={staffMember.id}>
+                <option
+                  key={`${staffMember.id}-${idx}`}
+                  value={staffMember.id}
+                  disabled={isUnavailable}
+                  style={isUnavailable ? { color: '#9CA3AF', backgroundColor: '#F3F4F6' } : undefined}
+                >
                   {isTrainer ? '⭐ ' : ''}{staffMember.name} ({staffMember.role})
                 </option>
               );

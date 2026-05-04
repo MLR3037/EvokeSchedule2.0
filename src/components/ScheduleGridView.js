@@ -82,6 +82,15 @@ const ScheduleGridView = ({
   const getStaffHighlighting = () => {
     const staffUsage = {}; // { staffId: { count, sessions: [{studentId, session, student}], sameKidAMPM: bool, twiceInSameSession: bool } }
     const outOfSessionStaff = {}; // { staffId: ['AM', 'PM'] } - tracks which sessions staff are marked as "out"
+
+    // For trainee assignments synced across paired 1:2 students, count as one usage per session.
+    const getUsageUnitKey = (student, studentId, session, isTrainee) => {
+      if (isTrainee && student && student.isPaired && student.isPaired() && student.pairedWith) {
+        const pairIds = [String(student.id), String(student.pairedWith)].sort();
+        return `trainee-paired-${session}-${pairIds[0]}-${pairIds[1]}`;
+      }
+      return `${isTrainee ? 'trainee' : 'main'}-${session}-${String(studentId)}`;
+    };
     
     // Track out-of-session assignments
     if (schedule.outOfSessionAssignments && schedule.outOfSessionAssignments.length > 0) {
@@ -96,17 +105,23 @@ const ScheduleGridView = ({
     // Analyze all regular assignments
     schedule.assignments.forEach(assignment => {
       const { staffId, studentId, session, isTrainee } = assignment;
+      const student = students.find(s => s.id === studentId);
       
       if (!staffUsage[staffId]) {
         staffUsage[staffId] = {
           count: 0,
           sessions: [],
-          isTrainee: false
+          isTrainee: false,
+          usageUnitKeys: new Set()
         };
       }
       
-      staffUsage[staffId].count++;
-      const student = students.find(s => s.id === studentId);
+      const usageUnitKey = getUsageUnitKey(student, studentId, session, Boolean(isTrainee));
+      if (!staffUsage[staffId].usageUnitKeys.has(usageUnitKey)) {
+        staffUsage[staffId].usageUnitKeys.add(usageUnitKey);
+        staffUsage[staffId].count++;
+      }
+
       staffUsage[staffId].sessions.push({ studentId, session, student, isTrainee });
       
       // Track if ANY assignment for this staff is a trainee
@@ -119,17 +134,23 @@ const ScheduleGridView = ({
     if (schedule.traineeAssignments && schedule.traineeAssignments.length > 0) {
       schedule.traineeAssignments.forEach(assignment => {
         const { staffId, studentId, session } = assignment;
+        const student = students.find(s => s.id === studentId);
         
         if (!staffUsage[staffId]) {
           staffUsage[staffId] = {
             count: 0,
             sessions: [],
-            isTrainee: true
+            isTrainee: true,
+            usageUnitKeys: new Set()
           };
         }
         
-        staffUsage[staffId].count++;
-        const student = students.find(s => s.id === studentId);
+        const usageUnitKey = getUsageUnitKey(student, studentId, session, true);
+        if (!staffUsage[staffId].usageUnitKeys.has(usageUnitKey)) {
+          staffUsage[staffId].usageUnitKeys.add(usageUnitKey);
+          staffUsage[staffId].count++;
+        }
+
         staffUsage[staffId].sessions.push({ studentId, session, student, isTrainee: true });
         staffUsage[staffId].isTrainee = true;
       });

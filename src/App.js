@@ -919,18 +919,34 @@ const ABAScheduler = () => {
             let totalCleared = 0;
             let totalFilled = 0;
             const modifiedAssignments = [...schedule.assignments];
-            
+
+            // Helper: compute current gaps from modifiedAssignments
+            const getCurrentGaps = () => remainingGaps.filter(({ student, session }) =>
+              !modifiedAssignments.some(a => a.studentId === student.id && a.session === session)
+            );
+
+            let passNumber = 0;
+            let madeProgress = true;
+
+            while (madeProgress) {
+              madeProgress = false;
+              passNumber++;
+              const gapsThisPass = getCurrentGaps();
+              if (gapsThisPass.length === 0) break;
+
+              console.log(`\n🔁 Pass ${passNumber}: ${gapsThisPass.length} gap(s) remaining`);
+
             // Process each gap
-            for (const gap of remainingGaps) {
+            for (const gap of gapsThisPass) {
               const { student: gapStudent, session: gapSession } = gap;
               
               console.log(`\n🎯 Targeting gap: ${gapStudent.name} ${gapSession}`);
-              
-              // Find this student's team members
+
+              // Find this student's team members — RBT/BS only
               const gapTeamMembers = preservedStaff.filter(s => 
                 gapStudent.teamIds.includes(s.id) &&
-                s.isAvailableForSession(gapSession) &&
-                !s.isAbsentForSession(gapSession)
+                (s.role === 'RBT' || s.role === 'BS') &&
+                s.isAvailableForSession(gapSession)
               );
               
               console.log(`   Team members available: ${gapTeamMembers.map(s => s.name).join(', ')}`);
@@ -948,40 +964,18 @@ const ABAScheduler = () => {
                 
                 if (conflictingAssignment) {
                   const conflictStudent = activeStudents.find(s => s.id === conflictingAssignment.studentId);
-                  
-                  console.log(`   Found conflict: ${teamStaff.name} is with ${conflictStudent?.name}`);
-                  
-                  // Clear this assignment to free the staff
-                  const assignmentIndex = modifiedAssignments.findIndex(a => a.id === conflictingAssignment.id);
-                  if (assignmentIndex !== -1) {
-                    modifiedAssignments.splice(assignmentIndex, 1);
-                    totalCleared++;
-                    console.log(`   ✂️ Cleared ${teamStaff.name} from ${conflictStudent?.name}`);
-                    
-                    // Create new assignment for gap student
-                    const newAssignment = new Assignment({
-                      id: SchedulingUtils.generateAssignmentId(),
-                      staffId: teamStaff.id,
-                      staffName: teamStaff.name,
-                      studentId: gapStudent.id,
-                      studentName: gapStudent.name,
-                      session: gapSession,
-                      program: gapStudent.program,
-                      date: schedule.date,
-                      isLocked: false,
-                      assignedBy: 'auto-trace-swap'
-                    });
-                    
-                    modifiedAssignments.push(newAssignment);
-                    totalFilled++;
-                    console.log(`   ✅ Assigned ${teamStaff.name} to ${gapStudent.name}`);
-                    
-                    staffFreed = true;
-                    break; // Found and filled this gap, move to next
-                  }
+                  console.log(`   Found conflict: ${teamStaff.name} is with ${conflictStudent?.name} (will only move via cascade with coverage)`);
+                  continue;
                 } else if (!modifiedAssignments.some(a => a.staffId === teamStaff.id && a.session === gapSession)) {
-                  // Staff is free! Assign directly
-                  console.log(`   ✓ ${teamStaff.name} is free!`);
+                  // Staff is free! But skip if they already worked with this student in the other session
+                  const otherSession = gapSession === 'AM' ? 'PM' : 'AM';
+                  const alreadyWithStudentToday = modifiedAssignments.some(a =>
+                    a.staffId === teamStaff.id && a.studentId === gapStudent.id && a.session === otherSession
+                  );
+                  if (alreadyWithStudentToday) {
+                    console.log(`   ⛔ ${teamStaff.name} already with ${gapStudent.name} in ${otherSession} — skipping`);
+                    continue;
+                  }
                   
                   const newAssignment = new Assignment({
                     id: SchedulingUtils.generateAssignmentId(),
@@ -1001,14 +995,100 @@ const ABAScheduler = () => {
                   console.log(`   ✅ Assigned ${teamStaff.name} to ${gapStudent.name}`);
                   
                   staffFreed = true;
+                  madeProgress = true;
                   break;
                 }
               }
               
               if (!staffFreed) {
-                console.log(`   ❌ Could not free any team member for ${gapStudent.name} ${gapSession}`);
+                console.log(`   ❌ No free team member for ${gapStudent.name} ${gapSession} — attempting cascade swap...`);
+
+                // Cascade: find a busy team member, then find someone who can cover THEIR current student
+                for (const teamStaff of gapTeamMembers) {
+                  const conflictingAssignment = modifiedAssignments.find(a =>
+                    a.staffId === teamStaff.id &&
+                    a.session === gapSession &&
+                    !a.isLocked &&
+                    a.assignedBy !== 'manual'
+                  );
+
+                  if (!conflictingAssignment) continue;
+
+                  const conflictStudent = activeStudents.find(s => s.id === conflictingAssignment.studentId);
+                  if (!conflictStudent) continue;
+
+                  console.log(`   🔗 ${teamStaff.name} is with ${conflictStudent.name} — looking for someone to take over...`);
+
+                  // Find any free RBT/BS who is on conflictStudent's team and available
+                  const coverStaff = preservedStaff.find(s =>
+                    s.id !== teamStaff.id &&
+                    (s.role === 'RBT' || s.role === 'BS') &&
+                    conflictStudent.teamIds.includes(s.id) &&
+                    s.isAvailableForSession(gapSession) &&
+                    !modifiedAssignments.some(a => a.staffId === s.id && a.session === gapSession)
+                  );
+
+                  if (coverStaff) {
+                    // Don't use coverStaff if they already worked with conflictStudent in the other session
+                    const otherSession = gapSession === 'AM' ? 'PM' : 'AM';
+                    const coverAlreadyWithConflictStudent = modifiedAssignments.some(a =>
+                      a.staffId === coverStaff.id && a.studentId === conflictStudent.id && a.session === otherSession
+                    );
+                    // Don't free teamStaff if they already worked with gapStudent in the other session
+                    const teamStaffAlreadyWithGapStudent = modifiedAssignments.some(a =>
+                      a.staffId === teamStaff.id && a.studentId === gapStudent.id && a.session === otherSession
+                    );
+                    if (coverAlreadyWithConflictStudent || teamStaffAlreadyWithGapStudent) {
+                      console.log(`   ⛔ Cascade blocked — same-student-all-day rule`);
+                      continue;
+                    }
+
+                    // Reassign conflictStudent to coverStaff
+                    const conflictIndex = modifiedAssignments.findIndex(a => a.id === conflictingAssignment.id);
+                    if (conflictIndex !== -1) modifiedAssignments.splice(conflictIndex, 1);
+
+                    modifiedAssignments.push(new Assignment({
+                      id: SchedulingUtils.generateAssignmentId(),
+                      staffId: coverStaff.id,
+                      staffName: coverStaff.name,
+                      studentId: conflictStudent.id,
+                      studentName: conflictStudent.name,
+                      session: gapSession,
+                      program: conflictStudent.program,
+                      date: schedule.date,
+                      isLocked: false,
+                      assignedBy: 'auto-trace-swap'
+                    }));
+
+                    // Now assign freed team member to gap student
+                    modifiedAssignments.push(new Assignment({
+                      id: SchedulingUtils.generateAssignmentId(),
+                      staffId: teamStaff.id,
+                      staffName: teamStaff.name,
+                      studentId: gapStudent.id,
+                      studentName: gapStudent.name,
+                      session: gapSession,
+                      program: gapStudent.program,
+                      date: schedule.date,
+                      isLocked: false,
+                      assignedBy: 'auto-trace-swap'
+                    }));
+
+                    totalCleared++;
+                    totalFilled++;
+                    staffFreed = true;
+                    madeProgress = true;
+                    console.log(`   ✅ Cascade complete: ${teamStaff.name} → ${gapStudent.name}`);
+                    break;
+                  }
+                }
+
+                if (!staffFreed) {
+                  console.log(`   ❌ No cascade found for ${gapStudent.name} ${gapSession}`);
+                }
               }
             }
+            } // end while madeProgress
             
             // Create new schedule with modified assignments
             const newSchedule = new Schedule({

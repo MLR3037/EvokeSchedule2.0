@@ -41,16 +41,18 @@ export class AutoAssignmentEngine {
   /**
      * Get staff priority score - LOWER is BETTER
      * RBT should be strongly preferred over BS, both preferred over BCBAs/EAs
-     * Hierarchy: RBT > BS > BCBA > EA > CC > MHA
+     * Hierarchy: RBT > BS > BCBA > EA > MH Specialist/Coordinator/Clinician > CC
      */
   getStaffPriorityScore(staffMember) {
     const hierarchy = {
       'RBT': 1,
-      'BS': 5,       // Increased penalty - prefer RBTs significantly over BS
-      'BCBA': 10,    // Prefer BCBAs over EAs when needed
-      'EA': 15,      // Use EAs only as last resort for direct service
-      'CC': 20,
-      'MHA': 21,
+      'BS': 50,      // Much lower priority — only used when no RBTs available
+      'BCBA': 999,   // Never used in auto-assign
+      'EA': 999,     // Never used in auto-assign
+      'CC': 999,
+      'MH Specialist': 21,
+      'MH Coordinator': 21,
+      'MH Clinician': 21,
       'Teacher': 999,   // Should never be used
       'Director': 999,  // Should never be used
       'TEACHER': 999,
@@ -176,6 +178,7 @@ export class AutoAssignmentEngine {
   findReplacementStaff(student, session, program, staff, schedule, excludeIds = []) {
     const availableStaff = staff.filter(s => {
       if (!s.isActive) return false;
+      if (!['RBT', 'BS'].includes(s.role)) return false; // Only RBT/BS in auto-assign/swap
       if (!s.isAvailableForSession(session)) return false; // Check attendance
       if (!s.canWorkProgram(program)) return false;
       if (excludeIds.includes(s.id)) return false;
@@ -410,9 +413,10 @@ export class AutoAssignmentEngine {
 
     const requiredStaffCount = this.getRequiredStaffCount(targetStudent, targetSession);
 
-    // Get ALL of target student's team members (even if busy)
+    // Get ALL of target student's team members (even if busy) — RBT/BS only
     const teamStaff = staff.filter(s =>
       targetStudent.teamIds.includes(s.id) &&
+      ['RBT', 'BS'].includes(s.role) &&
       this.canStaffDoDirectService(s)
     );
 
@@ -429,6 +433,11 @@ export class AutoAssignmentEngine {
 
       // Check if this team member is available in target session
       if (schedule.isStaffAvailable(teamMember.id, targetSession, targetProgram)) {
+        // Skip if they already worked with this student in the other session (no same-student all day)
+        if (schedule.hasStaffWorkedWithStudentToday(teamMember.id, targetStudent.id)) {
+          console.log(`      ⛔ ${teamMember.name} already worked with ${targetStudent.name} today — skipping`);
+          continue;
+        }
         console.log(`      ✅ ${teamMember.name} is already available!`);
 
         // Create direct assignment
@@ -608,10 +617,12 @@ export class AutoAssignmentEngine {
   findPotentialReplacements(student, session, program, staff, schedule, excludeIds = []) {
     const replacements = staff.filter(s => {
       if (!s.isActive) return false;
+      if (!['RBT', 'BS'].includes(s.role)) return false; // Only RBT/BS in auto-assign/swap
       if (!s.canWorkProgram(program)) return false;
       if (excludeIds.includes(s.id)) return false;
       if (!student.teamIds.includes(s.id)) return false;
       if (!this.canStaffDoDirectService(s)) return false;
+      if (schedule.hasStaffWorkedWithStudentToday(s.id, student.id)) return false; // No same-student all day
       // Don't check availability here - we want ALL team members
       return true;
     });
@@ -1090,14 +1101,6 @@ export class AutoAssignmentEngine {
     console.log(`📊 Attendance - Staff absent AM: ${activeStaff.filter(s => s.absentAM || s.absentFullDay).length}, PM: ${activeStaff.filter(s => s.absentPM || s.absentFullDay).length}`);
     console.log(`📊 Attendance - Students absent AM: ${activeStudents.filter(s => s.absentAM || s.absentFullDay).length}, PM: ${activeStudents.filter(s => s.absentPM || s.absentFullDay).length}`);
 
-    // PHASE 0: Auto-assign training pairs (must run before regular scheduling)
-    const trainingResult = this.autoAssignTrainingPairs(schedule, activeStaff, activeStudents, selectedDate);
-    if (trainingResult.skipped.length > 0) {
-      trainingResult.skipped.forEach(s =>
-        errors.push(`Training pair unplaced: ${s.trainee} ${s.session} — ${s.reason}`)
-      );
-    }
-
     // PHASE 1: Initial assignment pass
     const sessions = ['AM', 'PM'];
     const programs = [PROGRAMS.PRIMARY, PROGRAMS.SECONDARY];
@@ -1302,27 +1305,12 @@ export class AutoAssignmentEngine {
     this.verboseLog(`    Total available: ${availableStaff.length}`);
     console.log(`  📊 Team members available for ${student.name} ${session}: ${teamStaff.length}`);
 
-    // Separate by role preference
-    const rbtBsStaff = teamStaff.filter(s => s.role === 'RBT' || s.role === 'BS');
-    const eaStaff = teamStaff.filter(s => s.role === 'EA');
-    const otherStaff = teamStaff.filter(s => s.role !== 'RBT' && s.role !== 'BS' && s.role !== 'EA');
+    // STRICT ROLE FILTER: Only RBT and BS are eligible for auto-assign
+    const finalTeamStaff = teamStaff.filter(s => s.role === 'RBT' || s.role === 'BS');
 
-    this.verboseLog(`    RBT/BS: ${rbtBsStaff.length}`);
-    this.verboseLog(`    EA: ${eaStaff.length}`);
-    this.verboseLog(`    Other: ${otherStaff.length}`);
-
-    // STRICT PRIORITY: Use RBT/BS first, EAs only if necessary
-    let finalTeamStaff;
-    if (rbtBsStaff.length >= staffCount) {
-      finalTeamStaff = rbtBsStaff;
-      this.verboseLog(`  ✅ Using ONLY RBT/BS staff`);
-    } else if (rbtBsStaff.length + eaStaff.length >= staffCount) {
-      finalTeamStaff = [...rbtBsStaff, ...eaStaff];
-      this.verboseLog(`  ⚠️ Using RBT/BS + EA staff (${rbtBsStaff.length} RBT/BS + ${Math.min(eaStaff.length, staffCount - rbtBsStaff.length)} EA)`);
-    } else {
-      finalTeamStaff = teamStaff;
-      this.verboseLog(`  🚨 Using all available team staff (still short)`);
-    }
+    this.verboseLog(`    RBT: ${finalTeamStaff.filter(s => s.role === 'RBT').length}`);
+    this.verboseLog(`    BS (fallback): ${finalTeamStaff.filter(s => s.role === 'BS').length}`);
+    this.verboseLog(`    Excluded (non-RBT/BS): ${teamStaff.length - finalTeamStaff.length}`);
 
     if (finalTeamStaff.length < staffCount) {
       console.log(`  ❌ INSUFFICIENT for ${student.name}: Need ${staffCount}, have ${finalTeamStaff.length} team members`);
@@ -2632,7 +2620,7 @@ export class AutoAssignmentEngine {
             for (const unassignedStaffMember of unassignedStaff) {
               // Check if this unassigned staff is on the gap student's team
               const isOnGapTeam = gapStudent.teamIds.includes(unassignedStaffMember.id);
-              
+
               if (isOnGapTeam) {
                 // CRITICAL CHECK: Don't use staff who are in training for gap student
                 if (this.isStaffInTrainingForStudent(unassignedStaffMember, gapStudent)) {
@@ -2720,7 +2708,7 @@ export class AutoAssignmentEngine {
 
               // CRITICAL CHECK: Is the current staff on the gap student's team?
               const isCurrentStaffOnGapTeam = gapStudent.teamIds.includes(currentStaff.id);
-              
+
               // CRITICAL CHECK: Can the unassigned staff work with this other student?
               const canUnassignedWorkWithOther = otherStudent.teamIds.includes(unassignedStaffMember.id);
 
