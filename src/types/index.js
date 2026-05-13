@@ -220,8 +220,8 @@ export class Student {
       scheduledWednesday = true,
       scheduledThursday = true,
       scheduledFriday = true,
-      recurringAbsentAM = {}, // e.g. { Tuesday: true, Wednesday: true }
-      recurringAbsentPM = {}, // e.g. { Friday: true }
+      recurringAbsentAM = {},
+      recurringAbsentPM = {},
       // Custom schedule times (null = use program defaults)
       amStartTime = null,
       amEndTime = null,
@@ -267,8 +267,6 @@ export class Student {
     this.scheduledThursday = scheduledThursday;
     this.scheduledFriday = scheduledFriday;
 
-    // Recurring attendance pattern by weekday.
-    // This is applied when a specific day has no explicit attendance record.
     this.recurringAbsentAM = {
       Monday: !!recurringAbsentAM.Monday,
       Tuesday: !!recurringAbsentAM.Tuesday,
@@ -276,6 +274,7 @@ export class Student {
       Thursday: !!recurringAbsentAM.Thursday,
       Friday: !!recurringAbsentAM.Friday
     };
+
     this.recurringAbsentPM = {
       Monday: !!recurringAbsentPM.Monday,
       Tuesday: !!recurringAbsentPM.Tuesday,

@@ -12,33 +12,9 @@ export const StaffForm = ({
   onCancel, 
   peoplePickerService 
 }) => {
-  const normalizeRole = (roleValue) => {
-    if (typeof roleValue === 'string' && roleValue.trim()) {
-      return roleValue;
-    }
-
-    if (roleValue && typeof roleValue === 'object') {
-      if (roleValue.key && typeof roleValue.key === 'string') {
-        return roleValue.key;
-      }
-
-      if (roleValue.name && typeof roleValue.name === 'string') {
-        const matchedEntry = Object.entries(ROLES).find(([, config]) =>
-          config && typeof config === 'object' && config.name === roleValue.name
-        );
-
-        if (matchedEntry) {
-          return matchedEntry[0];
-        }
-      }
-    }
-
-    return 'RBT';
-  };
-
   const [formData, setFormData] = useState({
     name: staff?.name || '',
-    role: normalizeRole(staff?.role),
+    role: staff?.role || ROLES.RBT,
     email: staff?.email || '',
     phone: staff?.phone || '',
     isActive: staff?.isActive ?? true,
@@ -130,7 +106,6 @@ export const StaffForm = ({
     // Create staff object
     const staffData = {
       id: staff?.id || Date.now(),
-      listItemId: staff?.listItemId || null,
       ...formData
     };
 
@@ -191,8 +166,8 @@ export const StaffForm = ({
                 onChange={(e) => handleInputChange('role', e.target.value)}
                 className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
               >
-                {Object.entries(ROLES).map(([roleKey, roleConfig]) => (
-                  <option key={roleKey} value={roleKey}>{roleKey} - {roleConfig.name}</option>
+                {Object.values(ROLES).map(role => (
+                  <option key={role} value={role}>{role}</option>
                 ))}
               </select>
               {errors.role && (
@@ -339,20 +314,6 @@ export const StudentForm = ({
     scheduledWednesday: student?.scheduledWednesday !== false,
     scheduledThursday: student?.scheduledThursday !== false,
     scheduledFriday: student?.scheduledFriday !== false,
-    recurringAbsentAM: student?.recurringAbsentAM || {
-      Monday: false,
-      Tuesday: false,
-      Wednesday: false,
-      Thursday: false,
-      Friday: false
-    },
-    recurringAbsentPM: student?.recurringAbsentPM || {
-      Monday: false,
-      Tuesday: false,
-      Wednesday: false,
-      Thursday: false,
-      Friday: false
-    },
     teamTrainingStatus: student?.teamTrainingStatus || {}, // PRESERVE training status data
     pairedWith: student?.pairedWith || null // PRESERVE paired student data
   });
@@ -377,17 +338,6 @@ export const StudentForm = ({
     setFormData(prev => ({
       ...prev,
       team: teamList
-    }));
-  };
-
-  const handleRecurringAbsenceChange = (session, day, value) => {
-    const field = session === 'AM' ? 'recurringAbsentAM' : 'recurringAbsentPM';
-    setFormData(prev => ({
-      ...prev,
-      [field]: {
-        ...prev[field],
-        [day]: value
-      }
     }));
   };
 
@@ -556,49 +506,6 @@ export const StudentForm = ({
             <p className="mt-2 text-xs text-gray-500">
               Uncheck days when the client does not attend (for part-time schedules)
             </p>
-          </div>
-
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-3">
-              Recurring Absence Pattern
-            </label>
-            <div className="space-y-3">
-              <div className="text-xs text-gray-500">
-                Example: mark Tuesday + Wednesday in AM for recurring "Absent AM" on those days.
-              </div>
-              <div className="grid grid-cols-6 gap-2 items-center">
-                <div className="text-xs font-semibold text-gray-600">Session</div>
-                <div className="text-xs font-semibold text-gray-600 text-center">Mon</div>
-                <div className="text-xs font-semibold text-gray-600 text-center">Tue</div>
-                <div className="text-xs font-semibold text-gray-600 text-center">Wed</div>
-                <div className="text-xs font-semibold text-gray-600 text-center">Thu</div>
-                <div className="text-xs font-semibold text-gray-600 text-center">Fri</div>
-
-                <div className="text-xs font-medium text-gray-700">Absent AM</div>
-                {['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday'].map(day => (
-                  <label key={`am-${day}`} className="flex items-center justify-center p-2 border border-gray-200 rounded-md hover:bg-gray-50">
-                    <input
-                      type="checkbox"
-                      checked={!!formData.recurringAbsentAM[day]}
-                      onChange={(e) => handleRecurringAbsenceChange('AM', day, e.target.checked)}
-                      className="rounded border-gray-300 text-green-600 focus:ring-green-500"
-                    />
-                  </label>
-                ))}
-
-                <div className="text-xs font-medium text-gray-700">Absent PM</div>
-                {['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday'].map(day => (
-                  <label key={`pm-${day}`} className="flex items-center justify-center p-2 border border-gray-200 rounded-md hover:bg-gray-50">
-                    <input
-                      type="checkbox"
-                      checked={!!formData.recurringAbsentPM[day]}
-                      onChange={(e) => handleRecurringAbsenceChange('PM', day, e.target.checked)}
-                      className="rounded border-gray-300 text-green-600 focus:ring-green-500"
-                    />
-                  </label>
-                ))}
-              </div>
-            </div>
           </div>
 
           {/* Team Management */}

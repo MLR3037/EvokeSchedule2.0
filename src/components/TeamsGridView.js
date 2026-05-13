@@ -364,7 +364,7 @@ const TeamsGridView = ({ students, staff, selectedDate }) => {
               const directCareStaff = [];
               const supportStaff = [];
               
-              teamMembers.forEach(member => {
+              teamMembers.forEach((member, memberIndex) => {
                 const staffMember = staff.find(s => s.email && member.email && s.email.toLowerCase() === member.email.toLowerCase());
                 const role = staffMember ? staffMember.role : null;
                 
@@ -389,7 +389,7 @@ const TeamsGridView = ({ students, staff, selectedDate }) => {
                 
                 const badge = (
                   <span
-                    key={member.id}
+                    key={`${member.id || 'team'}-${member.email || member.name || member.title || 'member'}-${memberIndex}`}
                     className={`inline-flex items-center px-2 py-1 rounded text-xs font-semibold ${badgeColor} ${borderClass}`}
                   >
                     {member.name || member.title}

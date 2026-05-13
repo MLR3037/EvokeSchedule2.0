@@ -488,11 +488,11 @@ export const TeamManagement = ({
 
                       {item.teamMembers.length > 0 ? (
                         <div className="space-y-2">
-                          {item.teamMembers.map(staffMember => {
+                          {item.teamMembers.map((staffMember, index) => {
                             const trainingStatus = item.student.getStaffTrainingStatus ? item.student.getStaffTrainingStatus(staffMember.id) : TRAINING_STATUS.SOLO;
                             
                             return (
-                              <div key={staffMember.id} className="flex items-center justify-between bg-indigo-50 rounded-lg px-4 py-3 border border-indigo-200">
+                              <div key={`${staffMember.id || 'staff'}-${staffMember.email || staffMember.name || 'member'}-${index}`} className="flex items-center justify-between bg-indigo-50 rounded-lg px-4 py-3 border border-indigo-200">
                                 <div className="flex items-center gap-3 flex-1">
                                   <div className="w-8 h-8 bg-indigo-500 rounded-full flex items-center justify-center text-white font-medium text-sm">
                                     {typeof staffMember.name === 'string' ? staffMember.name.charAt(0) : (staffMember.name?.toString?.().charAt(0) || '?')}

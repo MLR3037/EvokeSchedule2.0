@@ -414,11 +414,11 @@ const ScheduleGridView = ({
         className={selectClassName}
       >
         <option value="">{placeholder}</option>
-        {availableTeamMembers.map(s => {
+        {availableTeamMembers.map((s, index) => {
           const trainingStatus = student.getStaffTrainingStatus ? student.getStaffTrainingStatus(s.id) : 'solo';
           const isTrainer = trainingStatus === 'trainer';
           return (
-            <option key={s.id} value={s.id}>
+            <option key={`${s.id}-${s.name || 'staff'}-${index}`} value={s.id}>
               {isTrainer ? '⭐ ' : ''}{formatNameShort(s.name)}
             </option>
           );
@@ -478,8 +478,8 @@ const ScheduleGridView = ({
         className={selectClassName}
       >
         <option value="">{placeholder}</option>
-        {traineesInTraining.map(s => (
-          <option key={s.id} value={s.id}>{formatNameShort(s.name)}</option>
+        {traineesInTraining.map((s, index) => (
+          <option key={`${s.id}-${s.name || 'trainee'}-${index}`} value={s.id}>{formatNameShort(s.name)}</option>
         ))}
       </select>
     );
@@ -1094,7 +1094,7 @@ const ScheduleGridView = ({
               const data = editableData[student.id] || {};
 
               return (
-                <tr key={student.id} className={`${
+                <tr key={student.id} className={`$
                   isFullyAbsent 
                     ? (isOutOfSession ? 'bg-yellow-50 hover:bg-yellow-100' : 'bg-red-50 hover:bg-red-100') 
                     : 'hover:bg-gray-50'

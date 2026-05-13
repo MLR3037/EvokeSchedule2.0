@@ -43,7 +43,6 @@ export class SharePointService {
     this.tokenExpiry = null;
     this.requestDigest = null;
     this.digestExpiry = null;
-    this.studentsAvailableFields = null;
     
     // Cache for team members data to avoid repeated API calls
     this.teamMembersCache = null;
@@ -244,15 +243,8 @@ export class SharePointService {
           return response;
         }
         
-        // Server error (5xx), check for SharePoint list-view threshold errors before retrying.
-        // Threshold errors (SPQueryThrottledException) will never succeed on retry — bail immediately.
+        // Server error (5xx), retry if attempts remaining
         if (attempt < retries) {
-          const cloned = response.clone();
-          const bodyText = await cloned.text().catch(() => '');
-          if (/SPQueryThrottledException|list view threshold|exceeds the list view threshold/i.test(bodyText)) {
-            console.warn(`⚠️ SharePoint list view threshold error on attempt ${attempt + 1}; skipping retries.`);
-            return response;
-          }
           const delay = this.retryDelay * Math.pow(2, attempt);
           console.log(`⏳ Retrying in ${delay}ms due to server error: ${response.status}`);
           await new Promise(resolve => setTimeout(resolve, delay));
@@ -358,61 +350,60 @@ export class SharePointService {
       
       const headers = await this.getHeaders();
       
-      // Support multiple Staff list schemas across environments.
-      const extendedSelect = 'Id,StaffPerson/Id,StaffPerson/Title,StaffPerson/EMail,Role,PrimaryProgram,SecondaryProgram,IsActive,AbsentAM,AbsentPM,AbsentFullDay,AbsentAMArrivalTime,AbsentPMDepartureTime,OutOfSessionAM,OutOfSessionPM,OutOfSessionFullDay';
-      const legacySelect = 'Id,StaffPerson/Id,StaffPerson/Title,StaffPerson/EMail,Role,PrimaryProgram,SecondaryProgram,IsActive,AbsentAM,AbsentPM,AbsentFullDay,OutOfSessionAM,OutOfSessionPM,OutOfSessionFullDay';
-      const flatLegacySelect = 'Id,Title,Email,Role,PrimaryProgram,SecondaryProgram,IsActive,AbsentAM,AbsentPM,AbsentFullDay,OutOfSessionAM,OutOfSessionPM,OutOfSessionFullDay';
-
-      const queryPlans = [
-        { label: 'extended-person-schema', select: extendedSelect, expand: 'StaffPerson' },
-        { label: 'legacy-person-schema', select: legacySelect, expand: 'StaffPerson' },
-        { label: 'flat-legacy-schema', select: flatLegacySelect, expand: null }
+      // Staff list uses Person/Group field, so we need to expand it.
+      // Determine optional time fields first so we don't trigger avoidable 400s.
+      const baseFields = [
+        'Id',
+        'StaffPerson/Id',
+        'StaffPerson/Title',
+        'StaffPerson/EMail',
+        'Role',
+        'PrimaryProgram',
+        'SecondaryProgram',
+        'IsActive',
+        'AbsentAM',
+        'AbsentPM',
+        'AbsentFullDay',
+        'OutOfSessionAM',
+        'OutOfSessionPM',
+        'OutOfSessionFullDay'
       ];
 
-      const makeUrl = (selectFields, expandField = null) => {
-        const expandClause = expandField ? `$expand=${expandField}&` : '';
-        return `${this.config.siteUrl}/_api/web/lists/getbytitle('${this.config.staffListName}')/items?` +
-          `$select=${selectFields}&` +
-          `${expandClause}` +
+      const optionalFields = ['AbsentAMArrivalTime', 'AbsentPMDepartureTime'];
+      let availableOptionalFields = [];
+
+      try {
+        const fieldsUrl = `${this.config.siteUrl}/_api/web/lists/getbytitle('${this.config.staffListName}')/fields?` +
+          `$select=InternalName,Hidden&` +
           `$top=5000`;
-      };
+        const fieldsResponse = await this.makeRequest(fieldsUrl, { headers });
 
-      let response = null;
-      let lastErrorText = '';
+        if (fieldsResponse.ok) {
+          const fieldsData = await fieldsResponse.json();
+          const fieldNames = new Set((fieldsData.d.results || [])
+            .filter(field => field.Hidden !== true)
+            .map(field => field.InternalName));
 
-      for (let i = 0; i < queryPlans.length; i++) {
-        const plan = queryPlans[i];
-        const isLastPlan = i === queryPlans.length - 1;
-        const url = makeUrl(plan.select, plan.expand);
-        console.log(`📋 Fetching staff from (${plan.label}):`, url);
-
-        response = await this.makeRequest(url, { headers });
-        if (response.ok) {
-          break;
+          availableOptionalFields = optionalFields.filter(fieldName => fieldNames.has(fieldName));
         }
-
-        lastErrorText = await response.text();
-
-        if (response.status === 401 || response.status === 403) {
-          console.error('SharePoint Staff API authorization error:', response.status, lastErrorText);
-          throw new Error(`Failed to load staff: ${response.status} - ${lastErrorText}`);
-        }
-
-        const isSchemaMismatch = /does not exist|cannot find resource|field or property|invalid/i.test(lastErrorText);
-        const canFallback = !isLastPlan && (isSchemaMismatch || response.status === 400 || response.status >= 500);
-
-        if (canFallback) {
-          console.warn(`⚠️ Staff query failed (${plan.label}) with ${response.status}; trying fallback schema...`);
-          continue;
-        }
-
-        console.error('SharePoint Staff API Error:', response.status, lastErrorText);
-        throw new Error(`Failed to load staff: ${response.status} - ${lastErrorText}`);
+      } catch (fieldError) {
+        console.warn('⚠️ Could not inspect Staff fields; proceeding with base schema.', fieldError.message);
       }
 
+      const selectFields = [...baseFields, ...availableOptionalFields];
+      const url = `${this.config.siteUrl}/_api/web/lists/getbytitle('${this.config.staffListName}')/items?` +
+        `$select=${selectFields.join(',')}&` +
+        `$expand=StaffPerson&` +
+        `$top=5000`;
+
+      console.log('📋 Fetching staff from:', url);
+
+      const response = await this.makeRequest(url, { headers });
+
       if (!response.ok) {
-        console.error('SharePoint Staff API Error:', response.status, lastErrorText);
-        throw new Error(`Failed to load staff: ${response.status} - ${lastErrorText}`);
+        const errorText = await response.text();
+        console.error('SharePoint Staff API Error:', response.status, errorText);
+        throw new Error(`Failed to load staff: ${response.status} - ${errorText}`);
       }
 
       const data = await response.json();
@@ -428,22 +419,15 @@ export class SharePointService {
       return staffItems.map(item => {
         // Extract staff person info from Person/Group field
         const staffPerson = item.StaffPerson;
-        const staffName = staffPerson?.Title || item.Title || 'Unknown Staff';
-        const staffEmail = staffPerson?.EMail || item.Email || '';
-        const normalizedUserId = staffPerson?.Id || item.StaffPersonId || null;
+        const staffName = staffPerson ? staffPerson.Title : 'Unknown Staff';
+        const staffEmail = staffPerson ? staffPerson.EMail : '';
         
         const staff = new Staff({
-          id: normalizedUserId || item.Id,
+          id: staffPerson ? staffPerson.Id : item.Id, // Use StaffPerson.Id for consistency with team data
           listItemId: item.Id, // List item ID for updating this record
           name: staffName,
           role: item.Role || 'RBT',
           email: staffEmail,
-          userId: normalizedUserId,
-          staffPerson: staffPerson ? {
-            id: staffPerson.Id,
-            title: staffPerson.Title || item.Title || 'Unknown Staff',
-            email: staffPerson.EMail || ''
-          } : null,
           primaryProgram: item.PrimaryProgram === true,
           secondaryProgram: item.SecondaryProgram === true,
           isActive: item.IsActive !== false,
@@ -531,74 +515,29 @@ export class SharePointService {
 
       const headers = await this.getHeaders();
       
-      // Support both common internal-name variations:
-      // - Client lookup as ClientId OR Client/Id
-      // - Person email as StaffMember/EMail OR StaffMember/Email
-      const queryPlans = [
-        {
-          label: 'clientId + EMail',
-          select: 'ClientId,StaffMember/Id,StaffMember/Title,StaffMember/EMail,TrainingStatus',
-          expand: 'StaffMember'
-        },
-        {
-          label: 'clientId + Email',
-          select: 'ClientId,StaffMember/Id,StaffMember/Title,StaffMember/Email,TrainingStatus',
-          expand: 'StaffMember'
-        },
-        {
-          label: 'client/Id + EMail',
-          select: 'Client/Id,StaffMember/Id,StaffMember/Title,StaffMember/EMail,TrainingStatus',
-          expand: 'Client,StaffMember'
-        },
-        {
-          label: 'client/Id + Email',
-          select: 'Client/Id,StaffMember/Id,StaffMember/Title,StaffMember/Email,TrainingStatus',
-          expand: 'Client,StaffMember'
-        }
-      ];
-
-      const makeUrl = (select, expand) => `${this.config.siteUrl}/_api/web/lists/getbytitle('ClientTeamMembers')/items?` +
-        `$select=${select}&` +
-        `$expand=${expand}&` +
+      // Optimize: Only load essential fields
+      // For Lookup fields: Use ClientId to get the ID value directly (no expand needed)
+      // For Person fields: Expand StaffMember to get full details
+      const url = `${this.config.siteUrl}/_api/web/lists/getbytitle('ClientTeamMembers')/items?` +
+        `$select=ClientId,StaffMember/Id,StaffMember/Title,StaffMember/EMail,TrainingStatus&` +
+        `$expand=StaffMember&` +
         `$top=5000`;
 
-      let response = null;
-      let lastErrorText = '';
+      console.log('📋 Fetching team members from:', url);
 
-      for (let i = 0; i < queryPlans.length; i++) {
-        const plan = queryPlans[i];
-        const isLastPlan = i === queryPlans.length - 1;
-        const url = makeUrl(plan.select, plan.expand);
+      const response = await this.makeRequest(url, { headers });
 
-        console.log(`📋 Fetching team members (${plan.label}) from:`, url);
-        response = await this.makeRequest(url, { headers });
-
-        if (response.ok) {
-          break;
-        }
-
-        lastErrorText = await response.text();
-
-        // If list doesn't exist, fall back to legacy Team field.
+      if (!response.ok) {
+        const errorText = await response.text();
+        console.error('❌ SharePoint ClientTeamMembers API Error:', response.status, errorText);
+        
+        // If the list doesn't exist, return null (not empty object) to signal fallback to legacy
         if (response.status === 404) {
           console.warn('⚠️ ClientTeamMembers list not found - using legacy Team field instead');
-          return null;
+          return null; // ✅ CHANGED: Return null instead of empty object
         }
-
-        const schemaMismatch = /does not exist|cannot find resource|field or property|invalid/i.test(lastErrorText);
-        const canFallback = !isLastPlan && (schemaMismatch || response.status === 400 || response.status >= 500);
-
-        if (canFallback) {
-          console.warn(`⚠️ ClientTeamMembers query failed (${plan.label}) with ${response.status}; trying fallback schema...`);
-          continue;
-        }
-
-        break;
-      }
-
-      if (!response || !response.ok) {
-        console.error('❌ SharePoint ClientTeamMembers API Error:', response?.status, lastErrorText);
-        throw new Error(`Failed to load client team members: ${response?.status || 'unknown'} - ${lastErrorText}`);
+        
+        throw new Error(`Failed to load client team members: ${response.status} - ${errorText}`);
       }
 
       const data = await response.json();
@@ -608,8 +547,9 @@ export class SharePointService {
       // Group by client ID for easier lookup
       const teamsByClient = {};
       teamMembers.forEach(item => {
-        const clientId = item.ClientId || item.Client?.Id;
-        if (clientId && item.StaffMember) {
+        // For Lookup fields, SharePoint returns the ID as ClientId (not Client.Id)
+        if (item.ClientId && item.StaffMember) {
+          const clientId = item.ClientId;
           if (!teamsByClient[clientId]) {
             teamsByClient[clientId] = [];
           }
@@ -621,7 +561,7 @@ export class SharePointService {
             id: item.StaffMember.Id,
             title: item.StaffMember.Title,
             name: item.StaffMember.Title,
-            email: item.StaffMember.EMail || item.StaffMember.Email || '',
+            email: item.StaffMember.EMail || '',
             trainingStatus: this.normalizeTrainingStatus(item.TrainingStatus)
           });
         }
@@ -638,7 +578,7 @@ export class SharePointService {
 
     } catch (error) {
       console.error('❌ Error loading client team members:', error);
-      return {}; // Return empty map so app doesn't treat this as "list missing"
+      return null; // Return null to signal fallback to legacy method
     }
   }
   
@@ -660,9 +600,57 @@ export class SharePointService {
       console.log('🔍 Loading students from SharePoint REST API...');
 
       const headers = await this.getHeaders();
-      const availableFields = await this.getStudentsAvailableFields();
 
-      const baseFields = [
+      const recurringFieldCandidates = [
+        'RecurringAbsentAMMonday',
+        'RecurringAbsentAMTuesday',
+        'RecurringAbsentAMWednesday',
+        'RecurringAbsentAMThursday',
+        'RecurringAbsentAMFriday',
+        'RecurringAbsentPMMonday',
+        'RecurringAbsentPMTuesday',
+        'RecurringAbsentPMWednesday',
+        'RecurringAbsentPMThursday',
+        'RecurringAbsentPMFriday',
+        'RecurringAbsentMondayAM',
+        'RecurringAbsentTuesdayAM',
+        'RecurringAbsentWednesdayAM',
+        'RecurringAbsentThursdayAM',
+        'RecurringAbsentFridayAM',
+        'RecurringAbsentMondayPM',
+        'RecurringAbsentTuesdayPM',
+        'RecurringAbsentWednesdayPM',
+        'RecurringAbsentThursdayPM',
+        'RecurringAbsentFridayPM',
+        'RecurringAbsentAM',
+        'RecurringAbsentPM'
+      ];
+
+      let availableRecurringFields = recurringFieldCandidates;
+      try {
+        const fieldsUrl = `${this.config.siteUrl}/_api/web/lists/getbytitle('${this.config.studentsListName}')/fields?` +
+          `$select=InternalName,Hidden&` +
+          `$top=5000`;
+        const fieldsResponse = await this.makeRequest(fieldsUrl, { headers });
+
+        if (fieldsResponse.ok) {
+          const fieldsData = await fieldsResponse.json();
+          const fieldNames = new Set((fieldsData.d.results || [])
+            .filter(field => field.Hidden !== true)
+            .map(field => field.InternalName));
+
+          availableRecurringFields = recurringFieldCandidates.filter(fieldName => fieldNames.has(fieldName));
+          console.log('📋 Student recurring fields available:', availableRecurringFields.length > 0 ? availableRecurringFields.join(', ') : 'none');
+        } else {
+          console.warn('⚠️ Could not inspect Clients list fields; loading students without recurring field schema detection.');
+          availableRecurringFields = [];
+        }
+      } catch (fieldError) {
+        console.warn('⚠️ Failed to inspect Clients list fields; loading students without recurring field schema detection.', fieldError.message);
+        availableRecurringFields = [];
+      }
+
+      const studentSelectFields = [
         'Id',
         'Title',
         'Program',
@@ -678,48 +666,16 @@ export class SharePointService {
         'ScheduledWednesday',
         'ScheduledThursday',
         'ScheduledFriday',
+        ...availableRecurringFields,
         'AMStartTime',
         'AMEndTime',
         'PMStartTime',
         'PMEndTime'
       ];
 
-      const recurringWeekdayFields = [
-        // Session-first schema
-        'RecurringAbsentAMMonday',
-        'RecurringAbsentAMTuesday',
-        'RecurringAbsentAMWednesday',
-        'RecurringAbsentAMThursday',
-        'RecurringAbsentAMFriday',
-        'RecurringAbsentPMMonday',
-        'RecurringAbsentPMTuesday',
-        'RecurringAbsentPMWednesday',
-        'RecurringAbsentPMThursday',
-        'RecurringAbsentPMFriday',
-        // Weekday-first schema
-        'RecurringAbsentMondayAM',
-        'RecurringAbsentTuesdayAM',
-        'RecurringAbsentWednesdayAM',
-        'RecurringAbsentThursdayAM',
-        'RecurringAbsentFridayAM',
-        'RecurringAbsentMondayPM',
-        'RecurringAbsentTuesdayPM',
-        'RecurringAbsentWednesdayPM',
-        'RecurringAbsentThursdayPM',
-        'RecurringAbsentFridayPM'
-      ];
-
-      const recurringAggregateFields = ['RecurringAbsentAM', 'RecurringAbsentPM'];
-      const includeField = (fieldName) => !availableFields || availableFields.has(fieldName);
-      const selectFields = [
-        ...baseFields.filter(includeField),
-        ...recurringWeekdayFields.filter(includeField),
-        ...recurringAggregateFields.filter(includeField)
-      ];
-      
       // Load students WITHOUT Team field (now using ClientTeamMembers list instead)
       const url = `${this.config.siteUrl}/_api/web/lists/getbytitle('${this.config.studentsListName}')/items?` +
-        `$select=${selectFields.join(',')}&` +
+        `$select=${studentSelectFields.join(',')}&` +
         `$top=5000`;
 
       console.log('📋 Fetching students from:', url);
@@ -758,21 +714,21 @@ export class SharePointService {
    */
   parseStudents(studentItems, teamsByClient = null) {
     console.log(`🔍 Parsing ${studentItems.length} students`);
-
-    const toBool = (value) => {
-      if (value === true || value === 1) return true;
-      if (typeof value === 'string') {
-        const normalized = value.trim().toLowerCase();
-        return normalized === 'true' || normalized === '1' || normalized === 'yes';
-      }
-      return false;
-    };
     
     // Check if ClientTeamMembers list exists (null = doesn't exist, object = exists)
     const useClientTeamMembersList = teamsByClient !== null;
     
     const students = studentItems.map(item => {
       console.log(`🔍 Processing student: ${item.Title}`);
+
+        const toBool = (value) => {
+          if (value === true || value === 1) return true;
+          if (typeof value === 'string') {
+            const normalized = value.trim().toLowerCase();
+            return normalized === 'true' || normalized === '1' || normalized === 'yes';
+          }
+          return false;
+        };
       
       let team = [];
       let teamIds = [];
@@ -829,9 +785,9 @@ export class SharePointService {
         team: team,
         teamIds: teamIds,
         pairedWith: normalizedPairedWith,
-        absentAM: toBool(item.AbsentAM),
-        absentPM: toBool(item.AbsentPM),
-        absentFullDay: toBool(item.AbsentFullDay),
+          absentAM: toBool(item.AbsentAM),
+          absentPM: toBool(item.AbsentPM),
+          absentFullDay: toBool(item.AbsentFullDay),
         teamTrainingStatus: teamTrainingStatus,
         // Days of week schedule (default to true if not set)
         scheduledMonday: item.ScheduledMonday !== false,
@@ -839,20 +795,20 @@ export class SharePointService {
         scheduledWednesday: item.ScheduledWednesday !== false,
         scheduledThursday: item.ScheduledThursday !== false,
         scheduledFriday: item.ScheduledFriday !== false,
-        recurringAbsentAM: {
-          Monday: toBool(item.RecurringAbsentAMMonday) || toBool(item.RecurringAbsentMondayAM) || toBool(item.RecurringAbsentAM),
-          Tuesday: toBool(item.RecurringAbsentAMTuesday) || toBool(item.RecurringAbsentTuesdayAM) || toBool(item.RecurringAbsentAM),
-          Wednesday: toBool(item.RecurringAbsentAMWednesday) || toBool(item.RecurringAbsentWednesdayAM) || toBool(item.RecurringAbsentAM),
-          Thursday: toBool(item.RecurringAbsentAMThursday) || toBool(item.RecurringAbsentThursdayAM) || toBool(item.RecurringAbsentAM),
-          Friday: toBool(item.RecurringAbsentAMFriday) || toBool(item.RecurringAbsentFridayAM) || toBool(item.RecurringAbsentAM)
-        },
-        recurringAbsentPM: {
-          Monday: toBool(item.RecurringAbsentPMMonday) || toBool(item.RecurringAbsentMondayPM) || toBool(item.RecurringAbsentPM),
-          Tuesday: toBool(item.RecurringAbsentPMTuesday) || toBool(item.RecurringAbsentTuesdayPM) || toBool(item.RecurringAbsentPM),
-          Wednesday: toBool(item.RecurringAbsentPMWednesday) || toBool(item.RecurringAbsentWednesdayPM) || toBool(item.RecurringAbsentPM),
-          Thursday: toBool(item.RecurringAbsentPMThursday) || toBool(item.RecurringAbsentThursdayPM) || toBool(item.RecurringAbsentPM),
-          Friday: toBool(item.RecurringAbsentPMFriday) || toBool(item.RecurringAbsentFridayPM) || toBool(item.RecurringAbsentPM)
-        },
+          recurringAbsentAM: {
+            Monday: toBool(item.RecurringAbsentAMMonday) || toBool(item.RecurringAbsentMondayAM) || toBool(item.RecurringAbsentAM),
+            Tuesday: toBool(item.RecurringAbsentAMTuesday) || toBool(item.RecurringAbsentTuesdayAM) || toBool(item.RecurringAbsentAM),
+            Wednesday: toBool(item.RecurringAbsentAMWednesday) || toBool(item.RecurringAbsentWednesdayAM) || toBool(item.RecurringAbsentAM),
+            Thursday: toBool(item.RecurringAbsentAMThursday) || toBool(item.RecurringAbsentThursdayAM) || toBool(item.RecurringAbsentAM),
+            Friday: toBool(item.RecurringAbsentAMFriday) || toBool(item.RecurringAbsentFridayAM) || toBool(item.RecurringAbsentAM)
+          },
+          recurringAbsentPM: {
+            Monday: toBool(item.RecurringAbsentPMMonday) || toBool(item.RecurringAbsentMondayPM) || toBool(item.RecurringAbsentPM),
+            Tuesday: toBool(item.RecurringAbsentPMTuesday) || toBool(item.RecurringAbsentTuesdayPM) || toBool(item.RecurringAbsentPM),
+            Wednesday: toBool(item.RecurringAbsentPMWednesday) || toBool(item.RecurringAbsentWednesdayPM) || toBool(item.RecurringAbsentPM),
+            Thursday: toBool(item.RecurringAbsentPMThursday) || toBool(item.RecurringAbsentThursdayPM) || toBool(item.RecurringAbsentPM),
+            Friday: toBool(item.RecurringAbsentPMFriday) || toBool(item.RecurringAbsentFridayPM) || toBool(item.RecurringAbsentPM)
+          },
         // Custom schedule times (null if not set = use program defaults)
         amStartTime: item.AMStartTime || null,
         amEndTime: item.AMEndTime || null,
@@ -896,73 +852,22 @@ export class SharePointService {
       }
 
       // Step 1: Find the schedule record in ScheduleHistory for this date.
-      // Prefer exact title match because SharePoint date-only fields can behave inconsistently with datetime filters.
-      const scheduleTitle = `Schedule_${dateString}`;
-      const titleScheduleUrl = `${this.siteUrl}/_api/web/lists/getbytitle('ScheduleHistory')/items?` +
-        `$filter=Title eq '${scheduleTitle}'&` +
-        `$orderby=Created desc&` +
-        `$top=1`;
-
-      console.log('🔍 Fetching schedule metadata by title from:', titleScheduleUrl);
-
-      let scheduleResponse = await this.retryFetch(titleScheduleUrl, {
-        method: 'GET',
-        headers: {
-          'Authorization': `Bearer ${this.accessToken}`,
-          'Accept': 'application/json;odata=verbose'
-        }
-      });
-
-      if (!scheduleResponse.ok) {
-        const errorText = await scheduleResponse.text();
-        console.warn('⚠️ Title-based schedule query failed; falling back to date-range query');
-        console.warn(`Response status: ${scheduleResponse.status}`);
-        console.warn('Response details:', errorText);
-
-        const { start: scheduleStart, end: scheduleEnd } = this.getDateRangeForDay(dateString);
-        const rangeScheduleUrl = `${this.siteUrl}/_api/web/lists/getbytitle('ScheduleHistory')/items?` +
+      // Try date range first, then fallback to title lookup for date-only schema variations.
+      const { start: scheduleStart, end: scheduleEnd } = this.getDateRangeForDay(dateString);
+      const scheduleLookupQueries = [
+        `${this.siteUrl}/_api/web/lists/getbytitle('ScheduleHistory')/items?` +
           `$filter=ScheduleDate ge datetime'${scheduleStart}' and ScheduleDate le datetime'${scheduleEnd}'&` +
-          `$orderby=Created desc&` +
-          `$top=1`;
+          `$orderby=Created desc&$top=1`,
+        `${this.siteUrl}/_api/web/lists/getbytitle('ScheduleHistory')/items?` +
+          `$filter=Title eq 'Schedule_${dateString}'&` +
+          `$orderby=Created desc&$top=1`
+      ];
 
-        console.log('🔍 Fetching schedule metadata by date range from:', rangeScheduleUrl);
+      let scheduleRecord = null;
+      for (const lookupUrl of scheduleLookupQueries) {
+        console.log('🔍 Fetching schedule metadata from:', lookupUrl);
 
-        scheduleResponse = await this.retryFetch(rangeScheduleUrl, {
-          method: 'GET',
-          headers: {
-            'Authorization': `Bearer ${this.accessToken}`,
-            'Accept': 'application/json;odata=verbose'
-          }
-        });
-      }
-
-      if (!scheduleResponse.ok) {
-        const errorText = await scheduleResponse.text();
-        console.warn(`⚠️ No schedule found for ${dateString}`);
-        console.warn(`Response status: ${scheduleResponse.status}`);
-        console.warn('Response details:', errorText);
-        return new Schedule({
-          date: dateString,
-          assignments: [],
-          traineeAssignments: [],
-          lockedAssignments: new Set(),
-          isFinalized: false
-        });
-      }
-
-      let scheduleData = await scheduleResponse.json();
-      console.log('📦 Raw schedule data from SharePoint:', scheduleData);
-
-      if (!scheduleData.d.results || scheduleData.d.results.length === 0) {
-        const { start: scheduleStart, end: scheduleEnd } = this.getDateRangeForDay(dateString);
-        const rangeScheduleUrl = `${this.siteUrl}/_api/web/lists/getbytitle('ScheduleHistory')/items?` +
-          `$filter=ScheduleDate ge datetime'${scheduleStart}' and ScheduleDate le datetime'${scheduleEnd}'&` +
-          `$orderby=Created desc&` +
-          `$top=1`;
-
-        console.log('ℹ️ No title match; trying date-range lookup:', rangeScheduleUrl);
-
-        const rangeResponse = await this.retryFetch(rangeScheduleUrl, {
+        const scheduleResponse = await this.retryFetch(lookupUrl, {
           method: 'GET',
           headers: {
             'Authorization': `Bearer ${this.accessToken}`,
@@ -970,13 +875,21 @@ export class SharePointService {
           }
         });
 
-        if (rangeResponse.ok) {
-          scheduleData = await rangeResponse.json();
-          console.log('📦 Date-range schedule data from SharePoint:', scheduleData);
+        if (!scheduleResponse.ok) {
+          const errorText = await scheduleResponse.text();
+          console.warn('⚠️ Schedule metadata lookup failed:', scheduleResponse.status, errorText);
+          continue;
+        }
+
+        const scheduleData = await scheduleResponse.json();
+        const result = scheduleData?.d?.results?.[0];
+        if (result) {
+          scheduleRecord = result;
+          break;
         }
       }
-      
-      if (!scheduleData.d.results || scheduleData.d.results.length === 0) {
+
+      if (!scheduleRecord) {
         console.log(`ℹ️ No schedule record found for ${dateString}`);
         return new Schedule({ 
           date: dateString, 
@@ -987,51 +900,32 @@ export class SharePointService {
         });
       }
 
-      const scheduleRecord = scheduleData.d.results[0];
       const scheduleId = scheduleRecord.ID;
       console.log('✅ Found schedule record:', scheduleId, scheduleRecord);
 
-      // Step 2: Load assignments with threshold-safe loader.
-      // This avoids list-view-threshold 500 noise from filtered SharePoint queries.
-      let assignmentItems = await this.loadAssignmentsByRecentWindow(
-        scheduleId,
-        dateString,
-        Number(scheduleRecord.TotalAssignments || 0)
-      );
+      // Step 2: Load all assignments for this schedule from DailyAssignments
+      const assignmentsUrl = `${this.siteUrl}/_api/web/lists/getbytitle('DailyAssignments')/items?` +
+        `$filter=ScheduleID eq ${scheduleId}`;
 
-      // Fallback: if linked rows are missing but schedule metadata says assignments exist,
-      // query DailyAssignments by date to recover legacy/unlinked records.
-      if (assignmentItems.length === 0 && Number(scheduleRecord.TotalAssignments || 0) > 0) {
-        console.warn('⚠️ No DailyAssignments found by ScheduleID; attempting date-based fallback lookup');
-        const { start: scheduleStart, end: scheduleEnd } = this.getDateRangeForDay(dateString);
-        const availableFields = await this.getDailyAssignmentsAvailableFields();
-        const selectClause = this.buildDailyAssignmentsSelect(availableFields || new Set());
-        const dateAssignmentsUrl = `${this.siteUrl}/_api/web/lists/getbytitle('DailyAssignments')/items?` +
-          `$filter=ScheduleDate ge datetime'${scheduleStart}' and ScheduleDate le datetime'${scheduleEnd}'&` +
-          `$select=${selectClause}`;
+      console.log('🔍 Fetching assignments from:', assignmentsUrl);
 
-        try {
-          const dateAssignmentsResponse = await this.retryFetch(dateAssignmentsUrl, {
-            method: 'GET',
-            headers: {
-              'Authorization': `Bearer ${this.accessToken}`,
-              'Accept': 'application/json;odata=verbose'
-            }
-          });
-
-          if (dateAssignmentsResponse.ok) {
-            const dateAssignmentsData = await dateAssignmentsResponse.json();
-            assignmentItems = dateAssignmentsData.d.results || [];
-            console.log(`✅ Date-based assignment fallback loaded ${assignmentItems.length} rows`);
-          }
-        } catch (error) {
-          const errorText = String(error?.message || error || '');
-          if (/SPQueryThrottledException|list view threshold|exceeds the list view threshold/i.test(errorText)) {
-            console.warn('⚠️ Date-based DailyAssignments fallback hit list threshold; continuing with empty assignment rows');
-          } else {
-            console.warn('⚠️ Date-based DailyAssignments fallback failed:', errorText);
-          }
+      const assignmentsResponse = await this.retryFetch(assignmentsUrl, {
+        method: 'GET',
+        headers: {
+          'Authorization': `Bearer ${this.accessToken}`,
+          'Accept': 'application/json;odata=verbose'
         }
+      });
+
+      let assignmentItems = [];
+      if (!assignmentsResponse.ok) {
+        const errorText = await assignmentsResponse.text();
+        console.warn(`⚠️ Failed to load DailyAssignments for schedule ${scheduleId}: ${assignmentsResponse.status}`);
+        console.warn('⚠️ Continuing with ScheduleHistory metadata and trainee assignments only.', errorText);
+      } else {
+        const assignmentsData = await assignmentsResponse.json();
+        console.log('📦 Raw assignments data from SharePoint:', assignmentsData);
+        assignmentItems = assignmentsData.d.results || [];
       }
 
       console.log(`✅ Loaded ${assignmentItems.length} assignments from SharePoint`);
@@ -1054,7 +948,7 @@ export class SharePointService {
           date: item.ScheduleDate,
           isLocked: item.IsLocked || false,
           assignedBy: 'loaded',
-          isTempStaff: false
+          isTempStaff: item.IsTempStaff || false // NEW: Load temp staff flag
         });
       });
 
@@ -1079,6 +973,8 @@ export class SharePointService {
         lastModified: scheduleRecord.LastModified,
         lastModifiedBy: scheduleRecord.LastModifiedBy
       });
+      schedule.hasSavedRecord = true;
+      schedule.scheduleId = scheduleId;
 
       console.log('✅ Schedule loaded successfully:', {
         date: dateString,
@@ -1106,8 +1002,6 @@ export class SharePointService {
   // Save methods remain the same...
   async saveStaff(staff, isUpdate = false) {
     try {
-      const availableFields = await this.getStaffAvailableFields();
-      const includeField = (fieldName) => !availableFields || availableFields.has(fieldName);
       const headers = await this.getHeaders(true);
       
       if (isUpdate) {
@@ -1123,28 +1017,22 @@ export class SharePointService {
         : `${this.config.siteUrl}/_api/web/lists/getbytitle('${this.config.staffListName}')/items`;
 
       const body = {
-        __metadata: { type: 'SP.Data.StaffListItem' }
+        __metadata: { type: 'SP.Data.StaffListItem' },
+        // Only update editable fields - StaffPerson is a Person/Group field that can't be modified this way
+        // Title and Email are read-only as they come from StaffPerson
+        Role: staff.role,
+        PrimaryProgram: staff.primaryProgram,
+        SecondaryProgram: staff.secondaryProgram,
+        IsActive: staff.isActive,
+        AbsentAM: staff.absentAM || false,
+        AbsentPM: staff.absentPM || false,
+        AbsentFullDay: staff.absentFullDay || false,
+        AbsentAMArrivalTime: staff.absentAMArrivalTime || '',
+        AbsentPMDepartureTime: staff.absentPMDepartureTime || '',
+        OutOfSessionAM: staff.outOfSessionAM || false,
+        OutOfSessionPM: staff.outOfSessionPM || false,
+        OutOfSessionFullDay: staff.outOfSessionFullDay || false
       };
-
-      if (includeField('Title')) body.Title = staff.name || '';
-      if (includeField('Role')) body.Role = staff.role;
-      if (includeField('PrimaryProgram')) body.PrimaryProgram = staff.primaryProgram;
-      if (includeField('SecondaryProgram')) body.SecondaryProgram = staff.secondaryProgram;
-      if (includeField('IsActive')) body.IsActive = staff.isActive;
-      if (includeField('AbsentAM')) body.AbsentAM = staff.absentAM || false;
-      if (includeField('AbsentPM')) body.AbsentPM = staff.absentPM || false;
-      if (includeField('AbsentFullDay')) body.AbsentFullDay = staff.absentFullDay || false;
-      if (includeField('AbsentAMArrivalTime')) body.AbsentAMArrivalTime = staff.absentAMArrivalTime || '';
-      if (includeField('AbsentPMDepartureTime')) body.AbsentPMDepartureTime = staff.absentPMDepartureTime || '';
-      if (includeField('OutOfSessionAM')) body.OutOfSessionAM = staff.outOfSessionAM || false;
-      if (includeField('OutOfSessionPM')) body.OutOfSessionPM = staff.outOfSessionPM || false;
-      if (includeField('OutOfSessionFullDay')) body.OutOfSessionFullDay = staff.outOfSessionFullDay || false;
-
-      // Person/Group fields are set using InternalName + "Id".
-      const parsedUserId = Number(staff.userId || staff.staffPerson?.id);
-      if (Number.isFinite(parsedUserId) && parsedUserId > 0 && includeField('StaffPersonId')) {
-        body.StaffPersonId = parsedUserId;
-      }
 
       let response = await this.makeRequest(url, {
         method: 'POST',
@@ -1210,33 +1098,16 @@ export class SharePointService {
         DateAdded: new Date().toISOString()
       };
 
-      let response;
-      const maxAttempts = 3;
-      for (let attempt = 1; attempt <= maxAttempts; attempt++) {
-        response = await this.makeRequest(url, {
-          method: 'POST',
-          headers,
-          body: JSON.stringify(body)
-        });
+      const response = await this.makeRequest(url, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify(body)
+      });
 
-        if (response.ok) {
-          break;
-        }
-
-        if (response.status !== 429 || attempt === maxAttempts) {
-          const errorText = await response.text();
-          console.error(`Failed to save team member: ${response.status}`, errorText);
-          throw new Error(`Failed to save team member: ${response.status}`);
-        }
-
-        const retryAfterHeader = response.headers.get('Retry-After');
-        const retryAfterSec = Number(retryAfterHeader);
-        const delayMs = Number.isFinite(retryAfterSec) && retryAfterSec > 0
-          ? retryAfterSec * 1000
-          : this.retryDelay * Math.pow(2, attempt);
-
-        console.warn(`⚠️ Team member save throttled (429), retrying in ${delayMs}ms (attempt ${attempt}/${maxAttempts})`);
-        await new Promise(resolve => setTimeout(resolve, delayMs));
+      if (!response.ok) {
+        const errorText = await response.text();
+        console.error(`Failed to save team member: ${response.status}`, errorText);
+        throw new Error(`Failed to save team member: ${response.status}`);
       }
 
       console.log(`✅ Team member saved: ${staffMember.name} → ${clientName} (${trainingStatus})`);
@@ -1287,7 +1158,7 @@ export class SharePointService {
       const headers = await this.getHeaders();
       const url = `${this.config.siteUrl}/_api/web/lists/getbytitle('ClientTeamMembers')/items?` +
         `$filter=ClientId eq ${student.id}&` +
-        `$select=Id,ClientId,StaffMember/Id,StaffMember/Title,TrainingStatus&` +
+        `$select=Id,ClientId,StaffMember/Id,StaffMember/Title&` +
         `$expand=StaffMember`;
 
       const response = await this.makeRequest(url, { headers });
@@ -1334,13 +1205,8 @@ export class SharePointService {
       for (const member of existingMembers) {
         if (newStaffIds.includes(member.StaffMember?.Id)) {
           const trainingStatus = student.getStaffTrainingStatus(member.StaffMember.Id);
-          const nextTrainingStatus = this.toSharePointTrainingStatus(trainingStatus);
-          const currentTrainingStatus = member.TrainingStatus || 'Solo';
-
-          if (currentTrainingStatus === nextTrainingStatus) {
-            continue;
-          }
-
+          // Only update if training status changed
+          // We'd need to load the current status to check, so for now just update all
           await this.saveClientTeamMember(
             student.id,
             student.name,
@@ -1364,12 +1230,9 @@ export class SharePointService {
     }
   }
 
-  async saveStudent(student, isUpdate = false, options = {}) {
+  async saveStudent(student, isUpdate = false) {
     try {
-      const { skipTeamSync = false } = options;
       const headers = await this.getHeaders(true);
-      const availableStudentFields = await this.getStudentsAvailableFields();
-      const includeStudentField = (fieldName) => !availableStudentFields || availableStudentFields.has(fieldName);
       
       if (isUpdate) {
         headers['X-HTTP-Method'] = 'MERGE';
@@ -1388,58 +1251,16 @@ export class SharePointService {
         RatioAM: student.ratioAM,
         RatioPM: student.ratioPM,
         IsActive: student.isActive,
+        AbsentAM: student.absentAM || false,
+        AbsentPM: student.absentPM || false,
+        AbsentFullDay: student.absentFullDay || false,
+        // Days of week schedule
+        ScheduledMonday: student.scheduledMonday !== false,
+        ScheduledTuesday: student.scheduledTuesday !== false,
+        ScheduledWednesday: student.scheduledWednesday !== false,
+        ScheduledThursday: student.scheduledThursday !== false,
+        ScheduledFriday: student.scheduledFriday !== false
       };
-
-      if (includeStudentField('AbsentAM')) body.AbsentAM = student.absentAM || false;
-      if (includeStudentField('AbsentPM')) body.AbsentPM = student.absentPM || false;
-      if (includeStudentField('AbsentFullDay')) body.AbsentFullDay = student.absentFullDay || false;
-
-      if (includeStudentField('ScheduledMonday')) body.ScheduledMonday = student.scheduledMonday !== false;
-      if (includeStudentField('ScheduledTuesday')) body.ScheduledTuesday = student.scheduledTuesday !== false;
-      if (includeStudentField('ScheduledWednesday')) body.ScheduledWednesday = student.scheduledWednesday !== false;
-      if (includeStudentField('ScheduledThursday')) body.ScheduledThursday = student.scheduledThursday !== false;
-      if (includeStudentField('ScheduledFriday')) body.ScheduledFriday = student.scheduledFriday !== false;
-
-      if (includeStudentField('RecurringAbsentAMMonday')) body.RecurringAbsentAMMonday = !!student.recurringAbsentAM?.Monday;
-      if (includeStudentField('RecurringAbsentAMTuesday')) body.RecurringAbsentAMTuesday = !!student.recurringAbsentAM?.Tuesday;
-      if (includeStudentField('RecurringAbsentAMWednesday')) body.RecurringAbsentAMWednesday = !!student.recurringAbsentAM?.Wednesday;
-      if (includeStudentField('RecurringAbsentAMThursday')) body.RecurringAbsentAMThursday = !!student.recurringAbsentAM?.Thursday;
-      if (includeStudentField('RecurringAbsentAMFriday')) body.RecurringAbsentAMFriday = !!student.recurringAbsentAM?.Friday;
-      if (includeStudentField('RecurringAbsentMondayAM')) body.RecurringAbsentMondayAM = !!student.recurringAbsentAM?.Monday;
-      if (includeStudentField('RecurringAbsentTuesdayAM')) body.RecurringAbsentTuesdayAM = !!student.recurringAbsentAM?.Tuesday;
-      if (includeStudentField('RecurringAbsentWednesdayAM')) body.RecurringAbsentWednesdayAM = !!student.recurringAbsentAM?.Wednesday;
-      if (includeStudentField('RecurringAbsentThursdayAM')) body.RecurringAbsentThursdayAM = !!student.recurringAbsentAM?.Thursday;
-      if (includeStudentField('RecurringAbsentFridayAM')) body.RecurringAbsentFridayAM = !!student.recurringAbsentAM?.Friday;
-      if (includeStudentField('RecurringAbsentPMMonday')) body.RecurringAbsentPMMonday = !!student.recurringAbsentPM?.Monday;
-      if (includeStudentField('RecurringAbsentPMTuesday')) body.RecurringAbsentPMTuesday = !!student.recurringAbsentPM?.Tuesday;
-      if (includeStudentField('RecurringAbsentPMWednesday')) body.RecurringAbsentPMWednesday = !!student.recurringAbsentPM?.Wednesday;
-      if (includeStudentField('RecurringAbsentPMThursday')) body.RecurringAbsentPMThursday = !!student.recurringAbsentPM?.Thursday;
-      if (includeStudentField('RecurringAbsentPMFriday')) body.RecurringAbsentPMFriday = !!student.recurringAbsentPM?.Friday;
-      if (includeStudentField('RecurringAbsentMondayPM')) body.RecurringAbsentMondayPM = !!student.recurringAbsentPM?.Monday;
-      if (includeStudentField('RecurringAbsentTuesdayPM')) body.RecurringAbsentTuesdayPM = !!student.recurringAbsentPM?.Tuesday;
-      if (includeStudentField('RecurringAbsentWednesdayPM')) body.RecurringAbsentWednesdayPM = !!student.recurringAbsentPM?.Wednesday;
-      if (includeStudentField('RecurringAbsentThursdayPM')) body.RecurringAbsentThursdayPM = !!student.recurringAbsentPM?.Thursday;
-      if (includeStudentField('RecurringAbsentFridayPM')) body.RecurringAbsentFridayPM = !!student.recurringAbsentPM?.Friday;
-
-      if (includeStudentField('RecurringAbsentAM')) {
-        body.RecurringAbsentAM = !!(
-          student.recurringAbsentAM?.Monday ||
-          student.recurringAbsentAM?.Tuesday ||
-          student.recurringAbsentAM?.Wednesday ||
-          student.recurringAbsentAM?.Thursday ||
-          student.recurringAbsentAM?.Friday
-        );
-      }
-
-      if (includeStudentField('RecurringAbsentPM')) {
-        body.RecurringAbsentPM = !!(
-          student.recurringAbsentPM?.Monday ||
-          student.recurringAbsentPM?.Tuesday ||
-          student.recurringAbsentPM?.Wednesday ||
-          student.recurringAbsentPM?.Thursday ||
-          student.recurringAbsentPM?.Friday
-        );
-      }
 
       const response = await this.makeRequest(url, {
         method: 'POST',
@@ -1465,14 +1286,11 @@ export class SharePointService {
         console.log(`✅ New student created with ID: ${studentToSync.id}`);
       }
       
-      // Sync team members to ClientTeamMembers list unless explicitly skipped
-      // (attendance-only bulk updates should not trigger team writes)
-      if (!skipTeamSync) {
-        this.syncStudentTeamToList(studentToSync).catch(err => {
-          console.warn('⚠️ Failed to sync team to ClientTeamMembers list:', err.message);
-          console.log('  → Falling back to legacy Team field storage');
-        });
-      }
+      // Sync team members to ClientTeamMembers list (for both new and updated students)
+      this.syncStudentTeamToList(studentToSync).catch(err => {
+        console.warn('⚠️ Failed to sync team to ClientTeamMembers list:', err.message);
+        console.log('  → Falling back to legacy Team field storage');
+      });
 
       return response;
     } catch (error) {
@@ -1760,6 +1578,17 @@ export class SharePointService {
         return false;
       }
 
+      const assignmentVerifyResult = await this.verifyAndRepairAssignmentsForSchedule(
+        scheduleId,
+        schedule.assignments,
+        schedule.date
+      );
+
+      if (!assignmentVerifyResult.success) {
+        console.error('❌ Assignment persistence verification failed; schedule save aborted to avoid metadata-only save.');
+        return false;
+      }
+
       console.log(
         `✅ Assignment sync complete (created: ${assignmentSyncResult.created}, ` +
         `updated: ${assignmentSyncResult.updated}, deleted: ${assignmentSyncResult.deleted})`
@@ -1802,7 +1631,6 @@ export class SharePointService {
     try {
       const normalizedSession = this.normalizeAssignmentSession(assignment.session);
       const normalizedProgram = this.normalizeAssignmentProgram(assignment.program);
-      const availableFields = await this.getDailyAssignmentsAvailableFields();
 
       const assignmentData = {
         __metadata: { type: this.dailyAssignmentsEntityType || 'SP.Data.DailyAssignmentsListItem' },
@@ -1814,15 +1642,11 @@ export class SharePointService {
         StudentID: assignment.studentId,
         StudentName: assignment.studentName || '',
         Session: normalizedSession,
-        Program: normalizedProgram
+        Program: normalizedProgram,
+        AssignmentType: assignment.type || 'Standard',
+        IsLocked: assignment.isLocked || false,
+        IsTempStaff: assignment.isTempStaff || false // NEW: Save temp staff flag
       };
-
-      if (availableFields.has('AssignmentType')) {
-        assignmentData.AssignmentType = assignment.type || 'Standard';
-      }
-      if (availableFields.has('IsLocked')) {
-        assignmentData.IsLocked = assignment.isLocked || false;
-      }
 
       console.log('💾 Saving assignment to DailyAssignments list:', assignmentData);
 
@@ -1859,7 +1683,6 @@ export class SharePointService {
     try {
       const normalizedSession = this.normalizeAssignmentSession(assignment.session);
       const normalizedProgram = this.normalizeAssignmentProgram(assignment.program);
-      const availableFields = await this.getDailyAssignmentsAvailableFields();
 
       const assignmentData = {
         __metadata: { type: this.dailyAssignmentsEntityType || 'SP.Data.DailyAssignmentsListItem' },
@@ -1871,15 +1694,11 @@ export class SharePointService {
         StudentID: assignment.studentId,
         StudentName: assignment.studentName || '',
         Session: normalizedSession,
-        Program: normalizedProgram
+        Program: normalizedProgram,
+        AssignmentType: assignment.type || 'Standard',
+        IsLocked: assignment.isLocked || false,
+        IsTempStaff: assignment.isTempStaff || false
       };
-
-      if (availableFields.has('AssignmentType')) {
-        assignmentData.AssignmentType = assignment.type || 'Standard';
-      }
-      if (availableFields.has('IsLocked')) {
-        assignmentData.IsLocked = assignment.isLocked || false;
-      }
 
       const response = await fetch(
         `${this.siteUrl}/_api/web/lists/getbytitle('DailyAssignments')/items(${itemId})`,
@@ -1963,215 +1782,16 @@ export class SharePointService {
     return String(program || '').trim();
   }
 
-  async getStaffAvailableFields() {
-    if (this.staffAvailableFields) {
-      return this.staffAvailableFields;
-    }
-
-    try {
-      const fieldsUrl = `${this.config.siteUrl}/_api/web/lists/getbytitle('${this.config.staffListName}')/fields?$select=InternalName`;
-      const response = await this.retryFetch(fieldsUrl, {
-        method: 'GET',
-        headers: {
-          'Authorization': `Bearer ${this.accessToken}`,
-          'Accept': 'application/json;odata=verbose'
-        }
-      });
-
-      if (!response.ok) {
-        return null;
-      }
-
-      const data = await response.json();
-      const names = (data.d.results || []).map(field => field.InternalName);
-      this.staffAvailableFields = new Set(names);
-      return this.staffAvailableFields;
-    } catch (error) {
-      console.warn('⚠️ Failed to detect Staff fields; falling back to default payload', error);
-      return null;
-    }
-  }
-
-  async getStudentsAvailableFields() {
-    if (this.studentsAvailableFields) {
-      return this.studentsAvailableFields;
-    }
-
-    try {
-      const fieldsUrl = `${this.config.siteUrl}/_api/web/lists/getbytitle('${this.config.studentsListName}')/fields?$select=InternalName`;
-      const response = await this.retryFetch(fieldsUrl, {
-        method: 'GET',
-        headers: {
-          'Authorization': `Bearer ${this.accessToken}`,
-          'Accept': 'application/json;odata=verbose'
-        }
-      });
-
-      if (!response.ok) {
-        return null;
-      }
-
-      const data = await response.json();
-      const names = (data.d.results || []).map(field => field.InternalName);
-      this.studentsAvailableFields = new Set(names);
-      return this.studentsAvailableFields;
-    } catch (error) {
-      console.warn('⚠️ Failed to detect Clients fields; falling back to default payload', error);
-      return null;
-    }
-  }
-
-  async loadAssignmentsByRecentWindow(scheduleId = null, dateString = null, expectedCount = 0) {
-    const availableFields = await this.getDailyAssignmentsAvailableFields();
-    const selectClause = this.buildDailyAssignmentsSelect(availableFields || new Set());
-    const baseUrl = `${this.siteUrl}/_api/web/lists/getbytitle('DailyAssignments')/items?` +
-      `$select=${selectClause}&` +
-      `$orderby=ID desc&$top=500`;
-
-    const headers = {
-      'Authorization': `Bearer ${this.accessToken}`,
-      'Accept': 'application/json;odata=verbose'
-    };
-
-    let nextUrl = baseUrl;
-    let page = 0;
-    const maxPages = 6;
-    let scheduleMatches = [];
-    let dateMatches = [];
-
-    while (nextUrl && page < maxPages) {
-      page += 1;
-      console.log(`🔎 Threshold fallback: loading DailyAssignments page ${page}`);
-
-      let response;
-      try {
-        response = await this.retryFetch(nextUrl, {
-          method: 'GET',
-          headers
-        });
-      } catch (error) {
-        const errorText = String(error?.message || error || '');
-        if (/SPQueryThrottledException|list view threshold|exceeds the list view threshold/i.test(errorText)) {
-          console.warn(`⚠️ Threshold fallback page ${page} hit list threshold; stopping page scan.`);
-        } else {
-          console.warn(`⚠️ Threshold fallback page ${page} request failed:`, errorText);
-        }
-        break;
-      }
-
-      if (!response.ok) {
-        const errorText = await response.text();
-        console.warn(`⚠️ Threshold fallback page ${page} failed:`, response.status, errorText);
-        break;
-      }
-
-      const data = await response.json();
-      const rows = data.d.results || [];
-
-      const pageScheduleMatches = rows.filter(row =>
-        scheduleId !== null && scheduleId !== undefined && Number(row.ScheduleID) === Number(scheduleId)
-      );
-      if (pageScheduleMatches.length > 0) {
-        scheduleMatches = scheduleMatches.concat(pageScheduleMatches);
-      }
-
-      const pageDateMatches = rows.filter(row => {
-        if (!row.ScheduleDate) return false;
-        const d = new Date(row.ScheduleDate);
-        if (Number.isNaN(d.getTime())) return false;
-        const rowDate = `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, '0')}-${String(d.getUTCDate()).padStart(2, '0')}`;
-        return dateString && rowDate === dateString;
-      });
-
-      if (pageDateMatches.length > 0) {
-        dateMatches = dateMatches.concat(pageDateMatches);
-      }
-
-      if (expectedCount > 0 && scheduleMatches.length >= expectedCount) {
-        break;
-      }
-
-      nextUrl = data.d.__next || null;
-    }
-
-    if (scheduleId !== null && scheduleId !== undefined && scheduleMatches.length > 0) {
-      console.log(`✅ Threshold fallback matched ${scheduleMatches.length} assignments by ScheduleID`);
-      return scheduleMatches;
-    }
-
-    if (dateString && dateMatches.length > 0) {
-      console.warn(`⚠️ Threshold fallback using ${dateMatches.length} same-day assignments (ScheduleID match not found)`);
-      return dateMatches;
-    }
-
-    return [];
-  }
-
-  async getDailyAssignmentsAvailableFields() {
-    if (this.dailyAssignmentsAvailableFields) {
-      return this.dailyAssignmentsAvailableFields;
-    }
-
-    try {
-      const fieldsUrl = `${this.siteUrl}/_api/web/lists/getbytitle('DailyAssignments')/fields?$select=InternalName`;
-      const response = await this.retryFetch(fieldsUrl, {
-        method: 'GET',
-        headers: {
-          'Authorization': `Bearer ${this.accessToken}`,
-          'Accept': 'application/json;odata=verbose'
-        }
-      });
-
-      if (!response.ok) {
-        console.warn('⚠️ Could not load DailyAssignments fields; using core payload only');
-        this.dailyAssignmentsAvailableFields = new Set();
-        return this.dailyAssignmentsAvailableFields;
-      }
-
-      const data = await response.json();
-      const names = (data.d.results || []).map(field => field.InternalName);
-      this.dailyAssignmentsAvailableFields = new Set(names);
-      return this.dailyAssignmentsAvailableFields;
-    } catch (error) {
-      console.warn('⚠️ Failed to detect DailyAssignments fields; using core payload only', error);
-      this.dailyAssignmentsAvailableFields = new Set();
-      return this.dailyAssignmentsAvailableFields;
-    }
-  }
-
   getDateRangeForDay(date) {
     const dateStr = typeof date === 'string'
       ? date
       : `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
 
     return {
-      start: `${dateStr}T00:00:00Z`,
-      end: `${dateStr}T23:59:59Z`,
+      start: `${dateStr}T00:00:00`,
+      end: `${dateStr}T23:59:59`,
       dateStr
     };
-  }
-
-  buildDailyAssignmentsSelect(availableFields = new Set()) {
-    const selectFields = [
-      'ID',
-      'ScheduleID',
-      'ScheduleDate',
-      'StaffID',
-      'StaffName',
-      'StudentID',
-      'StudentName',
-      'Session',
-      'Program'
-    ];
-
-    if (availableFields.has('AssignmentType')) {
-      selectFields.push('AssignmentType');
-    }
-    if (availableFields.has('IsLocked')) {
-      selectFields.push('IsLocked');
-    }
-
-    return selectFields.join(',');
   }
 
   buildAssignmentSyncKey(data) {
@@ -2184,8 +1804,26 @@ export class SharePointService {
   }
 
   async loadAssignmentsForDate(scheduleDate) {
-    const { dateStr } = this.getDateRangeForDay(scheduleDate);
-    return this.loadAssignmentsByRecentWindow(null, dateStr);
+    const { start, end } = this.getDateRangeForDay(scheduleDate);
+
+    const assignmentsUrl = `${this.siteUrl}/_api/web/lists/getbytitle('DailyAssignments')/items?` +
+      `$filter=ScheduleDate ge datetime'${start}' and ScheduleDate le datetime'${end}'&` +
+      `$select=ID,ScheduleID,ScheduleDate,StaffID,StaffName,StudentID,StudentName,Session,Program,AssignmentType,IsLocked,IsTempStaff`;
+
+    const response = await this.retryFetch(assignmentsUrl, {
+      method: 'GET',
+      headers: {
+        'Authorization': `Bearer ${this.accessToken}`,
+        'Accept': 'application/json;odata=verbose'
+      }
+    });
+
+    if (!response.ok) {
+      throw new Error(`Failed to load assignments for date ${scheduleDate}: ${response.status}`);
+    }
+
+    const data = await response.json();
+    return data.d.results || [];
   }
 
   async cleanupAssignmentsForDate(scheduleDate, keepScheduleId) {
@@ -2244,7 +1882,24 @@ export class SharePointService {
   }
 
   async loadAssignmentsForSchedule(scheduleId) {
-    return this.loadAssignmentsByRecentWindow(scheduleId, null);
+    const assignmentsUrl = `${this.siteUrl}/_api/web/lists/getbytitle('DailyAssignments')/items?` +
+      `$filter=ScheduleID eq ${scheduleId}&` +
+      `$select=ID,ScheduleID,ScheduleDate,StaffID,StaffName,StudentID,StudentName,Session,Program,AssignmentType,IsLocked,IsTempStaff`;
+
+    const response = await this.retryFetch(assignmentsUrl, {
+      method: 'GET',
+      headers: {
+        'Authorization': `Bearer ${this.accessToken}`,
+        'Accept': 'application/json;odata=verbose'
+      }
+    });
+
+    if (!response.ok) {
+      throw new Error(`Failed to load existing assignments for schedule ${scheduleId}: ${response.status}`);
+    }
+
+    const data = await response.json();
+    return data.d.results || [];
   }
 
   async syncAssignmentsForSchedule(scheduleId, assignments, scheduleDate) {
@@ -2288,16 +1943,12 @@ export class SharePointService {
           return;
         }
 
-        const hasStaffName = Object.prototype.hasOwnProperty.call(existing, 'StaffName');
-        const hasStudentName = Object.prototype.hasOwnProperty.call(existing, 'StudentName');
-        const hasAssignmentType = Object.prototype.hasOwnProperty.call(existing, 'AssignmentType');
-        const hasIsLocked = Object.prototype.hasOwnProperty.call(existing, 'IsLocked');
-
         const needsUpdate =
-          (hasStaffName && (existing.StaffName || '') !== (assignment.staffName || '')) ||
-          (hasStudentName && (existing.StudentName || '') !== (assignment.studentName || '')) ||
-          (hasAssignmentType && (existing.AssignmentType || 'Standard') !== (assignment.type || 'Standard')) ||
-          (hasIsLocked && !!existing.IsLocked !== !!assignment.isLocked);
+          (existing.StaffName || '') !== (assignment.staffName || '') ||
+          (existing.StudentName || '') !== (assignment.studentName || '') ||
+          (existing.AssignmentType || 'Standard') !== (assignment.type || 'Standard') ||
+          !!existing.IsLocked !== !!assignment.isLocked ||
+          !!existing.IsTempStaff !== !!assignment.isTempStaff;
 
         if (needsUpdate) {
           toUpdate.push({ itemId: existing.ID, assignment });
@@ -2355,15 +2006,98 @@ export class SharePointService {
     }
   }
 
+  async verifyAndRepairAssignmentsForSchedule(scheduleId, assignments, scheduleDate) {
+    try {
+      const desiredAssignments = Array.isArray(assignments) ? assignments : [];
+      if (desiredAssignments.length === 0) {
+        return { success: true, repaired: 0, existing: 0 };
+      }
+
+      const existingItems = await this.loadAssignmentsForSchedule(scheduleId);
+      if (existingItems.length > 0) {
+        return { success: true, repaired: 0, existing: existingItems.length };
+      }
+
+      console.warn(
+        `⚠️ No DailyAssignments rows found after sync for schedule ${scheduleId}. ` +
+        `Attempting repair create for ${desiredAssignments.length} assignments.`
+      );
+
+      const dedupedAssignments = new Map();
+      desiredAssignments.forEach(assignment => {
+        const key = this.buildAssignmentSyncKey(assignment);
+        if (!dedupedAssignments.has(key)) {
+          dedupedAssignments.set(key, assignment);
+        }
+      });
+
+      const createResults = await Promise.all(
+        Array.from(dedupedAssignments.values()).map(assignment =>
+          this.saveAssignmentToHistory(assignment, scheduleId, scheduleDate)
+        )
+      );
+
+      const failedCreates = createResults.filter(result => !result.success);
+      const repairedCount = createResults.filter(result => result.success).length;
+
+      const verifiedItems = await this.loadAssignmentsForSchedule(scheduleId);
+      const verifiedCount = verifiedItems.length;
+
+      if (verifiedCount === 0 || failedCreates.length > 0) {
+        console.error('❌ Assignment persistence repair failed:', {
+          scheduleId,
+          desiredCount: desiredAssignments.length,
+          repairedCount,
+          verifiedCount,
+          failedCreates
+        });
+        return {
+          success: false,
+          repaired: repairedCount,
+          existing: verifiedCount,
+          failedCreates
+        };
+      }
+
+      console.log(`✅ Assignment persistence repaired for schedule ${scheduleId}: ${verifiedCount} rows present`);
+      return { success: true, repaired: repairedCount, existing: verifiedCount };
+    } catch (error) {
+      console.error('❌ Error verifying/repairing assignment persistence:', error);
+      return {
+        success: false,
+        repaired: 0,
+        existing: 0,
+        failedCreates: [{ error: error.message }]
+      };
+    }
+  }
+
   /**
    * Delete all assignments for a specific schedule ID
    */
   async deleteAssignmentsForSchedule(scheduleId) {
     try {
       console.log('🔍 Finding assignments to delete for schedule ID:', scheduleId);
+      
+      const assignmentsUrl = `${this.siteUrl}/_api/web/lists/getbytitle('DailyAssignments')/items?` +
+        `$filter=ScheduleID eq ${scheduleId}&` +
+        `$select=ID,Title,StaffName,StudentName`;
 
-      // Use threshold-safe lookup to avoid list-view-threshold errors on large DailyAssignments lists.
-      const assignments = await this.loadAssignmentsByRecentWindow(scheduleId, null);
+      const response = await this.retryFetch(assignmentsUrl, {
+        method: 'GET',
+        headers: {
+          'Authorization': `Bearer ${this.accessToken}`,
+          'Accept': 'application/json;odata=verbose'
+        }
+      });
+
+      if (!response.ok) {
+        console.warn('Could not find assignments to delete');
+        return;
+      }
+
+      const data = await response.json();
+      const assignments = data.d.results || [];
       
       console.log(`🗑️ Found ${assignments.length} assignments to delete for schedule ${scheduleId}`);
       if (assignments.length > 0) {
@@ -2443,14 +2177,15 @@ export class SharePointService {
       const deleteResult = await this.deleteAttendanceForDate(dateStr);
       
       if (!deleteResult.success) {
-        console.error(`❌ Failed to delete old attendance records for ${dateStr}`);
-        throw new Error(`Cannot save attendance: Failed to delete existing records for ${dateStr}. ${deleteResult.error || 'Unknown error'}`);
+        console.warn(`⚠️ Failed to delete old attendance records for ${dateStr}; skipping attendance sync for this save.`);
+        return false;
       }
       
       if (deleteResult.failed > 0) {
-        throw new Error(
-          `Cannot save attendance: ${deleteResult.failed} existing DailyAttendance record(s) failed to delete for ${dateStr}`
+        console.warn(
+          `⚠️ ${deleteResult.failed} existing DailyAttendance record(s) failed to delete for ${dateStr}; skipping attendance sync for this save.`
         );
+        return false;
       }
       
       console.log(`✅ Deletion complete (${deleteResult.deleted} records removed), now saving new attendance records...`);
@@ -2596,7 +2331,7 @@ export class SharePointService {
       console.log(`✅ Saved ${successCount}/${attendanceRecords.length} attendance records`);
       return successCount === attendanceRecords.length;
     } catch (error) {
-      console.error('Error saving attendance:', error);
+      console.warn('⚠️ Attendance sync failed (schedule save already completed):', error.message);
       return false;
     }
   }
@@ -2652,7 +2387,7 @@ export class SharePointService {
 
       if (!response.ok) {
         console.warn('Could not find attendance records to delete');
-        return { success: true, deleted: 0, failed: 0 };
+        return;
       }
 
       const data = await response.json();
@@ -2665,14 +2400,14 @@ export class SharePointService {
 
       if (records.length === 0) {
         console.log('✅ No existing attendance records to delete');
-        return { success: true, deleted: 0, failed: 0 };
+        return;
       }
 
       // Get digest once for all deletes
       const digest = await this.getRequestDigest();
 
-      // Delete each record with better error handling
-      const deletePromises = records.map(async record => {
+      const results = [];
+      for (const record of records) {
         try {
           const deleteResponse = await fetch(
             `${this.siteUrl}/_api/web/lists/getbytitle('DailyAttendance')/items(${record.ID})`,
@@ -2686,30 +2421,36 @@ export class SharePointService {
               }
             }
           );
-          
+
           if (!deleteResponse.ok) {
             const errorText = await deleteResponse.text();
-            console.error(`❌ Failed to delete attendance record ${record.ID}:`, errorText);
-            return { success: false, id: record.ID, error: errorText };
+            results.push({ success: false, id: record.ID, error: errorText });
+            // Avoid flooding console/network when deletes are systematically blocked.
+            break;
           }
-          
-          console.log(`✅ Deleted attendance record ${record.ID}`);
-          return { success: true, id: record.ID };
-        } catch (error) {
-          console.error(`❌ Error deleting attendance record ${record.ID}:`, error);
-          return { success: false, id: record.ID, error: error.message };
-        }
-      });
 
-      const results = await Promise.all(deletePromises);
+          results.push({ success: true, id: record.ID });
+        } catch (error) {
+          results.push({ success: false, id: record.ID, error: error.message });
+          // Network/CORS error will likely repeat for every record; stop immediately.
+          break;
+        }
+      }
+
+      if (results.length < records.length) {
+        for (let index = results.length; index < records.length; index++) {
+          results.push({ success: false, id: records[index].ID, error: 'Skipped after first delete failure' });
+        }
+      }
+
       const successCount = results.filter(r => r.success).length;
       const failCount = results.filter(r => !r.success).length;
       
       console.log(`✅ Deleted ${successCount}/${records.length} attendance records for ${dateStr}`);
       
       if (failCount > 0) {
-        console.warn(`⚠️ ${failCount} attendance records failed to delete:`, 
-          results.filter(r => !r.success).map(r => `ID ${r.id}: ${r.error}`));
+        const firstFailure = results.find(r => !r.success);
+        console.warn(`⚠️ ${failCount} attendance records failed to delete (first failure: ID ${firstFailure?.id}: ${firstFailure?.error})`);
       }
       
       return { success: failCount === 0, deleted: successCount, failed: failCount };
@@ -2717,55 +2458,6 @@ export class SharePointService {
       console.error(`❌ Error in deleteAttendanceForDate for ${dateStr}:`, error);
       return { success: false, deleted: 0, failed: 0, error: error.message };
     }
-  }
-
-  async loadAttendanceByRecentWindow(dateString) {
-    const baseUrl = `${this.siteUrl}/_api/web/lists/getbytitle('DailyAttendance')/items?` +
-      `$select=PersonType,PersonID,PersonName,Status,AbsentAM,AbsentPM,AbsentFullDay,OutOfSessionAM,OutOfSessionPM,OutOfSessionFullDay,AttendanceDate&` +
-      `$orderby=ID desc&$top=500`;
-
-    const headers = {
-      'Authorization': `Bearer ${this.accessToken}`,
-      'Accept': 'application/json;odata=verbose'
-    };
-
-    let nextUrl = baseUrl;
-    let page = 0;
-    const maxPages = 4;
-    let matches = [];
-
-    while (nextUrl && page < maxPages) {
-      page += 1;
-      const response = await this.makeRequest(nextUrl, {
-        method: 'GET',
-        headers
-      });
-
-      if (!response.ok) {
-        const errorText = await response.text();
-        console.warn(`⚠️ Attendance fallback page ${page} failed:`, response.status, errorText);
-        break;
-      }
-
-      const data = await response.json();
-      const rows = data.d.results || [];
-
-      const pageMatches = rows.filter(row => {
-        if (!row.AttendanceDate) return false;
-        const d = new Date(row.AttendanceDate);
-        if (Number.isNaN(d.getTime())) return false;
-        const rowDate = `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, '0')}-${String(d.getUTCDate()).padStart(2, '0')}`;
-        return rowDate === dateString;
-      });
-
-      if (pageMatches.length > 0) {
-        matches = matches.concat(pageMatches);
-      }
-
-      nextUrl = data.d.__next || null;
-    }
-
-    return matches;
   }
 
   /**
@@ -2783,12 +2475,11 @@ export class SharePointService {
       const dateStr = typeof date === 'string' ? date : `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
       console.log(`📥 Loading attendance for ${dateStr}...`);
 
-      const { start, end } = this.getDateRangeForDay(dateStr);
       const attendanceUrl = `${this.siteUrl}/_api/web/lists/getbytitle('DailyAttendance')/items?` +
-        `$filter=AttendanceDate ge datetime'${start}' and AttendanceDate le datetime'${end}'&` +
+        `$filter=AttendanceDate eq '${dateStr}'&` +
         `$select=PersonType,PersonID,PersonName,Status,AbsentAM,AbsentPM,AbsentFullDay,OutOfSessionAM,OutOfSessionPM,OutOfSessionFullDay`;
 
-      const response = await this.makeRequest(attendanceUrl, {
+      const response = await this.retryFetch(attendanceUrl, {
         method: 'GET',
         headers: {
           'Authorization': `Bearer ${this.accessToken}`,
@@ -2796,33 +2487,13 @@ export class SharePointService {
         }
       });
 
-      let records = [];
-
-      if (response.ok) {
-        const data = await response.json();
-        records = data.d.results || [];
-      } else {
-        const errorText = await response.text();
-        const isThresholdError = /SPQueryThrottledException|exceeds the list view threshold/i.test(errorText);
-
-        if (!isThresholdError) {
-          console.warn(`No attendance records found for ${dateStr}`);
-          return null;
-        }
-
-        console.warn('⚠️ Attendance date query hit list threshold; using recent-items fallback');
-        records = await this.loadAttendanceByRecentWindow(dateStr);
-      }
-
-      if (records.length === 0) {
-        console.warn(`⚠️ Attendance date query returned 0 rows for ${dateStr}; trying recent-items fallback`);
-        records = await this.loadAttendanceByRecentWindow(dateStr);
-      }
-
-      if (records.length === 0) {
+      if (!response.ok) {
         console.warn(`No attendance records found for ${dateStr}`);
         return null;
       }
+
+      const data = await response.json();
+      const records = data.d.results || [];
       
       console.log(`✅ Found ${records.length} attendance records for ${dateStr}`);
 
@@ -3077,7 +2748,7 @@ export class SharePointService {
             absentPM: false,
             absentFullDay: false
           });
-          return this.saveStudent(clearedStudent, true, { skipTeamSync: true }).catch(err => {
+          return this.saveStudent(clearedStudent, true).catch(err => {
             console.error(`Failed to clear attendance for student ${student.name}:`, err);
             return { success: false };
           });
