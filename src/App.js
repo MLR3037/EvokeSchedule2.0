@@ -56,6 +56,33 @@ const ABAScheduler = () => {
     return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
   };
 
+  // Recurring attendance patterns are now stored in SharePoint Clients columns.
+  // Keep these helpers as no-ops to preserve existing call sites.
+  const persistRecurringPatternForStudent = () => {};
+  const removeRecurringPatternForStudent = () => {};
+  const mergeRecurringPatternsIntoStudents = (studentsList) => studentsList;
+
+  const applyRecurringAttendanceToStudents = (studentsList, date) => {
+    let appliedCount = 0;
+
+    const updatedStudents = studentsList.map(student => {
+      const recurring = student.getRecurringAbsenceForDate(date);
+      if (!recurring.absentAM && !recurring.absentPM) {
+        return student;
+      }
+
+      appliedCount += 1;
+      return new Student({
+        ...student,
+        absentAM: recurring.absentAM,
+        absentPM: recurring.absentPM,
+        absentFullDay: recurring.absentAM && recurring.absentPM
+      });
+    });
+
+    return { updatedStudents, appliedCount };
+  };
+
   // SharePoint configuration
   const [spConfig] = useState({
     siteUrl: 'https://evokebehavioralhealthcom.sharepoint.com/sites/Clinistrators',
@@ -151,7 +178,7 @@ const ABAScheduler = () => {
     setLoading(true);
     try {
       // Load staff, students, and schedule in parallel
-      const [staffData, studentsData, scheduleData] = await Promise.all([
+      const [staffData, studentsDataRaw, scheduleData] = await Promise.all([
         sharePointService.loadStaff().catch(err => {
           console.error('Failed to load staff:', err);
           return [];
@@ -165,6 +192,8 @@ const ABAScheduler = () => {
           return { assignments: [], date: currentDate };
         })
       ]);
+
+      const studentsData = mergeRecurringPatternsIntoStudents(studentsDataRaw);
 
       setStaff(staffData);
       setStudents(studentsData);
@@ -239,7 +268,7 @@ const ABAScheduler = () => {
     setLoading(true);
     try {
       // Load staff, students, and optionally the saved schedule for the selected date.
-      const [staffData, studentsData, loadedSchedule] = await Promise.all([
+      const [staffData, studentsDataRaw, loadedSchedule] = await Promise.all([
         sharePointService.loadStaff().catch(err => {
           console.error('Failed to load staff:', err);
           return [];
@@ -255,6 +284,8 @@ const ABAScheduler = () => {
             })
           : Promise.resolve(null)
       ]);
+
+          const studentsData = mergeRecurringPatternsIntoStudents(studentsDataRaw);
 
       // Check if this is a new day — clear stale attendance flags if the date has changed
       const today = formatDateLocal(new Date());
@@ -400,15 +431,9 @@ const ABAScheduler = () => {
           setStudents(clearedStudents);
           console.log('✅ Local attendance state cleared for', clearedStaff.length, 'staff and', clearedStudents.length, 'students');
           
-          // Clear attendance in SharePoint synchronously to ensure it's saved before loading new date
-          console.log('🧹 Clearing attendance in SharePoint...');
-          try {
-            await sharePointService.clearAllAttendanceInSharePoint(clearedStaff, clearedStudents);
-            console.log('✅ SharePoint attendance cleared');
-          } catch (err) {
-            console.error('⚠️ Error clearing SharePoint attendance:', err);
-            // Continue anyway - local state is already cleared
-          }
+          // Do not bulk-clear SharePoint attendance on date navigation.
+          // This caused large write storms and throttling/400s when moving between days.
+          console.log('⏭️ Skipping SharePoint bulk attendance clear during date change');
           
           // Update the date state
           setCurrentDate(newDate);
@@ -465,7 +490,13 @@ const ABAScheduler = () => {
             
             console.log('✅ Attendance data applied to UI');
           } else {
-            console.log('ℹ️ No attendance data found for this date - all marked as present');
+            const { updatedStudents, appliedCount } = applyRecurringAttendanceToStudents(clearedStudents, newDate);
+            if (appliedCount > 0) {
+              setStudents(updatedStudents);
+              console.log(`✅ Applied recurring attendance pattern to ${appliedCount} client(s) for ${newDateStr}`);
+            } else {
+              console.log('ℹ️ No attendance data found for this date - all marked as present');
+            }
           }
         }
       } catch (error) {
@@ -513,7 +544,7 @@ const ABAScheduler = () => {
           )
         ),
         ...clearedStudents.map(s => 
-          sharePointService.saveStudent(s, true).catch(err => 
+          sharePointService.saveStudent(s, true, { skipTeamSync: true }).catch(err => 
             console.error(`Failed to clear attendance for student ${s.name}:`, err)
           )
         )
@@ -1477,10 +1508,11 @@ const handleAssignmentRemove = (assignmentId) => {
       
       // First, reload staff and students from SharePoint to get current attendance
       console.log('📥 Reloading staff and students from SharePoint...');
-      const [freshStaff, freshStudents] = await Promise.all([
+      const [freshStaff, freshStudentsRaw] = await Promise.all([
         sharePointService.loadStaff(),
         sharePointService.loadStudents()
       ]);
+      const freshStudents = mergeRecurringPatternsIntoStudents(freshStudentsRaw);
       
       setStaff(freshStaff);
       setStudents(freshStudents);
@@ -1503,7 +1535,7 @@ const handleAssignmentRemove = (assignmentId) => {
           console.log('✅ Attendance data loaded, applying to staff and students');
           
           // Apply attendance data to staff
-          const staffWithAttendance = staff.map(s => {
+          const staffWithAttendance = freshStaff.map(s => {
             const attendance = attendanceData.staff[s.id];
             if (attendance) {
               return new Staff({
@@ -1522,7 +1554,7 @@ const handleAssignmentRemove = (assignmentId) => {
           });
           
           // Apply attendance data to students
-          const studentsWithAttendance = students.map(s => {
+          const studentsWithAttendance = freshStudents.map(s => {
             const attendance = attendanceData.students[s.id];
             if (attendance) {
               return new Student({
@@ -1544,7 +1576,12 @@ const handleAssignmentRemove = (assignmentId) => {
           console.log('✅ Attendance history applied to UI');
           alert(`✅ Schedule and attendance loaded successfully!\n\n${scheduleData.assignments.length} assignments loaded from ${currentDate.toLocaleDateString()}\n\nAttendance loaded from current SharePoint data and history.`);
         } else {
-          console.log('ℹ️ No attendance history found for this date - using current SharePoint data');
+          const { updatedStudents, appliedCount } = applyRecurringAttendanceToStudents(freshStudents, currentDate);
+          if (appliedCount > 0) {
+            setStudents(updatedStudents);
+            console.log(`✅ Applied recurring attendance pattern to ${appliedCount} client(s) for ${currentDate.toLocaleDateString()}`);
+          }
+          console.log('ℹ️ No attendance history found for this date - using current SharePoint data and recurring defaults');
           alert(`✅ Schedule loaded successfully!\n\n${scheduleData.assignments.length} assignments loaded from ${currentDate.toLocaleDateString()}\n\nℹ️ Using current attendance data from SharePoint`);
         }
       } else {
@@ -1638,7 +1675,11 @@ const handleAssignmentRemove = (assignmentId) => {
   const handleEditStaff = async (staffData) => {
     setSaving(true);
     try {
-      const updatedStaff = new Staff({ ...staffData, id: editingStaff.id });
+      const updatedStaff = new Staff({
+        ...staffData,
+        id: editingStaff.id,
+        listItemId: editingStaff.listItemId || staffData.listItemId || null
+      });
       await sharePointService.saveStaff(updatedStaff, true);
       await refreshDataOnly(); // Smart refresh: Update data without clearing schedule
       setEditingStaff(null);
@@ -1721,6 +1762,7 @@ const handleAssignmentRemove = (assignmentId) => {
     setSaving(true);
     try {
       const newStudent = new Student(studentData);
+      persistRecurringPatternForStudent(newStudent);
       await sharePointService.saveStudent(newStudent);
       await refreshDataOnly(); // Smart refresh: Update data without clearing schedule
       setShowAddStudent(false);
@@ -1737,6 +1779,7 @@ const handleAssignmentRemove = (assignmentId) => {
     setSaving(true);
     try {
       const updatedStudent = new Student({ ...studentData, id: editingStudent.id });
+      persistRecurringPatternForStudent(updatedStudent);
       await sharePointService.saveStudent(updatedStudent, true);
       await refreshDataOnly(); // Smart refresh: Update data without clearing schedule
       setEditingStudent(null);
@@ -1753,6 +1796,10 @@ const handleAssignmentRemove = (assignmentId) => {
   const handleDeleteStudent = async (studentId) => {
     if (window.confirm('Are you sure you want to delete this student?')) {
       try {
+        const existingStudent = students.find(s => s.id === studentId);
+        if (existingStudent) {
+          removeRecurringPatternForStudent(existingStudent);
+        }
         await sharePointService.deleteStudent(studentId);
         await refreshDataOnly(); // Smart refresh: Update data without clearing schedule
       } catch (error) {

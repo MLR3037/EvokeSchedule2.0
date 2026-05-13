@@ -220,6 +220,8 @@ export class Student {
       scheduledWednesday = true,
       scheduledThursday = true,
       scheduledFriday = true,
+      recurringAbsentAM = {}, // e.g. { Tuesday: true, Wednesday: true }
+      recurringAbsentPM = {}, // e.g. { Friday: true }
       // Custom schedule times (null = use program defaults)
       amStartTime = null,
       amEndTime = null,
@@ -264,6 +266,23 @@ export class Student {
     this.scheduledWednesday = scheduledWednesday;
     this.scheduledThursday = scheduledThursday;
     this.scheduledFriday = scheduledFriday;
+
+    // Recurring attendance pattern by weekday.
+    // This is applied when a specific day has no explicit attendance record.
+    this.recurringAbsentAM = {
+      Monday: !!recurringAbsentAM.Monday,
+      Tuesday: !!recurringAbsentAM.Tuesday,
+      Wednesday: !!recurringAbsentAM.Wednesday,
+      Thursday: !!recurringAbsentAM.Thursday,
+      Friday: !!recurringAbsentAM.Friday
+    };
+    this.recurringAbsentPM = {
+      Monday: !!recurringAbsentPM.Monday,
+      Tuesday: !!recurringAbsentPM.Tuesday,
+      Wednesday: !!recurringAbsentPM.Wednesday,
+      Thursday: !!recurringAbsentPM.Thursday,
+      Friday: !!recurringAbsentPM.Friday
+    };
     
     // Custom schedule times (null = use program defaults)
     this.amStartTime = amStartTime;
@@ -352,6 +371,14 @@ export class Student {
     if (this.absentAM) return 'Absent AM';
     if (this.absentPM) return 'Absent PM';
     return 'Present';
+  }
+
+  getRecurringAbsenceForDate(date) {
+    const weekday = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'][date.getDay()];
+    return {
+      absentAM: !!this.recurringAbsentAM[weekday],
+      absentPM: !!this.recurringAbsentPM[weekday]
+    };
   }
 
   /**
