@@ -72,11 +72,13 @@ const ABAScheduler = () => {
       }
 
       appliedCount += 1;
+      const mergedAbsentAM = !!student.absentAM || !!recurring.absentAM;
+      const mergedAbsentPM = !!student.absentPM || !!recurring.absentPM;
       return new Student({
         ...student,
-        absentAM: recurring.absentAM,
-        absentPM: recurring.absentPM,
-        absentFullDay: recurring.absentAM && recurring.absentPM
+        absentAM: mergedAbsentAM,
+        absentPM: mergedAbsentPM,
+        absentFullDay: !!student.absentFullDay || (mergedAbsentAM && mergedAbsentPM)
       });
     });
 
@@ -194,9 +196,11 @@ const ABAScheduler = () => {
       ]);
 
       const studentsData = mergeRecurringPatternsIntoStudents(studentsDataRaw);
+      const recurringApplied = applyRecurringAttendanceToStudents(studentsData, currentDate);
+      const effectiveStudentsData = recurringApplied.updatedStudents;
 
       setStaff(staffData);
-      setStudents(studentsData);
+      setStudents(effectiveStudentsData);
       
       // CRITICAL: Clean up schedule by removing assignments for absent staff/students
       let cleanedSchedule = scheduleData;
@@ -208,7 +212,7 @@ const ABAScheduler = () => {
         // Filter out assignments where staff or student is unavailable
         const validAssignments = scheduleData.assignments.filter(assignment => {
           const staffMember = staffData.find(s => s.id === assignment.staffId);
-          const student = studentsData.find(s => s.id === assignment.studentId);
+          const student = effectiveStudentsData.find(s => s.id === assignment.studentId);
           
           // Remove if staff doesn't exist or is unavailable for this session
           if (!staffMember || !staffMember.isAvailableForSession(assignment.session, currentDate)) {
@@ -239,16 +243,20 @@ const ABAScheduler = () => {
       setSchedule(cleanedSchedule);
       setDataLoadedAt(new Date()); // Track when data was loaded
       
-      console.log(`✅ Loaded ${staffData.length} staff, ${studentsData.length} students at ${new Date().toLocaleTimeString()}`);
+      console.log(`✅ Loaded ${staffData.length} staff, ${effectiveStudentsData.length} students at ${new Date().toLocaleTimeString()}`);
       
       // Log attendance status after load
       const absentStaff = staffData.filter(s => s.absentAM || s.absentPM || s.absentFullDay);
-      const absentStudents = studentsData.filter(s => s.absentAM || s.absentPM || s.absentFullDay);
+      const absentStudents = effectiveStudentsData.filter(s => s.absentAM || s.absentPM || s.absentFullDay);
       if (absentStaff.length > 0 || absentStudents.length > 0) {
         console.log(`📊 Attendance after load: ${absentStaff.length} staff absent, ${absentStudents.length} students absent`);
       }
+
+      if (recurringApplied.appliedCount > 0) {
+        console.log(`✅ Applied recurring attendance pattern to ${recurringApplied.appliedCount} client(s) for ${currentDate.toLocaleDateString()}`);
+      }
       
-      if (staffData.length === 0 && studentsData.length === 0) {
+      if (staffData.length === 0 && effectiveStudentsData.length === 0) {
         console.warn('⚠️ No data loaded. Check authentication and SharePoint list names.');
       }
     } catch (error) {
@@ -318,9 +326,12 @@ const ABAScheduler = () => {
       }
       localStorage.setItem('lastAttendanceDate', today);
 
+      const recurringApplied = applyRecurringAttendanceToStudents(finalStudentsData, currentDate);
+      const effectiveStudentsData = recurringApplied.updatedStudents;
+
       // Update staff and students
       setStaff(finalStaffData);
-      setStudents(finalStudentsData);
+      setStudents(effectiveStudentsData);
 
       const scheduleToUse = reloadSavedSchedule && loadedSchedule ? loadedSchedule : schedule;
 
@@ -333,7 +344,7 @@ const ABAScheduler = () => {
         // Filter out assignments where staff or student is unavailable
         const validAssignments = scheduleToUse.assignments.filter(assignment => {
           const staffMember = finalStaffData.find(s => s.id === assignment.staffId);
-          const student = finalStudentsData.find(s => s.id === assignment.studentId);
+          const student = effectiveStudentsData.find(s => s.id === assignment.studentId);
 
           // Remove if staff doesn't exist or is unavailable for this session
           if (!staffMember || !staffMember.isAvailableForSession(assignment.session, currentDate)) {
@@ -368,16 +379,20 @@ const ABAScheduler = () => {
 
       setDataLoadedAt(new Date()); // Track when data was loaded
 
-      console.log(`✅ Smart refresh complete: ${finalStaffData.length} staff, ${finalStudentsData.length} students loaded. ${reloadSavedSchedule ? 'Saved schedule reloaded.' : removedCount > 0 ? removedCount + ' assignments removed.' : 'Schedule preserved.'}`);
+      console.log(`✅ Smart refresh complete: ${finalStaffData.length} staff, ${effectiveStudentsData.length} students loaded. ${reloadSavedSchedule ? 'Saved schedule reloaded.' : removedCount > 0 ? removedCount + ' assignments removed.' : 'Schedule preserved.'}`);
 
       // Log attendance status after refresh
       const absentStaff = finalStaffData.filter(s => s.absentAM || s.absentPM || s.absentFullDay);
-      const absentStudents = finalStudentsData.filter(s => s.absentAM || s.absentPM || s.absentFullDay);
+      const absentStudents = effectiveStudentsData.filter(s => s.absentAM || s.absentPM || s.absentFullDay);
       if (absentStaff.length > 0 || absentStudents.length > 0) {
         console.log(`📊 Attendance after refresh: ${absentStaff.length} staff absent, ${absentStudents.length} students absent`);
       }
+
+      if (recurringApplied.appliedCount > 0) {
+        console.log(`✅ Applied recurring attendance pattern to ${recurringApplied.appliedCount} client(s) for ${currentDate.toLocaleDateString()}`);
+      }
       
-      if (finalStaffData.length === 0 && finalStudentsData.length === 0) {
+      if (finalStaffData.length === 0 && effectiveStudentsData.length === 0) {
         console.warn('⚠️ No data loaded. Check authentication and SharePoint list names.');
       }
     } catch (error) {
@@ -484,10 +499,15 @@ const ABAScheduler = () => {
               }
               return s;
             });
+
+            const { updatedStudents: studentsWithRecurringAttendance, appliedCount } = applyRecurringAttendanceToStudents(studentsWithAttendance, newDate);
             
             setStaff(staffWithAttendance);
-            setStudents(studentsWithAttendance);
+            setStudents(studentsWithRecurringAttendance);
             
+            if (appliedCount > 0) {
+              console.log(`✅ Applied recurring attendance pattern to ${appliedCount} client(s) for ${newDateStr}`);
+            }
             console.log('✅ Attendance data applied to UI');
           } else {
             const { updatedStudents, appliedCount } = applyRecurringAttendanceToStudents(clearedStudents, newDate);
@@ -1569,10 +1589,15 @@ const handleAssignmentRemove = (assignmentId) => {
             }
             return s;
           });
+
+          const { updatedStudents: studentsWithRecurringAttendance, appliedCount } = applyRecurringAttendanceToStudents(studentsWithAttendance, currentDate);
           
           setStaff(staffWithAttendance);
-          setStudents(studentsWithAttendance);
+          setStudents(studentsWithRecurringAttendance);
           
+          if (appliedCount > 0) {
+            console.log(`✅ Applied recurring attendance pattern to ${appliedCount} client(s) for ${currentDate.toLocaleDateString()}`);
+          }
           console.log('✅ Attendance history applied to UI');
           alert(`✅ Schedule and attendance loaded successfully!\n\n${scheduleData.assignments.length} assignments loaded from ${currentDate.toLocaleDateString()}\n\nAttendance loaded from current SharePoint data and history.`);
         } else {

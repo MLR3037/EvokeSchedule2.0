@@ -358,38 +358,61 @@ export class SharePointService {
       
       const headers = await this.getHeaders();
       
-      // Staff list uses Person/Group field, so we need to expand it.
-      // New partial-day time columns may not exist in every environment yet,
-      // so we try the extended select first, then fall back to legacy fields.
+      // Support multiple Staff list schemas across environments.
       const extendedSelect = 'Id,StaffPerson/Id,StaffPerson/Title,StaffPerson/EMail,Role,PrimaryProgram,SecondaryProgram,IsActive,AbsentAM,AbsentPM,AbsentFullDay,AbsentAMArrivalTime,AbsentPMDepartureTime,OutOfSessionAM,OutOfSessionPM,OutOfSessionFullDay';
       const legacySelect = 'Id,StaffPerson/Id,StaffPerson/Title,StaffPerson/EMail,Role,PrimaryProgram,SecondaryProgram,IsActive,AbsentAM,AbsentPM,AbsentFullDay,OutOfSessionAM,OutOfSessionPM,OutOfSessionFullDay';
-      const makeUrl = (selectFields) => `${this.config.siteUrl}/_api/web/lists/getbytitle('${this.config.staffListName}')/items?` +
-        `$select=${selectFields}&` +
-        `$expand=StaffPerson&` +
-        `$top=5000`;
+      const flatLegacySelect = 'Id,Title,Email,Role,PrimaryProgram,SecondaryProgram,IsActive,AbsentAM,AbsentPM,AbsentFullDay,OutOfSessionAM,OutOfSessionPM,OutOfSessionFullDay';
 
-      let url = makeUrl(extendedSelect);
-      console.log('📋 Fetching staff from:', url);
+      const queryPlans = [
+        { label: 'extended-person-schema', select: extendedSelect, expand: 'StaffPerson' },
+        { label: 'legacy-person-schema', select: legacySelect, expand: 'StaffPerson' },
+        { label: 'flat-legacy-schema', select: flatLegacySelect, expand: null }
+      ];
 
-      let response = await this.makeRequest(url, { headers });
+      const makeUrl = (selectFields, expandField = null) => {
+        const expandClause = expandField ? `$expand=${expandField}&` : '';
+        return `${this.config.siteUrl}/_api/web/lists/getbytitle('${this.config.staffListName}')/items?` +
+          `$select=${selectFields}&` +
+          `${expandClause}` +
+          `$top=5000`;
+      };
 
-      if (!response.ok) {
-        const errorText = await response.text();
-        const missingNewColumns = /AbsentAMArrivalTime|AbsentPMDepartureTime|does not exist/i.test(errorText);
-        if (missingNewColumns) {
-          console.warn('⚠️ Staff time columns not found; retrying with legacy staff fields.');
-          url = makeUrl(legacySelect);
-          response = await this.makeRequest(url, { headers });
-        } else {
-          console.error('SharePoint Staff API Error:', response.status, errorText);
-          throw new Error(`Failed to load staff: ${response.status} - ${errorText}`);
+      let response = null;
+      let lastErrorText = '';
+
+      for (let i = 0; i < queryPlans.length; i++) {
+        const plan = queryPlans[i];
+        const isLastPlan = i === queryPlans.length - 1;
+        const url = makeUrl(plan.select, plan.expand);
+        console.log(`📋 Fetching staff from (${plan.label}):`, url);
+
+        response = await this.makeRequest(url, { headers });
+        if (response.ok) {
+          break;
         }
+
+        lastErrorText = await response.text();
+
+        if (response.status === 401 || response.status === 403) {
+          console.error('SharePoint Staff API authorization error:', response.status, lastErrorText);
+          throw new Error(`Failed to load staff: ${response.status} - ${lastErrorText}`);
+        }
+
+        const isSchemaMismatch = /does not exist|cannot find resource|field or property|invalid/i.test(lastErrorText);
+        const canFallback = !isLastPlan && (isSchemaMismatch || response.status === 400 || response.status >= 500);
+
+        if (canFallback) {
+          console.warn(`⚠️ Staff query failed (${plan.label}) with ${response.status}; trying fallback schema...`);
+          continue;
+        }
+
+        console.error('SharePoint Staff API Error:', response.status, lastErrorText);
+        throw new Error(`Failed to load staff: ${response.status} - ${lastErrorText}`);
       }
 
       if (!response.ok) {
-        const errorText = await response.text();
-        console.error('SharePoint Staff API Error:', response.status, errorText);
-        throw new Error(`Failed to load staff: ${response.status} - ${errorText}`);
+        console.error('SharePoint Staff API Error:', response.status, lastErrorText);
+        throw new Error(`Failed to load staff: ${response.status} - ${lastErrorText}`);
       }
 
       const data = await response.json();
@@ -406,15 +429,16 @@ export class SharePointService {
         // Extract staff person info from Person/Group field
         const staffPerson = item.StaffPerson;
         const staffName = staffPerson?.Title || item.Title || 'Unknown Staff';
-        const staffEmail = staffPerson ? staffPerson.EMail : '';
+        const staffEmail = staffPerson?.EMail || item.Email || '';
+        const normalizedUserId = staffPerson?.Id || item.StaffPersonId || null;
         
         const staff = new Staff({
-          id: staffPerson ? staffPerson.Id : item.Id, // Use StaffPerson.Id for consistency with team data
+          id: normalizedUserId || item.Id,
           listItemId: item.Id, // List item ID for updating this record
           name: staffName,
           role: item.Role || 'RBT',
           email: staffEmail,
-          userId: staffPerson?.Id || null,
+          userId: normalizedUserId,
           staffPerson: staffPerson ? {
             id: staffPerson.Id,
             title: staffPerson.Title || item.Title || 'Unknown Staff',
@@ -507,29 +531,74 @@ export class SharePointService {
 
       const headers = await this.getHeaders();
       
-      // Optimize: Only load essential fields
-      // For Lookup fields: Use ClientId to get the ID value directly (no expand needed)
-      // For Person fields: Expand StaffMember to get full details
-      const url = `${this.config.siteUrl}/_api/web/lists/getbytitle('ClientTeamMembers')/items?` +
-        `$select=ClientId,StaffMember/Id,StaffMember/Title,StaffMember/EMail,TrainingStatus&` +
-        `$expand=StaffMember&` +
+      // Support both common internal-name variations:
+      // - Client lookup as ClientId OR Client/Id
+      // - Person email as StaffMember/EMail OR StaffMember/Email
+      const queryPlans = [
+        {
+          label: 'clientId + EMail',
+          select: 'ClientId,StaffMember/Id,StaffMember/Title,StaffMember/EMail,TrainingStatus',
+          expand: 'StaffMember'
+        },
+        {
+          label: 'clientId + Email',
+          select: 'ClientId,StaffMember/Id,StaffMember/Title,StaffMember/Email,TrainingStatus',
+          expand: 'StaffMember'
+        },
+        {
+          label: 'client/Id + EMail',
+          select: 'Client/Id,StaffMember/Id,StaffMember/Title,StaffMember/EMail,TrainingStatus',
+          expand: 'Client,StaffMember'
+        },
+        {
+          label: 'client/Id + Email',
+          select: 'Client/Id,StaffMember/Id,StaffMember/Title,StaffMember/Email,TrainingStatus',
+          expand: 'Client,StaffMember'
+        }
+      ];
+
+      const makeUrl = (select, expand) => `${this.config.siteUrl}/_api/web/lists/getbytitle('ClientTeamMembers')/items?` +
+        `$select=${select}&` +
+        `$expand=${expand}&` +
         `$top=5000`;
 
-      console.log('📋 Fetching team members from:', url);
+      let response = null;
+      let lastErrorText = '';
 
-      const response = await this.makeRequest(url, { headers });
+      for (let i = 0; i < queryPlans.length; i++) {
+        const plan = queryPlans[i];
+        const isLastPlan = i === queryPlans.length - 1;
+        const url = makeUrl(plan.select, plan.expand);
 
-      if (!response.ok) {
-        const errorText = await response.text();
-        console.error('❌ SharePoint ClientTeamMembers API Error:', response.status, errorText);
-        
-        // If the list doesn't exist, return null (not empty object) to signal fallback to legacy
+        console.log(`📋 Fetching team members (${plan.label}) from:`, url);
+        response = await this.makeRequest(url, { headers });
+
+        if (response.ok) {
+          break;
+        }
+
+        lastErrorText = await response.text();
+
+        // If list doesn't exist, fall back to legacy Team field.
         if (response.status === 404) {
           console.warn('⚠️ ClientTeamMembers list not found - using legacy Team field instead');
-          return null; // ✅ CHANGED: Return null instead of empty object
+          return null;
         }
-        
-        throw new Error(`Failed to load client team members: ${response.status} - ${errorText}`);
+
+        const schemaMismatch = /does not exist|cannot find resource|field or property|invalid/i.test(lastErrorText);
+        const canFallback = !isLastPlan && (schemaMismatch || response.status === 400 || response.status >= 500);
+
+        if (canFallback) {
+          console.warn(`⚠️ ClientTeamMembers query failed (${plan.label}) with ${response.status}; trying fallback schema...`);
+          continue;
+        }
+
+        break;
+      }
+
+      if (!response || !response.ok) {
+        console.error('❌ SharePoint ClientTeamMembers API Error:', response?.status, lastErrorText);
+        throw new Error(`Failed to load client team members: ${response?.status || 'unknown'} - ${lastErrorText}`);
       }
 
       const data = await response.json();
@@ -539,9 +608,8 @@ export class SharePointService {
       // Group by client ID for easier lookup
       const teamsByClient = {};
       teamMembers.forEach(item => {
-        // For Lookup fields, SharePoint returns the ID as ClientId (not Client.Id)
-        if (item.ClientId && item.StaffMember) {
-          const clientId = item.ClientId;
+        const clientId = item.ClientId || item.Client?.Id;
+        if (clientId && item.StaffMember) {
           if (!teamsByClient[clientId]) {
             teamsByClient[clientId] = [];
           }
@@ -553,7 +621,7 @@ export class SharePointService {
             id: item.StaffMember.Id,
             title: item.StaffMember.Title,
             name: item.StaffMember.Title,
-            email: item.StaffMember.EMail || '',
+            email: item.StaffMember.EMail || item.StaffMember.Email || '',
             trainingStatus: this.normalizeTrainingStatus(item.TrainingStatus)
           });
         }
@@ -570,7 +638,7 @@ export class SharePointService {
 
     } catch (error) {
       console.error('❌ Error loading client team members:', error);
-      return null; // Return null to signal fallback to legacy method
+      return {}; // Return empty map so app doesn't treat this as "list missing"
     }
   }
   
@@ -617,6 +685,7 @@ export class SharePointService {
       ];
 
       const recurringWeekdayFields = [
+        // Session-first schema
         'RecurringAbsentAMMonday',
         'RecurringAbsentAMTuesday',
         'RecurringAbsentAMWednesday',
@@ -626,7 +695,18 @@ export class SharePointService {
         'RecurringAbsentPMTuesday',
         'RecurringAbsentPMWednesday',
         'RecurringAbsentPMThursday',
-        'RecurringAbsentPMFriday'
+        'RecurringAbsentPMFriday',
+        // Weekday-first schema
+        'RecurringAbsentMondayAM',
+        'RecurringAbsentTuesdayAM',
+        'RecurringAbsentWednesdayAM',
+        'RecurringAbsentThursdayAM',
+        'RecurringAbsentFridayAM',
+        'RecurringAbsentMondayPM',
+        'RecurringAbsentTuesdayPM',
+        'RecurringAbsentWednesdayPM',
+        'RecurringAbsentThursdayPM',
+        'RecurringAbsentFridayPM'
       ];
 
       const recurringAggregateFields = ['RecurringAbsentAM', 'RecurringAbsentPM'];
@@ -678,6 +758,15 @@ export class SharePointService {
    */
   parseStudents(studentItems, teamsByClient = null) {
     console.log(`🔍 Parsing ${studentItems.length} students`);
+
+    const toBool = (value) => {
+      if (value === true || value === 1) return true;
+      if (typeof value === 'string') {
+        const normalized = value.trim().toLowerCase();
+        return normalized === 'true' || normalized === '1' || normalized === 'yes';
+      }
+      return false;
+    };
     
     // Check if ClientTeamMembers list exists (null = doesn't exist, object = exists)
     const useClientTeamMembersList = teamsByClient !== null;
@@ -740,9 +829,9 @@ export class SharePointService {
         team: team,
         teamIds: teamIds,
         pairedWith: normalizedPairedWith,
-        absentAM: item.AbsentAM === true,
-        absentPM: item.AbsentPM === true,
-        absentFullDay: item.AbsentFullDay === true,
+        absentAM: toBool(item.AbsentAM),
+        absentPM: toBool(item.AbsentPM),
+        absentFullDay: toBool(item.AbsentFullDay),
         teamTrainingStatus: teamTrainingStatus,
         // Days of week schedule (default to true if not set)
         scheduledMonday: item.ScheduledMonday !== false,
@@ -751,18 +840,18 @@ export class SharePointService {
         scheduledThursday: item.ScheduledThursday !== false,
         scheduledFriday: item.ScheduledFriday !== false,
         recurringAbsentAM: {
-          Monday: item.RecurringAbsentAMMonday === true || item.RecurringAbsentAM === true,
-          Tuesday: item.RecurringAbsentAMTuesday === true || item.RecurringAbsentAM === true,
-          Wednesday: item.RecurringAbsentAMWednesday === true || item.RecurringAbsentAM === true,
-          Thursday: item.RecurringAbsentAMThursday === true || item.RecurringAbsentAM === true,
-          Friday: item.RecurringAbsentAMFriday === true || item.RecurringAbsentAM === true
+          Monday: toBool(item.RecurringAbsentAMMonday) || toBool(item.RecurringAbsentMondayAM) || toBool(item.RecurringAbsentAM),
+          Tuesday: toBool(item.RecurringAbsentAMTuesday) || toBool(item.RecurringAbsentTuesdayAM) || toBool(item.RecurringAbsentAM),
+          Wednesday: toBool(item.RecurringAbsentAMWednesday) || toBool(item.RecurringAbsentWednesdayAM) || toBool(item.RecurringAbsentAM),
+          Thursday: toBool(item.RecurringAbsentAMThursday) || toBool(item.RecurringAbsentThursdayAM) || toBool(item.RecurringAbsentAM),
+          Friday: toBool(item.RecurringAbsentAMFriday) || toBool(item.RecurringAbsentFridayAM) || toBool(item.RecurringAbsentAM)
         },
         recurringAbsentPM: {
-          Monday: item.RecurringAbsentPMMonday === true || item.RecurringAbsentPM === true,
-          Tuesday: item.RecurringAbsentPMTuesday === true || item.RecurringAbsentPM === true,
-          Wednesday: item.RecurringAbsentPMWednesday === true || item.RecurringAbsentPM === true,
-          Thursday: item.RecurringAbsentPMThursday === true || item.RecurringAbsentPM === true,
-          Friday: item.RecurringAbsentPMFriday === true || item.RecurringAbsentPM === true
+          Monday: toBool(item.RecurringAbsentPMMonday) || toBool(item.RecurringAbsentMondayPM) || toBool(item.RecurringAbsentPM),
+          Tuesday: toBool(item.RecurringAbsentPMTuesday) || toBool(item.RecurringAbsentTuesdayPM) || toBool(item.RecurringAbsentPM),
+          Wednesday: toBool(item.RecurringAbsentPMWednesday) || toBool(item.RecurringAbsentWednesdayPM) || toBool(item.RecurringAbsentPM),
+          Thursday: toBool(item.RecurringAbsentPMThursday) || toBool(item.RecurringAbsentThursdayPM) || toBool(item.RecurringAbsentPM),
+          Friday: toBool(item.RecurringAbsentPMFriday) || toBool(item.RecurringAbsentFridayPM) || toBool(item.RecurringAbsentPM)
         },
         // Custom schedule times (null if not set = use program defaults)
         amStartTime: item.AMStartTime || null,
@@ -1316,11 +1405,21 @@ export class SharePointService {
       if (includeStudentField('RecurringAbsentAMWednesday')) body.RecurringAbsentAMWednesday = !!student.recurringAbsentAM?.Wednesday;
       if (includeStudentField('RecurringAbsentAMThursday')) body.RecurringAbsentAMThursday = !!student.recurringAbsentAM?.Thursday;
       if (includeStudentField('RecurringAbsentAMFriday')) body.RecurringAbsentAMFriday = !!student.recurringAbsentAM?.Friday;
+      if (includeStudentField('RecurringAbsentMondayAM')) body.RecurringAbsentMondayAM = !!student.recurringAbsentAM?.Monday;
+      if (includeStudentField('RecurringAbsentTuesdayAM')) body.RecurringAbsentTuesdayAM = !!student.recurringAbsentAM?.Tuesday;
+      if (includeStudentField('RecurringAbsentWednesdayAM')) body.RecurringAbsentWednesdayAM = !!student.recurringAbsentAM?.Wednesday;
+      if (includeStudentField('RecurringAbsentThursdayAM')) body.RecurringAbsentThursdayAM = !!student.recurringAbsentAM?.Thursday;
+      if (includeStudentField('RecurringAbsentFridayAM')) body.RecurringAbsentFridayAM = !!student.recurringAbsentAM?.Friday;
       if (includeStudentField('RecurringAbsentPMMonday')) body.RecurringAbsentPMMonday = !!student.recurringAbsentPM?.Monday;
       if (includeStudentField('RecurringAbsentPMTuesday')) body.RecurringAbsentPMTuesday = !!student.recurringAbsentPM?.Tuesday;
       if (includeStudentField('RecurringAbsentPMWednesday')) body.RecurringAbsentPMWednesday = !!student.recurringAbsentPM?.Wednesday;
       if (includeStudentField('RecurringAbsentPMThursday')) body.RecurringAbsentPMThursday = !!student.recurringAbsentPM?.Thursday;
       if (includeStudentField('RecurringAbsentPMFriday')) body.RecurringAbsentPMFriday = !!student.recurringAbsentPM?.Friday;
+      if (includeStudentField('RecurringAbsentMondayPM')) body.RecurringAbsentMondayPM = !!student.recurringAbsentPM?.Monday;
+      if (includeStudentField('RecurringAbsentTuesdayPM')) body.RecurringAbsentTuesdayPM = !!student.recurringAbsentPM?.Tuesday;
+      if (includeStudentField('RecurringAbsentWednesdayPM')) body.RecurringAbsentWednesdayPM = !!student.recurringAbsentPM?.Wednesday;
+      if (includeStudentField('RecurringAbsentThursdayPM')) body.RecurringAbsentThursdayPM = !!student.recurringAbsentPM?.Thursday;
+      if (includeStudentField('RecurringAbsentFridayPM')) body.RecurringAbsentFridayPM = !!student.recurringAbsentPM?.Friday;
 
       if (includeStudentField('RecurringAbsentAM')) {
         body.RecurringAbsentAM = !!(

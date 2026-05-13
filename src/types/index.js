@@ -354,10 +354,12 @@ export class Student {
     if (date && !this.isScheduledForDay(date)) {
       return false; // Treat as absent if not scheduled for this day
     }
+
+    const recurring = date ? this.getRecurringAbsenceForDate(date) : { absentAM: false, absentPM: false };
     
     if (this.absentFullDay) return false;
-    if (session === 'AM') return !this.absentAM;
-    if (session === 'PM') return !this.absentPM;
+    if (session === 'AM') return !(this.absentAM || recurring.absentAM);
+    if (session === 'PM') return !(this.absentPM || recurring.absentPM);
     return true;
   }
 
