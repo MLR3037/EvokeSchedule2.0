@@ -392,11 +392,14 @@ const ScheduleGridView = ({
   };
 
   // Render staff dropdown (team members only)
-  const renderStaffDropdown = (student, session, value, onChange, placeholder = "-- Select --") => {
+  const renderStaffDropdown = (student, session, value, onChange, placeholder = "-- Select --", disabled = false) => {
     const availableTeamMembers = getAvailableStaff(student, session);
     const highlightColor = value ? staffHighlighting[value] : null;
     
     let selectClassName = "border border-gray-300 rounded px-1.5 py-0.5 text-xs w-full focus:outline-none focus:ring-1 focus:ring-blue-500";
+    if (disabled) {
+      selectClassName = "border border-gray-200 bg-gray-100 text-gray-500 rounded px-1.5 py-0.5 text-xs w-full cursor-not-allowed";
+    }
     if (highlightColor === 'red') {
       selectClassName += " bg-red-200";
     } else if (highlightColor === 'yellow') {
@@ -411,6 +414,7 @@ const ScheduleGridView = ({
       <select
         value={value || ''}
         onChange={onChange}
+        disabled={disabled}
         className={selectClassName}
       >
         <option value="">{placeholder}</option>
@@ -428,7 +432,7 @@ const ScheduleGridView = ({
   };
 
   // Render trainee dropdown (ONLY staff who are in training for this student)
-  const renderTraineeDropdown = (student, session, value, onChange, placeholder = "-- None --") => {
+  const renderTraineeDropdown = (student, session, value, onChange, placeholder = "-- None --", disabled = false) => {
     const team = getStudentTeam(student);
     const currentAssignments = getAssignments(student, session);
     
@@ -461,6 +465,9 @@ const ScheduleGridView = ({
     const highlightColor = value ? staffHighlighting[value] : null;
     
     let selectClassName = "border border-gray-300 rounded px-1.5 py-0.5 text-xs w-full focus:outline-none focus:ring-1 focus:ring-blue-500";
+    if (disabled) {
+      selectClassName = "border border-gray-200 bg-gray-100 text-gray-500 rounded px-1.5 py-0.5 text-xs w-full cursor-not-allowed";
+    }
     if (highlightColor === 'red') {
       selectClassName += " bg-red-200";
     } else if (highlightColor === 'yellow') {
@@ -475,6 +482,7 @@ const ScheduleGridView = ({
       <select
         value={value || ''}
         onChange={onChange}
+        disabled={disabled}
         className={selectClassName}
       >
         <option value="">{placeholder}</option>
@@ -1088,18 +1096,21 @@ const ScheduleGridView = ({
             const isAbsentAM = !student.isAvailableForSession('AM', selectedDate);
             const isAbsentPM = !student.isAvailableForSession('PM', selectedDate);
             const isFullyAbsent = isAbsentAM && isAbsentPM;
-            const isOutOfSession = student.outOfSessionFullDay || (student.outOfSessionAM && student.outOfSessionPM);
+            const isRowAbsent = isFullyAbsent;
+            const isHalfDayAbsentAM = isAbsentAM && !isAbsentPM;
+            const isHalfDayAbsentPM = isAbsentPM && !isAbsentAM;
+            const amSessionShadeClass = isHalfDayAbsentAM ? 'bg-red-50' : '';
+            const pmSessionShadeClass = isHalfDayAbsentPM ? 'bg-red-50' : '';
               
               const defaults = getDefaultTimes(student);
               const data = editableData[student.id] || {};
 
               return (
-                <tr key={student.id} className={`$
-                  isFullyAbsent 
-                    ? (isOutOfSession ? 'bg-yellow-50 hover:bg-yellow-100' : 'bg-red-50 hover:bg-red-100') 
-                    : 'hover:bg-gray-50'
-                }`}>
-                  <td className="px-3 py-1.5 font-semibold text-gray-900 text-xs">
+                <tr
+                  key={student.id}
+                  className={isFullyAbsent ? 'bg-red-50 hover:bg-red-100' : 'hover:bg-gray-50'}
+                >
+                  <td className={`px-3 py-1.5 font-semibold text-gray-900 text-xs ${amSessionShadeClass}`}>
                     {student.name}
                     {(student.ratioAM === '2:1' || student.ratioPM === '2:1') && (
                       <span className="ml-1 text-orange-600 font-bold">(2:1)</span>
@@ -1107,7 +1118,7 @@ const ScheduleGridView = ({
                   </td>
                   
                   {/* AM Staff - stacked for 2:1 */}
-                  <td className={`px-3 py-1.5 ${isAbsentAM ? 'bg-red-50' : ''}`}>
+                  <td className={`px-3 py-1.5 ${amSessionShadeClass}`}>
                     {isAbsentAM ? (
                       <span className={`font-semibold text-xs ${student.outOfSessionAM || student.outOfSessionFullDay ? 'text-yellow-700' : 'text-red-700'}`}>
                         {student.outOfSessionAM || student.outOfSessionFullDay ? 'OUT' : 'ABSENT'}
@@ -1123,16 +1134,18 @@ const ScheduleGridView = ({
                               'AM', 
                               staffAssignments[0]?.staffId, 
                               (e) => handleStaffSelect(student, 'AM', e.target.value, 0),
-                              "-- Select --"
+                              "-- Select --",
+                              isRowAbsent
                             )}
                             {staffAssignments.length > 0 && (
                               <button
                                 onClick={() => toggleLock(student, 'AM')}
+                                disabled={isRowAbsent}
                                 className={`p-1 rounded ${
                                   staffAssignments[0].isLocked
                                     ? 'text-red-600 hover:text-red-800 hover:bg-red-50'
                                     : 'text-green-600 hover:text-green-800 hover:bg-green-50'
-                                }`}
+                                } ${isRowAbsent ? 'opacity-50 cursor-not-allowed hover:bg-transparent' : ''}`}
                                 title={staffAssignments[0].isLocked ? 'Locked (click to unlock)' : 'Unlocked (click to lock)'}
                               >
                                 {staffAssignments[0].isLocked ? <Lock className="w-3 h-3" /> : <Unlock className="w-3 h-3" />}
@@ -1147,7 +1160,8 @@ const ScheduleGridView = ({
                                 'AM', 
                                 staffAssignments[1]?.staffId, 
                                 (e) => handleStaffSelect(student, 'AM', e.target.value, 1),
-                                "-- Select --"
+                                "-- Select --",
+                                isRowAbsent
                               )}
                               {staffAssignments.length > 1 && (
                                 <button
@@ -1159,11 +1173,12 @@ const ScheduleGridView = ({
                                       onAssignmentLock(assignment.id);
                                     }
                                   }}
+                                  disabled={isRowAbsent}
                                   className={`p-1 rounded ${
                                     staffAssignments[1].isLocked
                                       ? 'text-red-600 hover:text-red-800 hover:bg-red-50'
                                       : 'text-green-600 hover:text-green-800 hover:bg-green-50'
-                                  }`}
+                                  } ${isRowAbsent ? 'opacity-50 cursor-not-allowed hover:bg-transparent' : ''}`}
                                   title={staffAssignments[1].isLocked ? 'Locked (click to unlock)' : 'Unlocked (click to lock)'}
                                 >
                                   {staffAssignments[1].isLocked ? <Lock className="w-3 h-3" /> : <Unlock className="w-3 h-3" />}
@@ -1177,7 +1192,7 @@ const ScheduleGridView = ({
                   </td>
                   
                   {/* AM Trainee */}
-                  <td className="px-3 py-1.5">
+                  <td className={`px-3 py-1.5 ${amSessionShadeClass}`}>
                     {!isAbsentAM && (() => {
                       const traineeAssignments = getTraineeAssignments(student, 'AM');
                       const traineeStaffId = traineeAssignments[0]?.staffId || null;
@@ -1216,20 +1231,26 @@ const ScheduleGridView = ({
                   </td>
                   
                   {/* AM Times */}
-                  <td className="px-2 py-1.5">
+                  <td className={`px-2 py-1.5 ${amSessionShadeClass}`}>
                     <input
                       type="text"
                       value={data.amStart || defaults.amStart}
                       onChange={(e) => handleFieldChange(student.id, 'amStart', e.target.value)}
-                      className="border border-gray-300 rounded px-1 py-0.5 text-xs w-16 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                      disabled={isRowAbsent}
+                      className={`border rounded px-1 py-0.5 text-xs w-16 focus:outline-none focus:ring-1 focus:ring-blue-500 ${
+                        isRowAbsent ? 'border-gray-200 bg-gray-100 text-gray-500 cursor-not-allowed' : 'border-gray-300'
+                      }`}
                     />
                   </td>
-                  <td className="px-2 py-1.5">
+                  <td className={`px-2 py-1.5 ${amSessionShadeClass}`}>
                     <input
                       type="text"
                       value={data.amEnd || defaults.amEnd}
                       onChange={(e) => handleFieldChange(student.id, 'amEnd', e.target.value)}
-                      className="border border-gray-300 rounded px-1 py-0.5 text-xs w-16 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                      disabled={isRowAbsent}
+                      className={`border rounded px-1 py-0.5 text-xs w-16 focus:outline-none focus:ring-1 focus:ring-blue-500 ${
+                        isRowAbsent ? 'border-gray-200 bg-gray-100 text-gray-500 cursor-not-allowed' : 'border-gray-300'
+                      }`}
                     />
                   </td>
                   
@@ -1244,9 +1265,9 @@ const ScheduleGridView = ({
                           type="text"
                           value={data.lunch1Cov || ''}
                           onChange={(e) => handleFieldChange(student.id, 'lunch1Cov', e.target.value)}
-                          disabled={!isNeeded}
+                          disabled={!isNeeded || isRowAbsent}
                           className={`border rounded px-1 py-0.5 text-xs w-14 focus:outline-none focus:ring-1 focus:ring-blue-500 ${
-                            isNeeded 
+                            isNeeded && !isRowAbsent
                               ? 'border-gray-300 bg-white' 
                               : 'border-gray-200 bg-gray-100 text-gray-400 cursor-not-allowed'
                           }`}
@@ -1264,9 +1285,9 @@ const ScheduleGridView = ({
                           type="text"
                           value={data.lunch2Cov || ''}
                           onChange={(e) => handleFieldChange(student.id, 'lunch2Cov', e.target.value)}
-                          disabled={!isNeeded}
+                          disabled={!isNeeded || isRowAbsent}
                           className={`border rounded px-1 py-0.5 text-xs w-14 focus:outline-none focus:ring-1 focus:ring-blue-500 ${
-                            isNeeded 
+                            isNeeded && !isRowAbsent
                               ? 'border-gray-300 bg-white' 
                               : 'border-gray-200 bg-gray-100 text-gray-400 cursor-not-allowed'
                           }`}
@@ -1276,7 +1297,7 @@ const ScheduleGridView = ({
                   </td>
                   
                   {/* PM Staff - stacked for 2:1 */}
-                  <td className={`px-3 py-1.5 ${isAbsentPM ? 'bg-red-50' : ''}`}>
+                  <td className={`px-3 py-1.5 ${pmSessionShadeClass}`}>
                     {isAbsentPM ? (
                       <span className={`font-semibold text-xs ${student.outOfSessionPM || student.outOfSessionFullDay ? 'text-yellow-700' : 'text-red-700'}`}>
                         {student.outOfSessionPM || student.outOfSessionFullDay ? 'OUT' : 'ABSENT'}
@@ -1292,16 +1313,18 @@ const ScheduleGridView = ({
                               'PM', 
                               staffAssignments[0]?.staffId, 
                               (e) => handleStaffSelect(student, 'PM', e.target.value, 0),
-                              "-- Select --"
+                              "-- Select --",
+                              isRowAbsent
                             )}
                             {staffAssignments.length > 0 && (
                               <button
                                 onClick={() => toggleLock(student, 'PM')}
+                                disabled={isRowAbsent}
                                 className={`p-1 rounded ${
                                   staffAssignments[0].isLocked
                                     ? 'text-red-600 hover:text-red-800 hover:bg-red-50'
                                     : 'text-green-600 hover:text-green-800 hover:bg-green-50'
-                                }`}
+                                } ${isRowAbsent ? 'opacity-50 cursor-not-allowed hover:bg-transparent' : ''}`}
                                 title={staffAssignments[0].isLocked ? 'Locked (click to unlock)' : 'Unlocked (click to lock)'}
                               >
                                 {staffAssignments[0].isLocked ? <Lock className="w-3 h-3" /> : <Unlock className="w-3 h-3" />}
@@ -1316,7 +1339,8 @@ const ScheduleGridView = ({
                                 'PM', 
                                 staffAssignments[1]?.staffId, 
                                 (e) => handleStaffSelect(student, 'PM', e.target.value, 1),
-                                "-- Select --"
+                                "-- Select --",
+                                isRowAbsent
                               )}
                               {staffAssignments.length > 1 && (
                                 <button
@@ -1328,11 +1352,12 @@ const ScheduleGridView = ({
                                       onAssignmentLock(assignment.id);
                                     }
                                   }}
+                                  disabled={isRowAbsent}
                                   className={`p-1 rounded ${
                                     staffAssignments[1].isLocked
                                       ? 'text-red-600 hover:text-red-800 hover:bg-red-50'
                                       : 'text-green-600 hover:text-green-800 hover:bg-green-50'
-                                  }`}
+                                  } ${isRowAbsent ? 'opacity-50 cursor-not-allowed hover:bg-transparent' : ''}`}
                                   title={staffAssignments[1].isLocked ? 'Locked (click to unlock)' : 'Unlocked (click to lock)'}
                                 >
                                   {staffAssignments[1].isLocked ? <Lock className="w-3 h-3" /> : <Unlock className="w-3 h-3" />}
@@ -1346,7 +1371,7 @@ const ScheduleGridView = ({
                   </td>
                   
                   {/* PM Trainee */}
-                  <td className="px-3 py-1.5">
+                  <td className={`px-3 py-1.5 ${pmSessionShadeClass}`}>
                     {!isAbsentPM && (() => {
                       const traineeAssignments = getTraineeAssignments(student, 'PM');
                       const traineeStaffId = traineeAssignments[0]?.staffId || null;
@@ -1385,20 +1410,26 @@ const ScheduleGridView = ({
                   </td>
                   
                   {/* PM Times */}
-                  <td className="px-2 py-1.5">
+                  <td className={`px-2 py-1.5 ${pmSessionShadeClass}`}>
                     <input
                       type="text"
                       value={data.pmStart || defaults.pmStart}
                       onChange={(e) => handleFieldChange(student.id, 'pmStart', e.target.value)}
-                      className="border border-gray-300 rounded px-1 py-0.5 text-xs w-16 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                      disabled={isRowAbsent}
+                      className={`border rounded px-1 py-0.5 text-xs w-16 focus:outline-none focus:ring-1 focus:ring-blue-500 ${
+                        isRowAbsent ? 'border-gray-200 bg-gray-100 text-gray-500 cursor-not-allowed' : 'border-gray-300'
+                      }`}
                     />
                   </td>
-                  <td className="px-2 py-1.5">
+                  <td className={`px-2 py-1.5 ${pmSessionShadeClass}`}>
                     <input
                       type="text"
                       value={data.pmEnd || defaults.pmEnd}
                       onChange={(e) => handleFieldChange(student.id, 'pmEnd', e.target.value)}
-                      className="border border-gray-300 rounded px-1 py-0.5 text-xs w-16 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                      disabled={isRowAbsent}
+                      className={`border rounded px-1 py-0.5 text-xs w-16 focus:outline-none focus:ring-1 focus:ring-blue-500 ${
+                        isRowAbsent ? 'border-gray-200 bg-gray-100 text-gray-500 cursor-not-allowed' : 'border-gray-300'
+                      }`}
                     />
                   </td>
                 </tr>

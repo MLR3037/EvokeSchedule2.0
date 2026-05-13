@@ -410,13 +410,52 @@ export class SharePointService {
       console.log('🔍 Raw SharePoint staff response:', data);
 
       const staffItems = data.d.results || [];
-      console.log(`✅ Found ${staffItems.length} staff members`);
+      console.log(`✅ Found ${staffItems.length} staff list rows`);
 
       if (staffItems.length > 0) {
         console.log('📋 First staff item:', staffItems[0]);
       }
 
-      return staffItems.map(item => {
+      const dedupedStaffItemsByKey = new Map();
+      const duplicateRows = [];
+
+      staffItems.forEach(item => {
+        const staffPerson = item.StaffPerson || {};
+        const dedupeKey = staffPerson.Id
+          ? `id:${staffPerson.Id}`
+          : (staffPerson.EMail
+              ? `email:${String(staffPerson.EMail).toLowerCase().trim()}`
+              : `item:${item.Id}`);
+
+        const existing = dedupedStaffItemsByKey.get(dedupeKey);
+        if (!existing) {
+          dedupedStaffItemsByKey.set(dedupeKey, item);
+          return;
+        }
+
+        duplicateRows.push({ key: dedupeKey, existingId: existing.Id, duplicateId: item.Id });
+
+        const existingActive = existing.IsActive !== false;
+        const itemActive = item.IsActive !== false;
+
+        // Prefer active row; if equal, prefer latest list item ID.
+        const shouldReplace =
+          (itemActive && !existingActive) ||
+          (itemActive === existingActive && Number(item.Id) > Number(existing.Id));
+
+        if (shouldReplace) {
+          dedupedStaffItemsByKey.set(dedupeKey, item);
+        }
+      });
+
+      if (duplicateRows.length > 0) {
+        console.warn(`⚠️ Collapsed ${duplicateRows.length} duplicate staff list row(s) by person identity.`);
+      }
+
+      const dedupedStaffItems = Array.from(dedupedStaffItemsByKey.values());
+      console.log(`✅ Returning ${dedupedStaffItems.length} unique staff members`);
+
+      return dedupedStaffItems.map(item => {
         // Extract staff person info from Person/Group field
         const staffPerson = item.StaffPerson;
         const staffName = staffPerson ? staffPerson.Title : 'Unknown Staff';
@@ -1650,7 +1689,7 @@ export class SharePointService {
 
       console.log('💾 Saving assignment to DailyAssignments list:', assignmentData);
 
-      const response = await fetch(
+      const response = await this.retryFetch(
         `${this.siteUrl}/_api/web/lists/getbytitle('DailyAssignments')/items`,
         {
           method: 'POST',
@@ -1700,7 +1739,7 @@ export class SharePointService {
         IsTempStaff: assignment.isTempStaff || false
       };
 
-      const response = await fetch(
+      const response = await this.retryFetch(
         `${this.siteUrl}/_api/web/lists/getbytitle('DailyAssignments')/items(${itemId})`,
         {
           method: 'POST',
@@ -1731,7 +1770,7 @@ export class SharePointService {
 
   async deleteAssignmentById(itemId) {
     try {
-      const response = await fetch(
+      const response = await this.retryFetch(
         `${this.siteUrl}/_api/web/lists/getbytitle('DailyAssignments')/items(${itemId})`,
         {
           method: 'POST',
@@ -1904,6 +1943,16 @@ export class SharePointService {
 
   async syncAssignmentsForSchedule(scheduleId, assignments, scheduleDate) {
     try {
+      const executeInBatches = async (items, handler, batchSize = 10) => {
+        const results = [];
+        for (let index = 0; index < items.length; index += batchSize) {
+          const chunk = items.slice(index, index + batchSize);
+          const chunkResults = await Promise.all(chunk.map(handler));
+          results.push(...chunkResults);
+        }
+        return results;
+      };
+
       const existingItems = await this.loadAssignmentsForSchedule(scheduleId);
 
       const existingByKey = new Map();
@@ -1965,9 +2014,18 @@ export class SharePointService {
         toDelete.push(itemId);
       });
 
-      const createResults = await Promise.all(toCreate.map(a => this.saveAssignmentToHistory(a, scheduleId, scheduleDate)));
-      const updateResults = await Promise.all(toUpdate.map(entry => this.updateAssignmentInHistory(entry.itemId, entry.assignment, scheduleId, scheduleDate)));
-      const deleteResults = await Promise.all(toDelete.map(itemId => this.deleteAssignmentById(itemId)));
+      const createResults = await executeInBatches(
+        toCreate,
+        assignment => this.saveAssignmentToHistory(assignment, scheduleId, scheduleDate)
+      );
+      const updateResults = await executeInBatches(
+        toUpdate,
+        entry => this.updateAssignmentInHistory(entry.itemId, entry.assignment, scheduleId, scheduleDate)
+      );
+      const deleteResults = await executeInBatches(
+        toDelete,
+        itemId => this.deleteAssignmentById(itemId)
+      );
 
       const failedCreates = createResults.filter(r => !r.success);
       const failedUpdates = updateResults.filter(r => !r.success);
@@ -2172,23 +2230,15 @@ export class SharePointService {
       const dateStr = typeof date === 'string' ? date : `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
       console.log(`💾 Saving attendance for ${dateStr}...`);
 
-      // CRITICAL: Delete existing attendance records for this date FIRST
-      console.log(`🗑️ Deleting existing attendance records for ${dateStr} before saving new ones...`);
-      const deleteResult = await this.deleteAttendanceForDate(dateStr);
-      
-      if (!deleteResult.success) {
-        console.warn(`⚠️ Failed to delete old attendance records for ${dateStr}; skipping attendance sync for this save.`);
-        return false;
-      }
-      
-      if (deleteResult.failed > 0) {
-        console.warn(
-          `⚠️ ${deleteResult.failed} existing DailyAttendance record(s) failed to delete for ${dateStr}; skipping attendance sync for this save.`
-        );
-        return false;
-      }
-      
-      console.log(`✅ Deletion complete (${deleteResult.deleted} records removed), now saving new attendance records...`);
+      const executeInBatches = async (items, handler, batchSize = 10) => {
+        const results = [];
+        for (let index = 0; index < items.length; index += batchSize) {
+          const chunk = items.slice(index, index + batchSize);
+          const chunkResults = await Promise.all(chunk.map(handler));
+          results.push(...chunkResults);
+        }
+        return results;
+      };
 
       // Use provided staff/students if available, otherwise load fresh
       // If passed from App.js, these will have the current attendance flags
@@ -2299,37 +2349,109 @@ export class SharePointService {
       // Get request digest once
       const digest = await this.getRequestDigest();
 
-      // Save all records
-      const savePromises = attendanceRecords.map(record =>
-        fetch(
-          `${this.siteUrl}/_api/web/lists/getbytitle('DailyAttendance')/items`,
-          {
-            method: 'POST',
-            headers: {
-              'Authorization': `Bearer ${this.accessToken}`,
-              'Accept': 'application/json;odata=verbose',
-              'Content-Type': 'application/json;odata=verbose',
-              'X-RequestDigest': digest
-            },
-            body: JSON.stringify(record)
-          }
-        ).then(response => {
-          if (!response.ok) {
-            console.error(`Failed to save attendance record for ${record.PersonName}`);
-            return { success: false };
-          }
-          return { success: true };
-        }).catch(error => {
-          console.error(`Error saving attendance for ${record.PersonName}:`, error);
-          return { success: false };
-        })
-      );
+      const start = `${dateStr}T00:00:00Z`;
+      const end = `${dateStr}T23:59:59Z`;
+      const existingUrl = `${this.siteUrl}/_api/web/lists/getbytitle('DailyAttendance')/items?` +
+        `$filter=AttendanceDate ge datetime'${start}' and AttendanceDate le datetime'${end}'&` +
+        `$select=ID,PersonType,PersonID`;
 
-      const results = await Promise.all(savePromises);
-      const successCount = results.filter(r => r.success).length;
-      
-      console.log(`✅ Saved ${successCount}/${attendanceRecords.length} attendance records`);
-      return successCount === attendanceRecords.length;
+      const existingResponse = await this.retryFetch(existingUrl, {
+        method: 'GET',
+        headers: {
+          'Authorization': `Bearer ${this.accessToken}`,
+          'Accept': 'application/json;odata=verbose'
+        }
+      });
+
+      const existingByKey = new Map();
+      if (existingResponse.ok) {
+        const existingData = await existingResponse.json();
+        (existingData.d.results || []).forEach(item => {
+          const key = `${item.PersonType}__${item.PersonID}`;
+          if (!existingByKey.has(key)) {
+            existingByKey.set(key, item);
+          }
+        });
+      }
+
+      const toCreate = [];
+      const toUpdate = [];
+      attendanceRecords.forEach(record => {
+        const key = `${record.PersonType}__${record.PersonID}`;
+        const existing = existingByKey.get(key);
+        if (existing) {
+          toUpdate.push({ id: existing.ID, record });
+        } else {
+          toCreate.push(record);
+        }
+      });
+
+      const createResults = await executeInBatches(toCreate, async record => {
+        try {
+          const response = await this.retryFetch(
+            `${this.siteUrl}/_api/web/lists/getbytitle('DailyAttendance')/items`,
+            {
+              method: 'POST',
+              headers: {
+                'Authorization': `Bearer ${this.accessToken}`,
+                'Accept': 'application/json;odata=verbose',
+                'Content-Type': 'application/json;odata=verbose',
+                'X-RequestDigest': digest
+              },
+              body: JSON.stringify(record)
+            }
+          );
+
+          if (!response.ok) {
+            const errorText = await response.text();
+            return { success: false, error: errorText, person: record.PersonName };
+          }
+
+          return { success: true };
+        } catch (error) {
+          return { success: false, error: error.message, person: record.PersonName };
+        }
+      });
+
+      const updateResults = await executeInBatches(toUpdate, async entry => {
+        try {
+          const response = await this.retryFetch(
+            `${this.siteUrl}/_api/web/lists/getbytitle('DailyAttendance')/items(${entry.id})`,
+            {
+              method: 'POST',
+              headers: {
+                'Authorization': `Bearer ${this.accessToken}`,
+                'Accept': 'application/json;odata=verbose',
+                'Content-Type': 'application/json;odata=verbose',
+                'X-RequestDigest': digest,
+                'X-HTTP-Method': 'MERGE',
+                'If-Match': '*'
+              },
+              body: JSON.stringify(entry.record)
+            }
+          );
+
+          if (!response.ok) {
+            const errorText = await response.text();
+            return { success: false, error: errorText, person: entry.record.PersonName };
+          }
+
+          return { success: true };
+        } catch (error) {
+          return { success: false, error: error.message, person: entry.record.PersonName };
+        }
+      });
+
+      const allResults = [...createResults, ...updateResults];
+      const successCount = allResults.filter(result => result.success).length;
+      const failureCount = allResults.length - successCount;
+
+      if (failureCount > 0) {
+        console.warn('⚠️ Attendance upsert had failures:', allResults.filter(result => !result.success).slice(0, 5));
+      }
+
+      console.log(`✅ Attendance upsert complete: ${successCount}/${allResults.length} records saved`);
+      return failureCount === 0;
     } catch (error) {
       console.warn('⚠️ Attendance sync failed (schedule save already completed):', error.message);
       return false;
