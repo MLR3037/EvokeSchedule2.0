@@ -356,6 +356,16 @@ const ABAScheduler = () => {
       // -----------------------------------------------------------------------
       // Merge pending AbsenceSubmissions entered by staff in SharePoint
       // -----------------------------------------------------------------------
+      // Helper: format an ISO datetime string from SharePoint into readable h:mm AM/PM
+      const formatSubmissionTime = (iso) => {
+        if (!iso) return '';
+        try {
+          const d = new Date(iso);
+          if (isNaN(d)) return iso;
+          return d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit', hour12: true });
+        } catch { return iso; }
+      };
+
       const submissions = await sharePointService.loadAbsenceSubmissions(currentDate).catch(() => []);
       const appliedNow = [];
 
@@ -385,7 +395,7 @@ const ABAScheduler = () => {
                 absentAM,
                 absentPM,
                 absentFullDay,
-                // Apply estimated times from submission (only when that session is absent)
+                // Store raw ISO datetime — preserves full timestamp for downstream systems
                 absentAMArrivalTime:    absentAM  && !absentFullDay && sub.EstimatedArrivalTime
                   ? sub.EstimatedArrivalTime
                   : match.absentAMArrivalTime || '',
@@ -394,10 +404,11 @@ const ABAScheduler = () => {
                   : match.absentPMDepartureTime || ''
               });
               const statusLabel = absentFullDay ? 'Full Day' : absentAM && absentPM ? 'Full Day' : absentAM ? 'AM' : 'PM';
+              // Format ISO to h:mm AM/PM for the UI banner only
               const arrivalNote  = absentAM && !absentFullDay && sub.EstimatedArrivalTime
-                ? ` · ETA ${sub.EstimatedArrivalTime}` : '';
+                ? ` · ETA ${formatSubmissionTime(sub.EstimatedArrivalTime)}` : '';
               const departNote   = absentPM && !absentFullDay && sub.EstimatedDepartureTime
-                ? ` · ETD ${sub.EstimatedDepartureTime}` : '';
+                ? ` · ETD ${formatSubmissionTime(sub.EstimatedDepartureTime)}` : '';
               appliedNow.push({ name: match.name, type: 'Staff', status: statusLabel + arrivalNote + departNote });
               submissionIdsToMark.push(sub.ID);
             } else {
@@ -421,9 +432,9 @@ const ABAScheduler = () => {
               });
               const statusLabel = sub.AbsentFullDay ? 'Full Day' : sub.AbsentAM && sub.AbsentPM ? 'Full Day' : sub.AbsentAM ? 'AM' : 'PM';
               const arrivalNote  = sub.AbsentAM && !sub.AbsentFullDay && sub.EstimatedArrivalTime
-                ? ` · ETA ${sub.EstimatedArrivalTime}` : '';
+                ? ` · ETA ${formatSubmissionTime(sub.EstimatedArrivalTime)}` : '';
               const departNote   = sub.AbsentPM && !sub.AbsentFullDay && sub.EstimatedDepartureTime
-                ? ` · ETD ${sub.EstimatedDepartureTime}` : '';
+                ? ` · ETD ${formatSubmissionTime(sub.EstimatedDepartureTime)}` : '';
               appliedNow.push({ name: match.name, type: 'Client', status: statusLabel + arrivalNote + departNote });
               submissionIdsToMark.push(sub.ID);
             } else {

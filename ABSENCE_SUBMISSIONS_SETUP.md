@@ -41,8 +41,8 @@ Add the following columns to the list. The built-in **Title** column can be rena
 | `AbsentAM`               | Yes/No          | Default: No                                                           |
 | `AbsentPM`               | Yes/No          | Default: No                                                           |
 | `AbsentFullDay`          | Yes/No          | Default: No (auto-sets AM+PM when checked)                            |
-| `EstimatedArrivalTime`   | Single line     | For AbsentAM only — e.g. `9:30 AM`. Maps to attendance app.          |
-| `EstimatedDepartureTime` | Single line     | For AbsentPM only — e.g. `2:00 PM`. Maps to attendance app.          |
+| `EstimatedArrivalTime`   | **Date and Time** | For AbsentAM only — when are they arriving? Maps to attendance app.  |
+| `EstimatedDepartureTime` | **Date and Time** | For AbsentPM only — when are they leaving? Maps to attendance app.   |
 | `Notes`                  | Multiple lines  | Optional — reason/context                                             |
 | `Status`                 | Choice          | Options: `Pending`, `Applied` · Default: `Pending`                    |
 
@@ -66,11 +66,11 @@ Add the following columns to the list. The built-in **Title** column can be rena
 
 ### EstimatedArrivalTime / EstimatedDepartureTime
 
-These are plain **Single line of text** fields. Submitters type a time like `9:30 AM` or `2:00 PM`.
-- `EstimatedArrivalTime` is shown when `AbsentAM = Yes` (they're coming in late)
-- `EstimatedDepartureTime` is shown when `AbsentPM = Yes` (they're leaving early)
+These are **Date and Time** columns (set to show time, not just date). Submitters use the date/time picker — no free-text, no format ambiguity.
+- `EstimatedArrivalTime` — used when `AbsentAM = Yes` (they're coming in late for the AM session)
+- `EstimatedDepartureTime` — used when `AbsentPM = Yes` (they're leaving early during the PM session)
 
-The values are stored in the app and passed through to whatever attendance app you map them to later.
+SharePoint stores them as ISO 8601 timestamps (e.g. `2026-05-14T09:30:00Z`). The app stores the **full ISO string** so downstream systems get an unambiguous datetime. The scheduling app displays it in readable `h:mm AM/PM` format in the notification banner.
 
 ---
 
@@ -125,8 +125,8 @@ If neither matches:
 > 4. Pick the person from the **StaffLookup** or **ClientLookup** dropdown — no typing, no typos
 > 5. Enter today's date in **SubmissionDate**
 > 6. Check the appropriate absence boxes (AM / PM / Full Day)
-> 7. If **AbsentAM** — enter expected arrival time in `EstimatedArrivalTime` (e.g. `9:30 AM`)
-> 8. If **AbsentPM** — enter expected departure time in `EstimatedDepartureTime` (e.g. `2:00 PM`)
+> 7. If **AbsentAM** — use the date/time picker for `EstimatedArrivalTime` (set to today + arrival time)
+> 8. If **AbsentPM** — use the date/time picker for `EstimatedDepartureTime` (set to today + departure time)
 > 9. Click **Save**
 > 10. Notify the scheduler to **click Refresh** in the app
 
