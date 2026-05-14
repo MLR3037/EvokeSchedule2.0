@@ -32,6 +32,7 @@ export const ScheduleTableView = ({
   const [preAssignments, setPreAssignments] = useState({});
   const [lockedAssignments, setLockedAssignments] = useState(new Set());
   const [traineeAssignments, setTraineeAssignments] = useState({});
+  const [scheduleVersion, setScheduleVersion] = useState(0);
   
   // NEW: Temporary team overrides - persist in localStorage until cleared or date changes
   const getTempTeamStorageKey = () => {
@@ -105,6 +106,9 @@ export const ScheduleTableView = ({
     console.log('🔄 Schedule changed, syncing state...');
     console.log('  Total assignments:', schedule.assignments.length);
     console.log('  Total trainee assignments:', schedule.traineeAssignments?.length || 0);
+    
+    // Force re-render by incrementing version
+    setScheduleVersion(prev => prev + 1);
     
     // Sync locked assignments based on actual schedule
     const newLockedAssignments = new Set();
@@ -733,19 +737,41 @@ export const ScheduleTableView = ({
             className={`text-sm border rounded px-2 py-1 min-w-[160px] ${
               currentAssignment 
                 ? (() => {
+                    // Force re-evaluation when schedule changes (scheduleVersion: ${scheduleVersion})
                     const staffMember = staff.find(s => String(s.id) === String(currentAssignment.staffId));
                     if (!staffMember) return 'bg-gray-100 text-gray-600 font-bold';
-                    const roleColors = {
-                      'RBT': 'bg-purple-100 text-purple-700 font-bold',
-                      'BS': 'bg-blue-100 text-blue-700 font-bold',
-                      'BCBA': 'bg-orange-100 text-orange-700 font-bold',
-                      'EA': 'bg-green-100 text-green-700 font-bold',
-                      'MHA': 'bg-yellow-100 text-yellow-800 font-bold',
-                      'CC': 'bg-red-100 text-red-700 font-bold',
-                      'Teacher': 'bg-pink-100 text-pink-700 font-bold',
-                      'Director': 'bg-gray-100 text-gray-800 font-bold'
-                    };
-                    return roleColors[staffMember.role] || 'bg-gray-100 text-gray-600 font-bold';
+                    
+                    // Check for validation issues
+                    const normalizedSession = normalizeSession(session);
+                    const normalizedStudentId = String(student.id);
+                    const normalizedStaffId = String(staffMember.id);
+                    
+                    // Get all assignments for this staff member from current schedule
+                    const staffAssignments = schedule.assignments.filter(a => String(a.staffId) === normalizedStaffId);
+                    
+                    // Check if staff is with THIS SAME student in a DIFFERENT session
+                    const hasStudentInBothSessions = staffAssignments.some(a => {
+                      const assignmentSession = normalizeSession(a.session);
+                      const assignmentStudentId = String(a.studentId);
+                      
+                      // Same student but different session
+                      return assignmentStudentId === normalizedStudentId && assignmentSession !== normalizedSession;
+                    });
+                    
+                    // Check if staff is with multiple non-paired students in THIS SAME session
+                    const sessionAssignments = staffAssignments.filter(a => normalizeSession(a.session) === normalizedSession);
+                    const uniqueStudents = [...new Set(sessionAssignments.map(a => String(a.studentId)))];
+                    const hasMultipleNonPairedStudents = uniqueStudents.length > 1 && !uniqueStudents.every((sid, i, arr) => 
+                      i === 0 || areStudentsPaired(sid, arr[0])
+                    );
+                    
+                    // If validation issue, show red - otherwise show green for valid assignment
+                    if (hasStudentInBothSessions || hasMultipleNonPairedStudents) {
+                      return 'bg-red-100 text-red-700 font-bold border-red-300';
+                    }
+                    
+                    // Valid assignment - show green
+                    return 'bg-green-100 text-green-700 font-bold';
                   })()
                 : 'bg-white'
             }`}

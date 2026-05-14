@@ -510,11 +510,17 @@ export class Schedule {
   isStaffAvailable(staffId, session, program) {
     // Check for conflicts in the SAME SESSION across ALL PROGRAMS
     // A staff member can't work both Primary and Secondary in the same session
-    const sessionAssignments = this.assignments.filter(a => a.session === session);
+    // Normalize session values to ensure case-insensitive comparison (AM/am/Am all match)
+    const normalizedSession = String(session || '').trim().toUpperCase();
+    const sessionAssignments = this.assignments.filter(a => 
+      String(a.session || '').trim().toUpperCase() === normalizedSession
+    );
     const isInRegularAssignment = sessionAssignments.some(a => a.staffId === staffId);
     
     // Also check if staff is assigned as a trainee in this session
-    const sessionTraineeAssignments = this.traineeAssignments.filter(a => a.session === session);
+    const sessionTraineeAssignments = this.traineeAssignments.filter(a => 
+      String(a.session || '').trim().toUpperCase() === normalizedSession
+    );
     const isInTraineeAssignment = sessionTraineeAssignments.some(a => a.staffId === staffId);
     
     return !isInRegularAssignment && !isInTraineeAssignment;

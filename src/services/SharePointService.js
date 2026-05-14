@@ -944,7 +944,9 @@ export class SharePointService {
 
       // Step 2: Load all assignments for this schedule from DailyAssignments
       const assignmentsUrl = `${this.siteUrl}/_api/web/lists/getbytitle('DailyAssignments')/items?` +
-        `$filter=ScheduleID eq ${scheduleId}`;
+        `$filter=ScheduleID eq ${scheduleId}&` +
+        `$select=ID,ScheduleID,ScheduleDate,StaffID,StaffName,StudentID,StudentName,Session,Program,AssignmentType,IsLocked,IsTempStaff&` +
+        `$top=5000`;
 
       console.log('🔍 Fetching assignments from:', assignmentsUrl);
 
@@ -1847,7 +1849,8 @@ export class SharePointService {
 
     const assignmentsUrl = `${this.siteUrl}/_api/web/lists/getbytitle('DailyAssignments')/items?` +
       `$filter=ScheduleDate ge datetime'${start}' and ScheduleDate le datetime'${end}'&` +
-      `$select=ID,ScheduleID,ScheduleDate,StaffID,StaffName,StudentID,StudentName,Session,Program,AssignmentType,IsLocked,IsTempStaff`;
+      `$select=ID,ScheduleID,ScheduleDate,StaffID,StaffName,StudentID,StudentName,Session,Program,AssignmentType,IsLocked,IsTempStaff&` +
+      `$top=5000`;
 
     const response = await this.retryFetch(assignmentsUrl, {
       method: 'GET',
@@ -1923,7 +1926,8 @@ export class SharePointService {
   async loadAssignmentsForSchedule(scheduleId) {
     const assignmentsUrl = `${this.siteUrl}/_api/web/lists/getbytitle('DailyAssignments')/items?` +
       `$filter=ScheduleID eq ${scheduleId}&` +
-      `$select=ID,ScheduleID,ScheduleDate,StaffID,StaffName,StudentID,StudentName,Session,Program,AssignmentType,IsLocked,IsTempStaff`;
+      `$select=ID,ScheduleID,ScheduleDate,StaffID,StaffName,StudentID,StudentName,Session,Program,AssignmentType,IsLocked,IsTempStaff&` +
+      `$top=5000`;
 
     const response = await this.retryFetch(assignmentsUrl, {
       method: 'GET',
@@ -2139,7 +2143,8 @@ export class SharePointService {
       
       const assignmentsUrl = `${this.siteUrl}/_api/web/lists/getbytitle('DailyAssignments')/items?` +
         `$filter=ScheduleID eq ${scheduleId}&` +
-        `$select=ID,Title,StaffName,StudentName`;
+        `$select=ID,Title,StaffName,StudentName&` +
+        `$top=5000`;
 
       const response = await this.retryFetch(assignmentsUrl, {
         method: 'GET',
@@ -2353,7 +2358,8 @@ export class SharePointService {
       const end = `${dateStr}T23:59:59Z`;
       const existingUrl = `${this.siteUrl}/_api/web/lists/getbytitle('DailyAttendance')/items?` +
         `$filter=AttendanceDate ge datetime'${start}' and AttendanceDate le datetime'${end}'&` +
-        `$select=ID,PersonType,PersonID`;
+        `$select=ID,PersonType,PersonID&` +
+        `$top=5000`;
 
       const existingResponse = await this.retryFetch(existingUrl, {
         method: 'GET',
@@ -2497,7 +2503,8 @@ export class SharePointService {
       const end = `${dateStr}T23:59:59Z`;
       const attendanceUrl = `${this.siteUrl}/_api/web/lists/getbytitle('DailyAttendance')/items?` +
         `$filter=AttendanceDate ge datetime'${start}' and AttendanceDate le datetime'${end}'&` +
-        `$select=ID,PersonName,AttendanceDate`;
+        `$select=ID,PersonName,AttendanceDate&` +
+        `$top=5000`;
 
       const response = await this.retryFetch(attendanceUrl, {
         method: 'GET',
@@ -2599,7 +2606,8 @@ export class SharePointService {
 
       const attendanceUrl = `${this.siteUrl}/_api/web/lists/getbytitle('DailyAttendance')/items?` +
         `$filter=AttendanceDate eq '${dateStr}'&` +
-        `$select=PersonType,PersonID,PersonName,Status,AbsentAM,AbsentPM,AbsentFullDay,OutOfSessionAM,OutOfSessionPM,OutOfSessionFullDay`;
+        `$select=PersonType,PersonID,PersonName,Status,AbsentAM,AbsentPM,AbsentFullDay,OutOfSessionAM,OutOfSessionPM,OutOfSessionFullDay&` +
+        `$top=5000`;
 
       const response = await this.retryFetch(attendanceUrl, {
         method: 'GET',

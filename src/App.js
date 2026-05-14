@@ -368,9 +368,9 @@ const ABAScheduler = () => {
         if (oldDateStr !== newDateStr) {
           console.log('📅 Date changed from', oldDateStr, 'to', newDateStr);
           
-          // Save current day's attendance to history before changing date
-          console.log('💾 Saving attendance history for', oldDateStr);
-          await sharePointService.saveAttendanceHistory(staff, students, currentDate);
+          // Save current day's attendance before changing date (date-scoped DailyAttendance)
+          console.log('💾 Saving attendance for', oldDateStr);
+          await sharePointService.saveAttendanceForDate(currentDate, staff, students);
           
           // Clear attendance in local state FIRST
           const clearedStaff = staff.map(s => new Staff({
@@ -1822,21 +1822,10 @@ const handleAssignmentRemove = (assignmentId) => {
         }
       }
 
-      // Save to SharePoint in background
-      const updatedStaffMember = new Staff({
-        ...staffMember,
-        absentAM: attendanceData.absentAM,
-        absentPM: attendanceData.absentPM,
-        absentFullDay: attendanceData.absentFullDay,
-        absentAMArrivalTime: attendanceData.absentAMArrivalTime || '',
-        absentPMDepartureTime: attendanceData.absentPMDepartureTime || '',
-        outOfSessionAM: attendanceData.outOfSessionAM,
-        outOfSessionPM: attendanceData.outOfSessionPM,
-        outOfSessionFullDay: attendanceData.outOfSessionFullDay
-      });
-      await sharePointService.saveStaff(updatedStaffMember, true);
+      // Persist attendance per selected date in DailyAttendance (do not write date-specific flags to Staff list)
+      await sharePointService.saveAttendanceForDate(currentDate, updatedStaff, students);
       
-      console.log('✅ Staff attendance updated:', staffMember.name, attendanceData);
+      console.log('✅ Staff attendance updated for date:', currentDate.toDateString(), staffMember.name, attendanceData);
     } catch (error) {
       console.error('Error updating staff attendance:', error);
       // Don't reload on error - keep local state
@@ -1893,16 +1882,10 @@ const handleAssignmentRemove = (assignmentId) => {
         }
       }
 
-      // Save to SharePoint in background
-      const updatedStudent = new Student({
-        ...student,
-        absentAM: attendanceData.absentAM,
-        absentPM: attendanceData.absentPM,
-        absentFullDay: attendanceData.absentFullDay
-      });
-      await sharePointService.saveStudent(updatedStudent, true);
+      // Persist attendance per selected date in DailyAttendance (do not write date-specific flags to Clients list)
+      await sharePointService.saveAttendanceForDate(currentDate, staff, updatedStudents);
       
-      console.log('✅ Student attendance updated:', student.name, attendanceData);
+      console.log('✅ Student attendance updated for date:', currentDate.toDateString(), student.name, attendanceData);
     } catch (error) {
       console.error('Error updating student attendance:', error);
       // Don't reload on error - keep local state

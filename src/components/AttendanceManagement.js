@@ -19,6 +19,11 @@ export const AttendanceManagement = ({
   const [programFilter, setProgramFilter] = useState('All'); // 'All' | 'Primary' | 'Secondary'
   const [sortOrder, setSortOrder] = useState('asc'); // 'asc' | 'desc'
 
+  const selectedDate = useMemo(() => {
+    const parsedDate = currentDate instanceof Date ? currentDate : new Date(currentDate);
+    return Number.isNaN(parsedDate.getTime()) ? new Date() : parsedDate;
+  }, [currentDate]);
+
   const normalizeTime12Hour = (value) => {
     const raw = (value || '').trim();
     if (!raw) return '';
@@ -80,6 +85,16 @@ export const AttendanceManagement = ({
         : (b?.name || '').localeCompare(a?.name || '')
     );
   }, [students, searchTerm, programFilter, sortOrder]);
+
+  const unscheduledStudents = useMemo(() => {
+    return students
+      .filter(student => {
+        if (!student.isActive) return false;
+        if (typeof student.isScheduledForDay !== 'function') return false;
+        return !student.isScheduledForDay(selectedDate);
+      })
+      .sort((a, b) => (a?.name || '').localeCompare(b?.name || ''));
+  }, [students, selectedDate]);
 
   // Count absences
   const counts = useMemo(() => {
@@ -280,8 +295,8 @@ export const AttendanceManagement = ({
 
       <div className="p-6">
         {/* Absent People Summary Lists */}
-        {(counts.staffAbsentAM > 0 || counts.staffAbsentPM > 0 || counts.clientsAbsentAM > 0 || counts.clientsAbsentPM > 0) && (
-          <div className="mb-6 grid grid-cols-1 md:grid-cols-2 gap-4">
+        {(counts.staffAbsentAM > 0 || counts.staffAbsentPM > 0 || counts.clientsAbsentAM > 0 || counts.clientsAbsentPM > 0 || unscheduledStudents.length > 0) && (
+          <div className="mb-6 grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
             {/* Absent Staff */}
             {(counts.staffAbsentAM > 0 || counts.staffAbsentPM > 0) && (
               <div className="bg-red-50 border border-red-200 rounded-lg p-4">
@@ -318,6 +333,24 @@ export const AttendanceManagement = ({
                         <span className="text-orange-700 text-xs">{s.getAttendanceStatus()}</span>
                       </div>
                     ))}
+                </div>
+              </div>
+            )}
+
+            {/* Clients Not Scheduled */}
+            {unscheduledStudents.length > 0 && (
+              <div className="bg-amber-50 border border-amber-200 rounded-lg p-4">
+                <h3 className="font-semibold text-amber-900 mb-3 flex items-center gap-2">
+                  <Calendar className="w-4 h-4" />
+                  Not Scheduled Clients Today
+                </h3>
+                <div className="space-y-2 max-h-56 overflow-auto pr-1">
+                  {unscheduledStudents.map(student => (
+                    <div key={student.id} className="flex items-center justify-between text-sm">
+                      <span className="text-amber-900 font-medium">{student.name}</span>
+                      <span className="text-amber-700 text-xs">{student.program}</span>
+                    </div>
+                  ))}
                 </div>
               </div>
             )}

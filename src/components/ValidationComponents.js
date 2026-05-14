@@ -103,7 +103,11 @@ export const ValidationPanel = ({ schedule, staff, students, onValidationChange 
       const studentAssignments = schedule.getStudentAssignments(student.id);
       
       for (const session of ['AM', 'PM']) {
-        const sessionAssignments = studentAssignments.filter(a => a.session === session);
+        // Normalize session for case-insensitive comparison
+        const normalizedSession = String(session || '').trim().toUpperCase();
+        const sessionAssignments = studentAssignments.filter(a => 
+          String(a.session || '').trim().toUpperCase() === normalizedSession
+        );
         const requiredStaff = student.ratio === RATIOS.TWO_TO_ONE ? 2 : 1;
         
         if (sessionAssignments.length > 0 && sessionAssignments.length < requiredStaff) {
@@ -123,19 +127,48 @@ export const ValidationPanel = ({ schedule, staff, students, onValidationChange 
 
     for (const student of activeStudents) {
       const studentAssignments = schedule.getStudentAssignments(student.id);
-      const staffIds = studentAssignments.map(a => a.staffId);
-      const uniqueStaffIds = [...new Set(staffIds)];
       
-      if (staffIds.length !== uniqueStaffIds.length) {
-        const duplicateStaff = staffIds.filter((id, index) => staffIds.indexOf(id) !== index);
-        const duplicateStaffNames = duplicateStaff.map(id => {
-          const staffMember = staff.find(s => s.id === id);
-          return staffMember ? staffMember.name : `Staff ID ${id}`;
-        });
+      // Group assignments by session to check for same staff across different sessions
+      const normalizeSession = (session) => String(session || '').trim().toUpperCase();
+      const sessionGroups = {};
+      
+      studentAssignments.forEach(assignment => {
+        const sessionKey = normalizeSession(assignment.session);
+        if (!sessionGroups[sessionKey]) {
+          sessionGroups[sessionKey] = [];
+        }
+        // Normalize staff ID to string for consistent comparison
+        sessionGroups[sessionKey].push(String(assignment.staffId));
+      });
+      
+      // Find staff IDs that appear in multiple sessions
+      const allSessions = Object.keys(sessionGroups);
+      if (allSessions.length > 1) {
+        const staffInMultipleSessions = [];
         
-        errors.push(
-          `${student.name} has the same staff member(s) assigned multiple times: ${[...new Set(duplicateStaffNames)].join(', ')}`
-        );
+        // Check each session's staff against other sessions
+        for (let i = 0; i < allSessions.length; i++) {
+          for (let j = i + 1; j < allSessions.length; j++) {
+            const session1Staff = sessionGroups[allSessions[i]];
+            const session2Staff = sessionGroups[allSessions[j]];
+            
+            // Find staff that appear in both sessions (with normalized comparison)
+            const duplicates = session1Staff.filter(id => session2Staff.includes(id));
+            staffInMultipleSessions.push(...duplicates);
+          }
+        }
+        
+        if (staffInMultipleSessions.length > 0) {
+          const uniqueDuplicates = [...new Set(staffInMultipleSessions)];
+          const duplicateStaffNames = uniqueDuplicates.map(id => {
+            const staffMember = staff.find(s => String(s.id) === String(id));
+            return staffMember ? staffMember.name : `Staff ID ${id}`;
+          });
+          
+          errors.push(
+            `${student.name} has the same staff member(s) assigned multiple times: ${duplicateStaffNames.join(', ')}`
+          );
+        }
       }
     }
 
@@ -152,7 +185,11 @@ export const ValidationPanel = ({ schedule, staff, students, onValidationChange 
       // Check for overallocation
       const sessionCounts = { AM: 0, PM: 0 };
       assignments.forEach(assignment => {
-        sessionCounts[assignment.session]++;
+        // Normalize session to ensure consistent counting
+        const normalizedSession = String(assignment.session || '').trim().toUpperCase();
+        if (sessionCounts.hasOwnProperty(normalizedSession)) {
+          sessionCounts[normalizedSession]++;
+        }
       });
 
       Object.entries(sessionCounts).forEach(([session, count]) => {
@@ -206,7 +243,11 @@ export const ValidationPanel = ({ schedule, staff, students, onValidationChange 
       const sessions = ['AM', 'PM'];
       
       for (const session of sessions) {
-        const sessionAssignments = assignments.filter(a => a.session === session);
+        // Normalize session for case-insensitive comparison
+        const normalizedSession = String(session || '').trim().toUpperCase();
+        const sessionAssignments = assignments.filter(a => 
+          String(a.session || '').trim().toUpperCase() === normalizedSession
+        );
         if (sessionAssignments.length === 0) {
           warnings.push(`${student.name} has no assignment for ${session} session`);
         }
