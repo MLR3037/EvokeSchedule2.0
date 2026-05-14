@@ -1635,11 +1635,38 @@ export class SharePointService {
         `updated: ${assignmentSyncResult.updated}, deleted: ${assignmentSyncResult.deleted})`
       );
 
-      // ✅ NEW: Save attendance data to DailyAttendance
-      // Note: This will save whatever attendance state is currently in SharePoint
-      // The actual attendance state should be passed from App.js during save
-      console.log('💾 Saving attendance data for', schedule.date);
-      await this.saveAttendanceForDate(schedule.date, this.cachedStaff, this.cachedStudents);
+      // Save attendance for this date only when attendance state changed.
+      // If changed, overwrite date records to avoid stale/duplicate entries.
+      const canSyncAttendance = Array.isArray(this.cachedStaff) && Array.isArray(this.cachedStudents);
+      if (canSyncAttendance) {
+        const attendanceChanged = await this.hasAttendanceChangedForDate(
+          schedule.date,
+          this.cachedStaff,
+          this.cachedStudents
+        );
+
+        if (attendanceChanged) {
+          console.log('💾 Attendance changed - overwriting DailyAttendance for', schedule.date);
+          const deleteResult = await this.deleteAttendanceForDate(schedule.date);
+          if (deleteResult && deleteResult.success === false) {
+            console.warn('⚠️ Attendance delete step had failures before overwrite:', deleteResult);
+          }
+
+          const saveAttendanceResult = await this.saveAttendanceForDate(
+            schedule.date,
+            this.cachedStaff,
+            this.cachedStudents
+          );
+
+          if (!saveAttendanceResult) {
+            console.warn('⚠️ Attendance overwrite save had failures for', schedule.date);
+          }
+        } else {
+          console.log('✅ Attendance unchanged for', schedule.date, '- skipping attendance overwrite');
+        }
+      } else {
+        console.log('ℹ️ Skipping attendance sync during schedule save (staff/students not provided)');
+      }
 
       return true;
     } catch (error) {
@@ -2224,6 +2251,240 @@ export class SharePointService {
    * Save attendance data for all staff and students for a specific date
    * This replaces the old saveAttendanceHistory method
    */
+  buildExpectedAttendanceSnapshot(staff = [], students = []) {
+    const normalizeBoolean = value => !!value;
+
+    const buildPersonSnapshot = person => ({
+      absentAM: normalizeBoolean(person.absentAM),
+      absentPM: normalizeBoolean(person.absentPM),
+      absentFullDay: normalizeBoolean(person.absentFullDay),
+      outOfSessionAM: normalizeBoolean(person.outOfSessionAM),
+      outOfSessionPM: normalizeBoolean(person.outOfSessionPM),
+      outOfSessionFullDay: normalizeBoolean(person.outOfSessionFullDay),
+      status: this.getAttendanceStatusForPerson(person)
+    });
+
+    const snapshot = {
+      staff: {},
+      students: {}
+    };
+
+    (staff || []).forEach(staffMember => {
+      if (!staffMember?.isActive) return;
+      snapshot.staff[staffMember.id] = buildPersonSnapshot(staffMember);
+    });
+
+    (students || []).forEach(student => {
+      if (!student?.isActive) return;
+      snapshot.students[student.id] = buildPersonSnapshot(student);
+    });
+
+    return snapshot;
+  }
+
+  normalizeAttendancePersonType(personType) {
+    const normalized = String(personType || '').trim().toLowerCase();
+    if (normalized === 'staff') {
+      return 'Staff';
+    }
+    if (normalized === 'student' || normalized === 'client') {
+      return 'Client';
+    }
+    return personType || '';
+  }
+
+  getAttendanceIdentityKey(personType, personId) {
+    const canonicalType = this.normalizeAttendancePersonType(personType);
+    return `${canonicalType}__${personId}`;
+  }
+
+  getAttendanceStatusForPerson(person) {
+    if (person.absentFullDay) {
+      return 'Absent Full Day';
+    }
+    if (person.absentAM && person.absentPM) {
+      return 'Absent Full Day';
+    }
+    if (person.outOfSessionFullDay) {
+      return 'Out Session Full Day';
+    }
+    if (person.outOfSessionAM && person.outOfSessionPM) {
+      return 'Out Session Full Day';
+    }
+    if (person.absentAM && person.outOfSessionPM) {
+      return 'Absent AM / Out Session PM';
+    }
+    if (person.outOfSessionAM && person.absentPM) {
+      return 'Out Session AM / Absent PM';
+    }
+    if (person.absentAM) {
+      return 'Absent AM';
+    }
+    if (person.absentPM) {
+      return 'Absent PM';
+    }
+    if (person.outOfSessionAM) {
+      return 'Out Session AM';
+    }
+    if (person.outOfSessionPM) {
+      return 'Out Session PM';
+    }
+    return 'Present';
+  }
+
+  compareAttendanceMaps(existingMap = {}, expectedMap = {}) {
+    const existingKeys = Object.keys(existingMap || {});
+    const expectedKeys = Object.keys(expectedMap || {});
+
+    if (existingKeys.length !== expectedKeys.length) {
+      return false;
+    }
+
+    return expectedKeys.every(key => {
+      const existing = existingMap[key];
+      const expected = expectedMap[key];
+      if (!existing || !expected) {
+        return false;
+      }
+
+      return (
+        !!existing.absentAM === !!expected.absentAM &&
+        !!existing.absentPM === !!expected.absentPM &&
+        !!existing.absentFullDay === !!expected.absentFullDay &&
+        !!existing.outOfSessionAM === !!expected.outOfSessionAM &&
+        !!existing.outOfSessionPM === !!expected.outOfSessionPM &&
+        !!existing.outOfSessionFullDay === !!expected.outOfSessionFullDay &&
+        (existing.status || 'Present') === (expected.status || 'Present')
+      );
+    });
+  }
+
+  async hasDuplicateAttendanceRecordsForDate(date) {
+    try {
+      if (!this.isAuthenticated()) {
+        return false;
+      }
+
+      const dateStr = typeof date === 'string'
+        ? date
+        : `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
+
+      const attendanceUrl = `${this.siteUrl}/_api/web/lists/getbytitle('DailyAttendance')/items?` +
+        `$filter=AttendanceDate eq '${dateStr}'&` +
+        `$select=ID,PersonType,PersonID&` +
+        `$top=5000`;
+
+      const response = await this.retryFetch(attendanceUrl, {
+        method: 'GET',
+        headers: {
+          'Authorization': `Bearer ${this.accessToken}`,
+          'Accept': 'application/json;odata=verbose'
+        }
+      });
+
+      if (!response.ok) {
+        return false;
+      }
+
+      const data = await response.json();
+      const records = data.d.results || [];
+
+      const countsByKey = new Map();
+      records.forEach(record => {
+        const key = this.getAttendanceIdentityKey(record.PersonType, record.PersonID);
+        countsByKey.set(key, (countsByKey.get(key) || 0) + 1);
+      });
+
+      return Array.from(countsByKey.values()).some(count => count > 1);
+    } catch (error) {
+      console.warn('⚠️ Could not check for duplicate attendance records:', error.message);
+      return false;
+    }
+  }
+
+  async hasLegacyOrIncompleteAttendanceRecordsForDate(date) {
+    try {
+      if (!this.isAuthenticated()) {
+        return false;
+      }
+
+      const dateStr = typeof date === 'string'
+        ? date
+        : `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
+
+      const attendanceUrl = `${this.siteUrl}/_api/web/lists/getbytitle('DailyAttendance')/items?` +
+        `$filter=AttendanceDate eq '${dateStr}'&` +
+        `$select=ID,PersonType,PersonID,Status&` +
+        `$top=5000`;
+
+      const response = await this.retryFetch(attendanceUrl, {
+        method: 'GET',
+        headers: {
+          'Authorization': `Bearer ${this.accessToken}`,
+          'Accept': 'application/json;odata=verbose'
+        }
+      });
+
+      if (!response.ok) {
+        return false;
+      }
+
+      const data = await response.json();
+      const records = data.d.results || [];
+
+      return records.some(record => {
+        const originalType = String(record.PersonType || '').trim();
+        const canonicalType = this.normalizeAttendancePersonType(originalType);
+        const isLegacyType = canonicalType !== originalType;
+        const hasMissingStatus = !String(record.Status || '').trim();
+        return isLegacyType || hasMissingStatus;
+      });
+    } catch (error) {
+      console.warn('⚠️ Could not check legacy/incomplete attendance records:', error.message);
+      return false;
+    }
+  }
+
+  async hasAttendanceChangedForDate(date, staff = [], students = []) {
+    try {
+      const hasDuplicates = await this.hasDuplicateAttendanceRecordsForDate(date);
+      if (hasDuplicates) {
+        console.warn('⚠️ Duplicate attendance records detected - forcing overwrite for date:', date);
+        return true;
+      }
+
+      const hasLegacyOrIncomplete = await this.hasLegacyOrIncompleteAttendanceRecordsForDate(date);
+      if (hasLegacyOrIncomplete) {
+        console.warn('⚠️ Legacy or incomplete attendance records detected - forcing overwrite for date:', date);
+        return true;
+      }
+
+      const existingAttendance = await this.loadAttendanceForDate(date);
+      const expectedAttendance = this.buildExpectedAttendanceSnapshot(staff, students);
+
+      if (!existingAttendance) {
+        const hasExpectedRecords =
+          Object.keys(expectedAttendance.staff).length > 0 ||
+          Object.keys(expectedAttendance.students).length > 0;
+        return hasExpectedRecords;
+      }
+
+      const isStaffEqual = this.compareAttendanceMaps(
+        existingAttendance.staff || {},
+        expectedAttendance.staff || {}
+      );
+      const isStudentsEqual = this.compareAttendanceMaps(
+        existingAttendance.students || {},
+        expectedAttendance.students || {}
+      );
+
+      return !(isStaffEqual && isStudentsEqual);
+    } catch (error) {
+      console.warn('⚠️ Could not compare attendance state before schedule save, forcing overwrite:', error.message);
+      return true;
+    }
+  }
+
   async saveAttendanceForDate(date, staff = null, students = null) {
     try {
       if (!this.isAuthenticated()) {
@@ -2257,33 +2518,10 @@ export class SharePointService {
 
       const attendanceRecords = [];
 
-      // Create records for ALL staff (not just absent)
+      // Create records for ALL active staff (not just absent)
       staff.forEach(staffMember => {
         if (!staffMember.isActive) return;
-        
-        let status = 'Present';
-        
-        if (staffMember.absentFullDay) {
-          status = 'Absent Full Day';
-        } else if (staffMember.absentAM && staffMember.absentPM) {
-          status = 'Absent Full Day';
-        } else if (staffMember.outOfSessionFullDay) {
-          status = 'Out Session Full Day';
-        } else if (staffMember.outOfSessionAM && staffMember.outOfSessionPM) {
-          status = 'Out Session Full Day';
-        } else if (staffMember.absentAM && staffMember.outOfSessionPM) {
-          status = 'Absent AM / Out Session PM';
-        } else if (staffMember.outOfSessionAM && staffMember.absentPM) {
-          status = 'Out Session AM / Absent PM';
-        } else if (staffMember.absentAM) {
-          status = 'Absent AM';
-        } else if (staffMember.absentPM) {
-          status = 'Absent PM';
-        } else if (staffMember.outOfSessionAM) {
-          status = 'Out Session AM';
-        } else if (staffMember.outOfSessionPM) {
-          status = 'Out Session PM';
-        }
+        const status = this.getAttendanceStatusForPerson(staffMember);
 
         attendanceRecords.push({
           __metadata: { type: 'SP.Data.DailyAttendanceListItem' },
@@ -2303,33 +2541,10 @@ export class SharePointService {
         });
       });
 
-      // Create records for ALL students (not just absent)
+      // Create records for ALL active students (not just absent)
       students.forEach(student => {
         if (!student.isActive) return;
-
-        let status = 'Present';
-        
-        if (student.absentFullDay) {
-          status = 'Absent Full Day';
-        } else if (student.absentAM && student.absentPM) {
-          status = 'Absent Full Day';
-        } else if (student.outOfSessionFullDay) {
-          status = 'Out Session Full Day';
-        } else if (student.outOfSessionAM && student.outOfSessionPM) {
-          status = 'Out Session Full Day';
-        } else if (student.absentAM && student.outOfSessionPM) {
-          status = 'Absent AM / Out Session PM';
-        } else if (student.outOfSessionAM && student.absentPM) {
-          status = 'Out Session AM / Absent PM';
-        } else if (student.absentAM) {
-          status = 'Absent AM';
-        } else if (student.absentPM) {
-          status = 'Absent PM';
-        } else if (student.outOfSessionAM) {
-          status = 'Out Session AM';
-        } else if (student.outOfSessionPM) {
-          status = 'Out Session PM';
-        }
+        const status = this.getAttendanceStatusForPerson(student);
 
         attendanceRecords.push({
           __metadata: { type: 'SP.Data.DailyAttendanceListItem' },
@@ -2373,7 +2588,7 @@ export class SharePointService {
       if (existingResponse.ok) {
         const existingData = await existingResponse.json();
         (existingData.d.results || []).forEach(item => {
-          const key = `${item.PersonType}__${item.PersonID}`;
+          const key = this.getAttendanceIdentityKey(item.PersonType, item.PersonID);
           if (!existingByKey.has(key)) {
             existingByKey.set(key, item);
           }
@@ -2383,7 +2598,7 @@ export class SharePointService {
       const toCreate = [];
       const toUpdate = [];
       attendanceRecords.forEach(record => {
-        const key = `${record.PersonType}__${record.PersonID}`;
+        const key = this.getAttendanceIdentityKey(record.PersonType, record.PersonID);
         const existing = existingByKey.get(key);
         if (existing) {
           toUpdate.push({ id: existing.ID, record });
@@ -2634,6 +2849,7 @@ export class SharePointService {
       };
 
       records.forEach(record => {
+        const canonicalType = this.normalizeAttendancePersonType(record.PersonType);
         const personData = {
           absentAM: record.AbsentAM || false,
           absentPM: record.AbsentPM || false,
@@ -2644,9 +2860,9 @@ export class SharePointService {
           status: record.Status
         };
 
-        if (record.PersonType === 'Staff') {
+        if (canonicalType === 'Staff') {
           attendance.staff[record.PersonID] = personData;
-        } else if (record.PersonType === 'Client') {
+        } else if (canonicalType === 'Client') {
           attendance.students[record.PersonID] = personData;
         }
       });
@@ -2761,6 +2977,7 @@ export class SharePointService {
       // Create records for absent staff
       staff.forEach(staffMember => {
         if (staffMember.absentAM || staffMember.absentPM || staffMember.absentFullDay) {
+          const status = this.getAttendanceStatusForPerson(staffMember);
           attendanceRecords.push({
             __metadata: { type: 'SP.Data.DailyAttendanceListItem' },
             Title: `${staffMember.name}_${dateStr}`,
@@ -2768,6 +2985,7 @@ export class SharePointService {
             PersonType: 'Staff',
             PersonID: staffMember.id,
             PersonName: staffMember.name,
+            Status: status,
             AbsentAM: staffMember.absentAM || false,
             AbsentPM: staffMember.absentPM || false,
             AbsentFullDay: staffMember.absentFullDay || false,
@@ -2779,13 +2997,15 @@ export class SharePointService {
       // Create records for absent students
       students.forEach(student => {
         if (student.absentAM || student.absentPM || student.absentFullDay) {
+          const status = this.getAttendanceStatusForPerson(student);
           attendanceRecords.push({
             __metadata: { type: 'SP.Data.DailyAttendanceListItem' },
             Title: `${student.name}_${dateStr}`,
             AttendanceDate: dateStr,
-            PersonType: 'Student',
+            PersonType: 'Client',
             PersonID: student.id,
             PersonName: student.name,
+            Status: status,
             AbsentAM: student.absentAM || false,
             AbsentPM: student.absentPM || false,
             AbsentFullDay: student.absentFullDay || false,
