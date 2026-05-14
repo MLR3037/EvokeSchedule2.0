@@ -3329,6 +3329,11 @@ export class SharePointService {
    * Returns an array of raw submission objects with:
    *   { ID, PersonName, PersonType, AbsentAM, AbsentPM, AbsentFullDay, Notes }
    */
+  /**
+   * Load all absence submissions for a specific date.
+   * The list is a visibility log — no Status filter needed.
+   * The app tracks which IDs it has already processed in-memory (seenSubmissionIds).
+   */
   async loadAbsenceSubmissions(date) {
     try {
       if (!this.isAuthenticated()) return [];
@@ -3341,8 +3346,8 @@ export class SharePointService {
       const end   = `${dateStr}T23:59:59Z`;
 
       const url = `${this.siteUrl}/_api/web/lists/getbytitle('AbsenceSubmissions')/items?` +
-        `$filter=SubmissionDate ge datetime'${start}' and SubmissionDate le datetime'${end}' and Status eq 'Pending'&` +
-        `$select=ID,PersonName,PersonType,AbsentAM,AbsentPM,AbsentFullDay,Notes,Status,` +
+        `$filter=SubmissionDate ge datetime'${start}' and SubmissionDate le datetime'${end}'&` +
+        `$select=ID,PersonName,PersonType,AbsentAM,AbsentPM,AbsentFullDay,Notes,` +
         `StaffLookupId,StaffLookup/Title,ClientLookupId,ClientLookup/Title,` +
         `EstimatedArrivalTime,EstimatedDepartureTime&` +
         `$expand=StaffLookup,ClientLookup&` +
@@ -3365,6 +3370,7 @@ export class SharePointService {
       const data = await response.json();
       const results = data.d?.results || [];
       console.log(`📬 Found ${results.length} pending absence submission(s) for ${dateStr}`);
+        console.log(`📬 Found ${results.length} absence submission(s) for ${dateStr}`);
       return results;
     } catch (error) {
       // Always fail silently so a missing list never breaks the app

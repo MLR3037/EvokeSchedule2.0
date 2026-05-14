@@ -1,17 +1,19 @@
 # Absence Submissions – Setup Guide
 
 Staff can now enter client and staff absences directly into a SharePoint list instead of sending Teams messages. The app automatically picks up pending submissions every time the page refreshes and applies them to the attendance view.
+Staff can now enter client and staff absences directly into a SharePoint list instead of sending Teams messages. The app checks for new submissions automatically every 60 seconds and applies them in real time — no refresh needed.
 
 ---
 
 ## How It Works
 
 1. **Staff fill out a simple SharePoint form** (just like adding any list item in SharePoint)
-2. **On the next app refresh**, the app finds all `Pending` submissions for today's date
-3. **Absences are applied automatically** — the matching person's attendance flags are updated
-4. **The submission is marked `Applied`** so it isn't double-processed
-5. A **green banner** appears in the Attendance tab listing who was auto-marked absent
-6. The scheduler **saves the schedule** to lock in the updated attendance
+2. **The app checks for new submissions every 60 seconds** in the background
+3. **Absences are applied automatically** — the matching person's attendance flags are updated in real time
+4. A **green banner** appears in the Attendance tab listing who was auto-marked absent
+5. The scheduler **saves the schedule** to lock in the updated attendance
+
+The list acts as a **visibility log** — entries stay there permanently for tracking and reporting. The app tracks which entries it has already processed in memory so it never double-applies the same submission.
 
 ---
 
@@ -44,7 +46,6 @@ Add the following columns to the list. The built-in **Title** column can be rena
 | `EstimatedArrivalTime`   | **Date and Time** | For AbsentAM only — when are they arriving? Maps to attendance app.  |
 | `EstimatedDepartureTime` | **Date and Time** | For AbsentPM only — when are they leaving? Maps to attendance app.   |
 | `Notes`                  | Multiple lines  | Optional — reason/context                                             |
-| `Status`                 | Choice          | Options: `Pending`, `Applied` · Default: `Pending`                    |
 
 ### About the Lookup Columns
 
@@ -77,7 +78,7 @@ SharePoint stores them as ISO 8601 timestamps (e.g. `2026-05-14T09:30:00Z`). The
 ## Step 3 — Set Permissions
 
 - **All staff** who enter absences need **Contribute** access (to add list items)
-- The app's **service account / logged-in user** needs **Edit** access (to update Status to `Applied`)
+- No special write-back permissions needed — the app never modifies the list
 
 ---
 
@@ -95,12 +96,11 @@ That's it — no app access required for submitters.
 
 ## Step 5 — Test It
 
-1. Add a test submission in the list for today's date with `Status = Pending`
-2. Open the scheduler app
-3. Click **Refresh** or navigate to the **Attendance** tab
-4. You should see the green banner: *"1 absence submission auto-applied from SharePoint"*
-5. Verify the person shows as absent in the Attendance tab
-6. Check the SharePoint list — the submission's Status should now show `Applied`
+1. Add a test submission in the list for today's date
+2. Open the scheduler app (must be authenticated)
+3. Within 60 seconds (or click **Refresh**), you should see the green banner: *"1 absence submission auto-applied from SharePoint"*
+4. Verify the person shows as absent in the Attendance tab
+5. The SharePoint list entry stays as-is — the app doesn't modify it
 
 ---
 
@@ -111,7 +111,7 @@ The app matches submissions to staff/clients by **lookup ID** (the value from `S
 If the lookup columns are blank (e.g. someone edited the list directly), the app falls back to matching by the `PersonName` text field (case-insensitive).
 
 If neither matches:
-- The submission is skipped (not marked Applied)
+- The submission is skipped
 - A warning is logged in the browser console: `⚠️ AbsenceSubmission: no staff match for ID 42`
 
 ---
@@ -128,18 +128,17 @@ If neither matches:
 > 7. If **AbsentAM** — use the date/time picker for `EstimatedArrivalTime` (set to today + arrival time)
 > 8. If **AbsentPM** — use the date/time picker for `EstimatedDepartureTime` (set to today + departure time)
 > 9. Click **Save**
-> 10. Notify the scheduler to **click Refresh** in the app
 
-The scheduler will see the green banner confirming the absence was applied, including the estimated times.
+The app will pick it up automatically within 60 seconds. No need to notify the scheduler — the banner will appear on its own.
 
 ---
 
 ## What Happens After Applied
 
-- The submission row stays in the list but `Status` changes to `Applied`
-- It won't be re-processed on the next refresh
-- You can view all historical submissions for tracking/reporting purposes
-- The app still writes the attendance to `DailyAttendance` when the schedule is saved
+- The submission row stays in the list unchanged — it is a permanent log entry
+- The app tracks processed IDs in memory, so it will never re-apply the same entry during a session
+- You can view, filter, and report on all historical submissions directly in the SharePoint list
+- The app writes attendance to `DailyAttendance` when the schedule is saved
 
 ---
 
@@ -147,7 +146,7 @@ The scheduler will see the green banner confirming the absence was applied, incl
 
 | Symptom | Cause | Fix |
 |---|---|---|
-| Banner doesn't appear after refresh | Submission Status is not `Pending` | Check the list — it may have already been Applied |
-| Person not found warning in console | Name typo in submission | Correct `PersonName` to match exactly |
+| Banner doesn't appear within 60s | List not yet created or permission issue | Create the list per Step 1; check Contribute access |
+| Person not found warning in console | Lookup column not set, and name doesn't match | Ensure StaffLookup or ClientLookup is filled in |
 | App shows warning "AbsenceSubmissions not found" | List doesn't exist yet | Create the list per Step 1 |
-| Status not updating to Applied | Permission issue | Grant the logged-in user Edit access to the list |
+| Same absence applied again after page reload | Expected — seenSubmissionIds resets on page reload | The re-apply is harmless (OR logic, can't un-absent) |
