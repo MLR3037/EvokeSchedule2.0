@@ -3342,7 +3342,10 @@ export class SharePointService {
 
       const url = `${this.siteUrl}/_api/web/lists/getbytitle('AbsenceSubmissions')/items?` +
         `$filter=SubmissionDate ge datetime'${start}' and SubmissionDate le datetime'${end}' and Status eq 'Pending'&` +
-        `$select=ID,PersonName,PersonType,AbsentAM,AbsentPM,AbsentFullDay,Notes,Status&` +
+        `$select=ID,PersonName,PersonType,AbsentAM,AbsentPM,AbsentFullDay,Notes,Status,` +
+        `StaffLookupId,StaffLookup/Title,ClientLookupId,ClientLookup/Title,` +
+        `EstimatedArrivalTime,EstimatedDepartureTime&` +
+        `$expand=StaffLookup,ClientLookup&` +
         `$top=500`;
 
       const response = await this.retryFetch(url, {

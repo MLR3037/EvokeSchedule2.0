@@ -369,24 +369,47 @@ const ABAScheduler = () => {
           const nameLower = (sub.PersonName || '').trim().toLowerCase();
 
           if (isStaff) {
-            const match = finalStaffData.find(s => s.name.trim().toLowerCase() === nameLower);
+            // Primary match: StaffLookup → list item ID (authoritative). Fallback: name.
+            const staffLookupId = sub.StaffLookupId ? Number(sub.StaffLookupId) : null;
+            const match = staffLookupId
+              ? finalStaffData.find(s => Number(s.listItemId) === staffLookupId)
+              : finalStaffData.find(s => s.name.trim().toLowerCase() === nameLower);
             if (match) {
               const idx = finalStaffData.indexOf(match);
               finalStaffData = [...finalStaffData];
+              const absentAM      = sub.AbsentFullDay || sub.AbsentAM  || match.absentAM;
+              const absentPM      = sub.AbsentFullDay || sub.AbsentPM  || match.absentPM;
+              const absentFullDay = sub.AbsentFullDay || match.absentFullDay;
               finalStaffData[idx] = new Staff({
                 ...match,
-                absentAM:      sub.AbsentFullDay || sub.AbsentAM  || match.absentAM,
-                absentPM:      sub.AbsentFullDay || sub.AbsentPM  || match.absentPM,
-                absentFullDay: sub.AbsentFullDay || match.absentFullDay
+                absentAM,
+                absentPM,
+                absentFullDay,
+                // Apply estimated times from submission (only when that session is absent)
+                absentAMArrivalTime:    absentAM  && !absentFullDay && sub.EstimatedArrivalTime
+                  ? sub.EstimatedArrivalTime
+                  : match.absentAMArrivalTime || '',
+                absentPMDepartureTime:  absentPM  && !absentFullDay && sub.EstimatedDepartureTime
+                  ? sub.EstimatedDepartureTime
+                  : match.absentPMDepartureTime || ''
               });
-              appliedNow.push({ name: match.name, type: 'Staff',
-                status: sub.AbsentFullDay ? 'Full Day' : sub.AbsentAM && sub.AbsentPM ? 'Full Day' : sub.AbsentAM ? 'AM' : 'PM' });
+              const statusLabel = absentFullDay ? 'Full Day' : absentAM && absentPM ? 'Full Day' : absentAM ? 'AM' : 'PM';
+              const arrivalNote  = absentAM && !absentFullDay && sub.EstimatedArrivalTime
+                ? ` · ETA ${sub.EstimatedArrivalTime}` : '';
+              const departNote   = absentPM && !absentFullDay && sub.EstimatedDepartureTime
+                ? ` · ETD ${sub.EstimatedDepartureTime}` : '';
+              appliedNow.push({ name: match.name, type: 'Staff', status: statusLabel + arrivalNote + departNote });
               submissionIdsToMark.push(sub.ID);
             } else {
-              console.warn(`⚠️ AbsenceSubmission: no staff match for "${sub.PersonName}"`);
+              const identifier = staffLookupId ? `ID ${staffLookupId}` : `"${sub.PersonName}"`;
+              console.warn(`⚠️ AbsenceSubmission: no staff match for ${identifier}`);
             }
           } else if (isClient) {
-            const match = finalStudentsData.find(s => s.name.trim().toLowerCase() === nameLower);
+            // Primary match: ClientLookup → student id (= Clients list item ID). Fallback: name.
+            const clientLookupId = sub.ClientLookupId ? Number(sub.ClientLookupId) : null;
+            const match = clientLookupId
+              ? finalStudentsData.find(s => Number(s.id) === clientLookupId)
+              : finalStudentsData.find(s => s.name.trim().toLowerCase() === nameLower);
             if (match) {
               const idx = finalStudentsData.indexOf(match);
               finalStudentsData = [...finalStudentsData];
@@ -396,11 +419,16 @@ const ABAScheduler = () => {
                 absentPM:      sub.AbsentFullDay || sub.AbsentPM  || match.absentPM,
                 absentFullDay: sub.AbsentFullDay || match.absentFullDay
               });
-              appliedNow.push({ name: match.name, type: 'Client',
-                status: sub.AbsentFullDay ? 'Full Day' : sub.AbsentAM && sub.AbsentPM ? 'Full Day' : sub.AbsentAM ? 'AM' : 'PM' });
+              const statusLabel = sub.AbsentFullDay ? 'Full Day' : sub.AbsentAM && sub.AbsentPM ? 'Full Day' : sub.AbsentAM ? 'AM' : 'PM';
+              const arrivalNote  = sub.AbsentAM && !sub.AbsentFullDay && sub.EstimatedArrivalTime
+                ? ` · ETA ${sub.EstimatedArrivalTime}` : '';
+              const departNote   = sub.AbsentPM && !sub.AbsentFullDay && sub.EstimatedDepartureTime
+                ? ` · ETD ${sub.EstimatedDepartureTime}` : '';
+              appliedNow.push({ name: match.name, type: 'Client', status: statusLabel + arrivalNote + departNote });
               submissionIdsToMark.push(sub.ID);
             } else {
-              console.warn(`⚠️ AbsenceSubmission: no client match for "${sub.PersonName}"`);
+              const identifier = clientLookupId ? `ID ${clientLookupId}` : `"${sub.PersonName}"`;
+              console.warn(`⚠️ AbsenceSubmission: no client match for ${identifier}`);
             }
           }
         });

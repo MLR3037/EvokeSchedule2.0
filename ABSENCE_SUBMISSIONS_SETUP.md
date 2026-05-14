@@ -31,16 +31,46 @@ AbsenceSubmissions
 
 Add the following columns to the list. The built-in **Title** column can be renamed to `PersonName`.
 
-| Column Name      | Type            | Notes                                      |
-|------------------|-----------------|--------------------------------------------|
-| `PersonName`     | Single line     | Rename the built-in Title column to this   |
-| `SubmissionDate` | Date (no time)  | The date the person will be absent         |
-| `PersonType`     | Choice          | Options: `Staff`, `Client`                 |
-| `AbsentAM`       | Yes/No          | Default: No                                |
-| `AbsentPM`       | Yes/No          | Default: No                                |
-| `AbsentFullDay`  | Yes/No          | Default: No (auto-sets AM+PM when checked) |
-| `Notes`          | Multiple lines  | Optional — reason/context                  |
-| `Status`         | Choice          | Options: `Pending`, `Applied` · Default: `Pending` |
+| Column Name              | Type            | Notes                                                                 |
+|--------------------------|-----------------|-----------------------------------------------------------------------|
+| `PersonName`             | Single line     | Rename the built-in Title column — used as fallback if lookup is blank |
+| `SubmissionDate`         | Date (no time)  | The date the person will be absent                                    |
+| `PersonType`             | Choice          | Options: `Staff`, `Client` — determines which lookup to use           |
+| `StaffLookup`            | Lookup          | **Points to the Staff list · Column: StaffPerson (display name)**     |
+| `ClientLookup`           | Lookup          | **Points to the Clients list · Column: Title**                        |
+| `AbsentAM`               | Yes/No          | Default: No                                                           |
+| `AbsentPM`               | Yes/No          | Default: No                                                           |
+| `AbsentFullDay`          | Yes/No          | Default: No (auto-sets AM+PM when checked)                            |
+| `EstimatedArrivalTime`   | Single line     | For AbsentAM only — e.g. `9:30 AM`. Maps to attendance app.          |
+| `EstimatedDepartureTime` | Single line     | For AbsentPM only — e.g. `2:00 PM`. Maps to attendance app.          |
+| `Notes`                  | Multiple lines  | Optional — reason/context                                             |
+| `Status`                 | Choice          | Options: `Pending`, `Applied` · Default: `Pending`                    |
+
+### About the Lookup Columns
+
+- When **PersonType = Staff**, the submitter picks from the **StaffLookup** dropdown (pulls directly from the Staff list — no typos possible).
+- When **PersonType = Client**, the submitter picks from the **ClientLookup** dropdown (pulls from the Clients list).
+- The app matches by lookup ID, which is always accurate. The `PersonName` text field is only used as a last-resort fallback.
+
+### Lookup Column Setup Details
+
+**StaffLookup:**
+1. Add a new Lookup column named `StaffLookup`
+2. Get information from: **Staff** list
+3. In this column: **StaffPerson** (or Title, whichever shows the display name)
+
+**ClientLookup:**
+1. Add a new Lookup column named `ClientLookup`
+2. Get information from: **Clients** list
+3. In this column: **Title**
+
+### EstimatedArrivalTime / EstimatedDepartureTime
+
+These are plain **Single line of text** fields. Submitters type a time like `9:30 AM` or `2:00 PM`.
+- `EstimatedArrivalTime` is shown when `AbsentAM = Yes` (they're coming in late)
+- `EstimatedDepartureTime` is shown when `AbsentPM = Yes` (they're leaving early)
+
+The values are stored in the app and passed through to whatever attendance app you map them to later.
 
 ---
 
@@ -76,12 +106,13 @@ That's it — no app access required for submitters.
 
 ## How the App Matches Names
 
-The app matches submissions to staff/clients by **exact name** (case-insensitive).  
-The name in `PersonName` must match exactly what appears in the **Staff** or **Clients** SharePoint list.
+The app matches submissions to staff/clients by **lookup ID** (the value from `StaffLookup` or `ClientLookup`). This is always accurate and immune to typos.
 
-If a name doesn't match:
+If the lookup columns are blank (e.g. someone edited the list directly), the app falls back to matching by the `PersonName` text field (case-insensitive).
+
+If neither matches:
 - The submission is skipped (not marked Applied)
-- A warning is logged in the browser console: `⚠️ AbsenceSubmission: no staff match for "..."`
+- A warning is logged in the browser console: `⚠️ AbsenceSubmission: no staff match for ID 42`
 
 ---
 
@@ -90,11 +121,16 @@ If a name doesn't match:
 > **When someone calls out absent:**
 > 1. Go to the `AbsenceSubmissions` SharePoint list
 > 2. Click **+ New**
-> 3. Enter the person's name, today's date, whether they are Staff or Client, and which sessions (AM / PM / Full Day)
-> 4. Click **Save**
-> 5. Notify the scheduler to **click Refresh** in the app
+> 3. Select **PersonType** (Staff or Client)
+> 4. Pick the person from the **StaffLookup** or **ClientLookup** dropdown — no typing, no typos
+> 5. Enter today's date in **SubmissionDate**
+> 6. Check the appropriate absence boxes (AM / PM / Full Day)
+> 7. If **AbsentAM** — enter expected arrival time in `EstimatedArrivalTime` (e.g. `9:30 AM`)
+> 8. If **AbsentPM** — enter expected departure time in `EstimatedDepartureTime` (e.g. `2:00 PM`)
+> 9. Click **Save**
+> 10. Notify the scheduler to **click Refresh** in the app
 
-The scheduler will see the green banner confirming the absence was applied automatically.
+The scheduler will see the green banner confirming the absence was applied, including the estimated times.
 
 ---
 
