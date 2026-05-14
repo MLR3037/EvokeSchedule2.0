@@ -448,7 +448,6 @@ export class Assignment {
     date,
     isLocked = false,
     assignedBy = 'auto', // 'auto' or 'manual'
-    isTempStaff = false, // NEW: Track if this is a temp staff assignment
     isTrainee = false // Track if this is a trainee assignment
   }) {
     this.id = id;
@@ -461,7 +460,6 @@ export class Assignment {
     this.date = date;
     this.isLocked = isLocked;
     this.assignedBy = assignedBy;
-    this.isTempStaff = isTempStaff; // NEW: Mark temp staff assignments
     this.isTrainee = isTrainee; // Mark trainee assignments
   }
 

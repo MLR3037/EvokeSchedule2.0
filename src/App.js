@@ -279,13 +279,76 @@ const ABAScheduler = () => {
           ...s,
           absentAM: false,
           absentPM: false,
-          absentFullDay: false
+          absentFullDay: false,
+          outOfSessionAM: false,
+          outOfSessionPM: false,
+          outOfSessionFullDay: false
         }));
         // Clear stale flags in SharePoint in the background
         sharePointService.clearAllAttendanceInSharePoint(finalStaffData, finalStudentsData)
           .catch(err => console.error('Error clearing stale attendance in SharePoint:', err));
       }
       localStorage.setItem('lastAttendanceDate', today);
+
+      // Always hydrate attendance from date-scoped DailyAttendance for selected date.
+      // This prevents legacy/stale base-list attendance flags from affecting refresh.
+      const attendanceData = await sharePointService.loadAttendanceForDate(currentDate).catch(err => {
+        console.error('Failed to load attendance for refresh:', err);
+        return null;
+      });
+
+      if (attendanceData) {
+        finalStaffData = finalStaffData.map(s => {
+          const attendance = attendanceData.staff[s.id];
+          return new Staff({
+            ...s,
+            absentAM: attendance?.absentAM || false,
+            absentPM: attendance?.absentPM || false,
+            absentFullDay: attendance?.absentFullDay || false,
+            absentAMArrivalTime: '',
+            absentPMDepartureTime: '',
+            outOfSessionAM: attendance?.outOfSessionAM || false,
+            outOfSessionPM: attendance?.outOfSessionPM || false,
+            outOfSessionFullDay: attendance?.outOfSessionFullDay || false
+          });
+        });
+
+        finalStudentsData = finalStudentsData.map(s => {
+          const attendance = attendanceData.students[s.id];
+          return new Student({
+            ...s,
+            absentAM: attendance?.absentAM || false,
+            absentPM: attendance?.absentPM || false,
+            absentFullDay: attendance?.absentFullDay || false,
+            outOfSessionAM: attendance?.outOfSessionAM || false,
+            outOfSessionPM: attendance?.outOfSessionPM || false,
+            outOfSessionFullDay: attendance?.outOfSessionFullDay || false
+          });
+        });
+      } else {
+        // No DailyAttendance row for this date means everyone should default to present.
+        finalStaffData = finalStaffData.map(s => new Staff({
+          ...s,
+          absentAM: false,
+          absentPM: false,
+          absentFullDay: false,
+          absentAMArrivalTime: '',
+          absentPMDepartureTime: '',
+          outOfSessionAM: false,
+          outOfSessionPM: false,
+          outOfSessionFullDay: false
+        }));
+
+        finalStudentsData = finalStudentsData.map(s => new Student({
+          ...s,
+          absentAM: false,
+          absentPM: false,
+          absentFullDay: false,
+          outOfSessionAM: false,
+          outOfSessionPM: false,
+          outOfSessionFullDay: false
+        }));
+      }
 
       // Update staff and students
       setStaff(finalStaffData);
@@ -1205,9 +1268,6 @@ const handleManualAssignment = ({ staffId, studentId, session, program, bypassTe
     }
   }
 
-  // Check if this is a temp staff assignment (not on student's regular team)
-  const isTempStaff = bypassTeamCheck || !student.teamIds.includes(staffId);
-
   const assignment = new Assignment({
     id: SchedulingUtils.generateAssignmentId(),
     staffId,
@@ -1219,13 +1279,8 @@ const handleManualAssignment = ({ staffId, studentId, session, program, bypassTe
     date: currentDate,
     isLocked: false, // Manual assignments start UNLOCKED - user must click lock icon to lock
     assignedBy: 'manual',
-    isTrainee: isTrainee, // Mark if this is a trainee assignment
-    isTempStaff: isTempStaff // NEW: Mark as temp staff if bypassed team check
+    isTrainee: isTrainee // Mark if this is a trainee assignment
   });
-  
-  if (isTempStaff) {
-    console.log(`✅ Created TEMP STAFF assignment: ${staffMember.name} → ${student.name} ${session}`);
-  }
 
   // Add assignment to schedule
   // For trainees, add to traineeAssignments array; for regular staff, add to assignments array
@@ -1290,8 +1345,7 @@ const handleManualAssignment = ({ staffId, studentId, session, program, bypassTe
             date: currentDate,
             isLocked: false,
             assignedBy: 'manual',
-            isTrainee: false,
-            isTempStaff: isTempStaff
+            isTrainee: false
           });
           
           schedule.addAssignment(pairedAssignment);

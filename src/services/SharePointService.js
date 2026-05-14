@@ -945,7 +945,7 @@ export class SharePointService {
       // Step 2: Load all assignments for this schedule from DailyAssignments
       const assignmentsUrl = `${this.siteUrl}/_api/web/lists/getbytitle('DailyAssignments')/items?` +
         `$filter=ScheduleID eq ${scheduleId}&` +
-        `$select=ID,ScheduleID,ScheduleDate,StaffID,StaffName,StudentID,StudentName,Session,Program,AssignmentType,IsLocked,IsTempStaff&` +
+        `$select=ID,ScheduleID,ScheduleDate,StaffID,StaffName,StudentID,StudentName,Session,Program,AssignmentType,IsLocked&` +
         `$top=5000`;
 
       console.log('🔍 Fetching assignments from:', assignmentsUrl);
@@ -988,8 +988,7 @@ export class SharePointService {
           program: normalizedProgram,
           date: item.ScheduleDate,
           isLocked: item.IsLocked || false,
-          assignedBy: 'loaded',
-          isTempStaff: item.IsTempStaff || false // NEW: Load temp staff flag
+          assignedBy: 'loaded'
         });
       });
 
@@ -1712,8 +1711,7 @@ export class SharePointService {
         Session: normalizedSession,
         Program: normalizedProgram,
         AssignmentType: assignment.type || 'Standard',
-        IsLocked: assignment.isLocked || false,
-        IsTempStaff: assignment.isTempStaff || false // NEW: Save temp staff flag
+        IsLocked: assignment.isLocked || false
       };
 
       console.log('💾 Saving assignment to DailyAssignments list:', assignmentData);
@@ -1764,8 +1762,7 @@ export class SharePointService {
         Session: normalizedSession,
         Program: normalizedProgram,
         AssignmentType: assignment.type || 'Standard',
-        IsLocked: assignment.isLocked || false,
-        IsTempStaff: assignment.isTempStaff || false
+        IsLocked: assignment.isLocked || false
       };
 
       const response = await this.retryFetch(
@@ -1876,7 +1873,7 @@ export class SharePointService {
 
     const assignmentsUrl = `${this.siteUrl}/_api/web/lists/getbytitle('DailyAssignments')/items?` +
       `$filter=ScheduleDate ge datetime'${start}' and ScheduleDate le datetime'${end}'&` +
-      `$select=ID,ScheduleID,ScheduleDate,StaffID,StaffName,StudentID,StudentName,Session,Program,AssignmentType,IsLocked,IsTempStaff&` +
+      `$select=ID,ScheduleID,ScheduleDate,StaffID,StaffName,StudentID,StudentName,Session,Program,AssignmentType,IsLocked&` +
       `$top=5000`;
 
     const response = await this.retryFetch(assignmentsUrl, {
@@ -1953,7 +1950,7 @@ export class SharePointService {
   async loadAssignmentsForSchedule(scheduleId) {
     const assignmentsUrl = `${this.siteUrl}/_api/web/lists/getbytitle('DailyAssignments')/items?` +
       `$filter=ScheduleID eq ${scheduleId}&` +
-      `$select=ID,ScheduleID,ScheduleDate,StaffID,StaffName,StudentID,StudentName,Session,Program,AssignmentType,IsLocked,IsTempStaff&` +
+      `$select=ID,ScheduleID,ScheduleDate,StaffID,StaffName,StudentID,StudentName,Session,Program,AssignmentType,IsLocked&` +
       `$top=5000`;
 
     const response = await this.retryFetch(assignmentsUrl, {
@@ -2027,8 +2024,7 @@ export class SharePointService {
           (existing.StaffName || '') !== (assignment.staffName || '') ||
           (existing.StudentName || '') !== (assignment.studentName || '') ||
           (existing.AssignmentType || 'Standard') !== (assignment.type || 'Standard') ||
-          !!existing.IsLocked !== !!assignment.isLocked ||
-          !!existing.IsTempStaff !== !!assignment.isTempStaff;
+          !!existing.IsLocked !== !!assignment.isLocked;
 
         if (needsUpdate) {
           toUpdate.push({ itemId: existing.ID, assignment });
