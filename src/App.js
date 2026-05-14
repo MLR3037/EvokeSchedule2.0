@@ -105,6 +105,9 @@ const ABAScheduler = () => {
   const [testResults, setTestResults] = useState(null);
   const [isTestRunning, setIsTestRunning] = useState(false);
 
+  // Absence submission notifications
+  const [appliedSubmissions, setAppliedSubmissions] = useState([]); // [{name, type, status}]
+
   useEffect(() => {
     initializeApp();
   }, []);
@@ -349,6 +352,67 @@ const ABAScheduler = () => {
           outOfSessionFullDay: false
         }));
       }
+
+      // -----------------------------------------------------------------------
+      // Merge pending AbsenceSubmissions entered by staff in SharePoint
+      // -----------------------------------------------------------------------
+      const submissions = await sharePointService.loadAbsenceSubmissions(currentDate).catch(() => []);
+      const appliedNow = [];
+
+      if (submissions.length > 0) {
+        const submissionIdsToMark = [];
+
+        submissions.forEach(sub => {
+          const normalizedType = (sub.PersonType || '').toLowerCase();
+          const isStaff = normalizedType === 'staff';
+          const isClient = normalizedType === 'client' || normalizedType === 'student';
+          const nameLower = (sub.PersonName || '').trim().toLowerCase();
+
+          if (isStaff) {
+            const match = finalStaffData.find(s => s.name.trim().toLowerCase() === nameLower);
+            if (match) {
+              const idx = finalStaffData.indexOf(match);
+              finalStaffData = [...finalStaffData];
+              finalStaffData[idx] = new Staff({
+                ...match,
+                absentAM:      sub.AbsentFullDay || sub.AbsentAM  || match.absentAM,
+                absentPM:      sub.AbsentFullDay || sub.AbsentPM  || match.absentPM,
+                absentFullDay: sub.AbsentFullDay || match.absentFullDay
+              });
+              appliedNow.push({ name: match.name, type: 'Staff',
+                status: sub.AbsentFullDay ? 'Full Day' : sub.AbsentAM && sub.AbsentPM ? 'Full Day' : sub.AbsentAM ? 'AM' : 'PM' });
+              submissionIdsToMark.push(sub.ID);
+            } else {
+              console.warn(`⚠️ AbsenceSubmission: no staff match for "${sub.PersonName}"`);
+            }
+          } else if (isClient) {
+            const match = finalStudentsData.find(s => s.name.trim().toLowerCase() === nameLower);
+            if (match) {
+              const idx = finalStudentsData.indexOf(match);
+              finalStudentsData = [...finalStudentsData];
+              finalStudentsData[idx] = new Student({
+                ...match,
+                absentAM:      sub.AbsentFullDay || sub.AbsentAM  || match.absentAM,
+                absentPM:      sub.AbsentFullDay || sub.AbsentPM  || match.absentPM,
+                absentFullDay: sub.AbsentFullDay || match.absentFullDay
+              });
+              appliedNow.push({ name: match.name, type: 'Client',
+                status: sub.AbsentFullDay ? 'Full Day' : sub.AbsentAM && sub.AbsentPM ? 'Full Day' : sub.AbsentAM ? 'AM' : 'PM' });
+              submissionIdsToMark.push(sub.ID);
+            } else {
+              console.warn(`⚠️ AbsenceSubmission: no client match for "${sub.PersonName}"`);
+            }
+          }
+        });
+
+        // Mark matched submissions as Applied (fire-and-forget)
+        if (submissionIdsToMark.length > 0) {
+          sharePointService.markSubmissionsApplied(submissionIdsToMark).catch(() => {});
+        }
+      }
+
+      setAppliedSubmissions(appliedNow);
+      // -----------------------------------------------------------------------
 
       // Update staff and students
       setStaff(finalStaffData);
@@ -2689,14 +2753,42 @@ const handleAssignmentRemove = (assignmentId) => {
             {/* Attendance Tab */}
             {/* Attendance Tab */}
             {activeTab === 'attendance' && (
-              <AttendanceManagement
-                staff={staff}
-                students={students}
-                currentDate={currentDate}
-                onUpdateStaffAttendance={handleUpdateStaffAttendance}
-                onUpdateStudentAttendance={handleUpdateStudentAttendance}
-                onResetAllAttendance={clearAllAttendance}
-              />
+              <div className="space-y-4">
+                {/* Absence Submissions Banner */}
+                {appliedSubmissions.length > 0 && (
+                  <div className="bg-green-50 border border-green-300 rounded-lg p-4 flex items-start gap-3">
+                    <span className="text-green-600 text-lg">✅</span>
+                    <div className="flex-1">
+                      <p className="text-sm font-semibold text-green-800">
+                        {appliedSubmissions.length} absence submission{appliedSubmissions.length > 1 ? 's' : ''} auto-applied from SharePoint
+                      </p>
+                      <ul className="mt-1 space-y-0.5">
+                        {appliedSubmissions.map((s, i) => (
+                          <li key={i} className="text-xs text-green-700">
+                            {s.name} <span className="text-green-500">({s.type})</span> — {s.status} absent
+                          </li>
+                        ))}
+                      </ul>
+                      <p className="text-xs text-green-600 mt-2">
+                        Save the schedule to lock in the updated attendance.
+                      </p>
+                    </div>
+                    <button
+                      onClick={() => setAppliedSubmissions([])}
+                      className="text-green-500 hover:text-green-700 text-xs"
+                      title="Dismiss"
+                    >✕</button>
+                  </div>
+                )}
+                <AttendanceManagement
+                  staff={staff}
+                  students={students}
+                  currentDate={currentDate}
+                  onUpdateStaffAttendance={handleUpdateStaffAttendance}
+                  onUpdateStudentAttendance={handleUpdateStudentAttendance}
+                  onResetAllAttendance={clearAllAttendance}
+                />
+              </div>
             )}
 
             {/* Training Tab */}

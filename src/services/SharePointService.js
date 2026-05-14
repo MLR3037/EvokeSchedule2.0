@@ -3319,6 +3319,96 @@ export class SharePointService {
     }
   }
 
+  // ---------------------------------------------------------------------------
+  // AbsenceSubmissions – staff-submitted absence entries from SharePoint list
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Load pending absence submissions for a specific date.
+   * Matches against the AbsenceSubmissions list filtered by SubmissionDate and Status = 'Pending'.
+   * Returns an array of raw submission objects with:
+   *   { ID, PersonName, PersonType, AbsentAM, AbsentPM, AbsentFullDay, Notes }
+   */
+  async loadAbsenceSubmissions(date) {
+    try {
+      if (!this.isAuthenticated()) return [];
+
+      const dateStr = typeof date === 'string'
+        ? date
+        : `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
+
+      const start = `${dateStr}T00:00:00Z`;
+      const end   = `${dateStr}T23:59:59Z`;
+
+      const url = `${this.siteUrl}/_api/web/lists/getbytitle('AbsenceSubmissions')/items?` +
+        `$filter=SubmissionDate ge datetime'${start}' and SubmissionDate le datetime'${end}' and Status eq 'Pending'&` +
+        `$select=ID,PersonName,PersonType,AbsentAM,AbsentPM,AbsentFullDay,Notes,Status&` +
+        `$top=500`;
+
+      const response = await this.retryFetch(url, {
+        method: 'GET',
+        headers: {
+          'Authorization': `Bearer ${this.accessToken}`,
+          'Accept': 'application/json;odata=verbose'
+        }
+      });
+
+      if (!response.ok) {
+        // List may not exist yet — fail silently so it doesn't break the app
+        console.warn('⚠️ AbsenceSubmissions list not found or inaccessible — skipping.');
+        return [];
+      }
+
+      const data = await response.json();
+      const results = data.d?.results || [];
+      console.log(`📬 Found ${results.length} pending absence submission(s) for ${dateStr}`);
+      return results;
+    } catch (error) {
+      // Always fail silently so a missing list never breaks the app
+      console.warn('⚠️ Could not load AbsenceSubmissions:', error.message);
+      return [];
+    }
+  }
+
+  /**
+   * Mark a set of AbsenceSubmission IDs as 'Applied' so they are not re-processed.
+   */
+  async markSubmissionsApplied(ids = []) {
+    if (!ids.length) return;
+    try {
+      if (!this.isAuthenticated()) return;
+
+      const digest = await this.getRequestDigest();
+
+      await Promise.all(ids.map(id =>
+        this.retryFetch(
+          `${this.siteUrl}/_api/web/lists/getbytitle('AbsenceSubmissions')/items(${id})`,
+          {
+            method: 'POST',
+            headers: {
+              'Authorization': `Bearer ${this.accessToken}`,
+              'Accept': 'application/json;odata=verbose',
+              'Content-Type': 'application/json;odata=verbose',
+              'X-RequestDigest': digest,
+              'X-HTTP-Method': 'MERGE',
+              'If-Match': '*'
+            },
+            body: JSON.stringify({
+              __metadata: { type: 'SP.Data.AbsenceSubmissionsListItem' },
+              Status: 'Applied'
+            })
+          }
+        ).catch(err => console.warn(`Could not mark submission ${id} as Applied:`, err.message))
+      ));
+
+      console.log(`✅ Marked ${ids.length} absence submission(s) as Applied`);
+    } catch (error) {
+      console.warn('⚠️ Could not mark submissions as Applied:', error.message);
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+
   /**
    * Get training session count for a specific staff-client pair
    * Uses the schedule history to count trainee assignments
