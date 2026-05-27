@@ -269,6 +269,33 @@ export class SharePointService {
   }
 
   /**
+   * Fetch all pages from a SharePoint list query, following __next links.
+   * Throws on HTTP error. Returns flat array of all results.
+   */
+  async fetchAllPages(url) {
+    const results = [];
+    let nextUrl = url;
+    while (nextUrl) {
+      const response = await this.retryFetch(nextUrl, {
+        method: 'GET',
+        headers: {
+          'Authorization': `Bearer ${this.accessToken}`,
+          'Accept': 'application/json;odata=verbose'
+        }
+      });
+      if (!response.ok) {
+        const errorText = await response.text();
+        throw new Error(`SharePoint fetch failed (${response.status}): ${errorText}`);
+      }
+      const data = await response.json();
+      const page = data?.d?.results || [];
+      results.push(...page);
+      nextUrl = data?.d?.__next || null;
+    }
+    return results;
+  }
+
+  /**
    * Get SharePoint request digest for write operations
    */
   async getRequestDigest() {
@@ -942,7 +969,7 @@ export class SharePointService {
       const scheduleId = scheduleRecord.ID;
       console.log('✅ Found schedule record:', scheduleId, scheduleRecord);
 
-      // Step 2: Load all assignments for this schedule from DailyAssignments
+      // Step 2: Load all assignments for this schedule from DailyAssignments (paginated)
       const assignmentsUrl = `${this.siteUrl}/_api/web/lists/getbytitle('DailyAssignments')/items?` +
         `$filter=ScheduleID eq ${scheduleId}&` +
         `$select=ID,ScheduleID,ScheduleDate,StaffID,StaffName,StudentID,StudentName,Session,Program,AssignmentType,IsLocked&` +
@@ -950,23 +977,12 @@ export class SharePointService {
 
       console.log('🔍 Fetching assignments from:', assignmentsUrl);
 
-      const assignmentsResponse = await this.retryFetch(assignmentsUrl, {
-        method: 'GET',
-        headers: {
-          'Authorization': `Bearer ${this.accessToken}`,
-          'Accept': 'application/json;odata=verbose'
-        }
-      });
-
       let assignmentItems = [];
-      if (!assignmentsResponse.ok) {
-        const errorText = await assignmentsResponse.text();
-        console.warn(`⚠️ Failed to load DailyAssignments for schedule ${scheduleId}: ${assignmentsResponse.status}`);
-        console.warn('⚠️ Continuing with ScheduleHistory metadata and trainee assignments only.', errorText);
-      } else {
-        const assignmentsData = await assignmentsResponse.json();
-        console.log('📦 Raw assignments data from SharePoint:', assignmentsData);
-        assignmentItems = assignmentsData.d.results || [];
+      try {
+        assignmentItems = await this.fetchAllPages(assignmentsUrl);
+      } catch (err) {
+        console.warn(`⚠️ Failed to load DailyAssignments for schedule ${scheduleId}:`, err.message);
+        console.warn('⚠️ Continuing with ScheduleHistory metadata and trainee assignments only.');
       }
 
       console.log(`✅ Loaded ${assignmentItems.length} assignments from SharePoint`);
@@ -1876,20 +1892,7 @@ export class SharePointService {
       `$select=ID,ScheduleID,ScheduleDate,StaffID,StaffName,StudentID,StudentName,Session,Program,AssignmentType,IsLocked&` +
       `$top=5000`;
 
-    const response = await this.retryFetch(assignmentsUrl, {
-      method: 'GET',
-      headers: {
-        'Authorization': `Bearer ${this.accessToken}`,
-        'Accept': 'application/json;odata=verbose'
-      }
-    });
-
-    if (!response.ok) {
-      throw new Error(`Failed to load assignments for date ${scheduleDate}: ${response.status}`);
-    }
-
-    const data = await response.json();
-    return data.d.results || [];
+    return this.fetchAllPages(assignmentsUrl);
   }
 
   async cleanupAssignmentsForDate(scheduleDate, keepScheduleId) {
@@ -1953,20 +1956,7 @@ export class SharePointService {
       `$select=ID,ScheduleID,ScheduleDate,StaffID,StaffName,StudentID,StudentName,Session,Program,AssignmentType,IsLocked&` +
       `$top=5000`;
 
-    const response = await this.retryFetch(assignmentsUrl, {
-      method: 'GET',
-      headers: {
-        'Authorization': `Bearer ${this.accessToken}`,
-        'Accept': 'application/json;odata=verbose'
-      }
-    });
-
-    if (!response.ok) {
-      throw new Error(`Failed to load existing assignments for schedule ${scheduleId}: ${response.status}`);
-    }
-
-    const data = await response.json();
-    return data.d.results || [];
+    return this.fetchAllPages(assignmentsUrl);
   }
 
   async syncAssignmentsForSchedule(scheduleId, assignments, scheduleDate) {
@@ -2169,21 +2159,13 @@ export class SharePointService {
         `$select=ID,Title,StaffName,StudentName&` +
         `$top=5000`;
 
-      const response = await this.retryFetch(assignmentsUrl, {
-        method: 'GET',
-        headers: {
-          'Authorization': `Bearer ${this.accessToken}`,
-          'Accept': 'application/json;odata=verbose'
-        }
-      });
-
-      if (!response.ok) {
-        console.warn('Could not find assignments to delete');
+      let assignments;
+      try {
+        assignments = await this.fetchAllPages(assignmentsUrl);
+      } catch (err) {
+        console.warn('Could not find assignments to delete:', err.message);
         return;
       }
-
-      const data = await response.json();
-      const assignments = data.d.results || [];
       
       console.log(`🗑️ Found ${assignments.length} assignments to delete for schedule ${scheduleId}`);
       if (assignments.length > 0) {
@@ -3316,103 +3298,6 @@ export class SharePointService {
     } catch (error) {
       console.error('Error loading training completions:', error);
       return [];
-    }
-  }
-
-  // ---------------------------------------------------------------------------
-  // AbsenceSubmissions – staff-submitted absence entries from SharePoint list
-  // ---------------------------------------------------------------------------
-
-  /**
-   * Load pending absence submissions for a specific date.
-   * Matches against the AbsenceSubmissions list filtered by SubmissionDate and Status = 'Pending'.
-   * Returns an array of raw submission objects with:
-   *   { ID, PersonName, PersonType, AbsentAM, AbsentPM, AbsentFullDay, Notes }
-   */
-  /**
-   * Load all absence submissions for a specific date.
-   * The list is a visibility log — no Status filter needed.
-   * The app tracks which IDs it has already processed in-memory (seenSubmissionIds).
-   */
-  async loadAbsenceSubmissions(date) {
-    try {
-      if (!this.isAuthenticated()) return [];
-
-      const dateStr = typeof date === 'string'
-        ? date
-        : `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
-
-      const start = `${dateStr}T00:00:00Z`;
-      const end   = `${dateStr}T23:59:59Z`;
-
-      const url = `${this.siteUrl}/_api/web/lists/getbytitle('AbsenceSubmissions')/items?` +
-        `$filter=SubmissionDate ge datetime'${start}' and SubmissionDate le datetime'${end}'&` +
-        `$select=ID,PersonName,PersonType,AbsentAM,AbsentPM,AbsentFullDay,Notes,` +
-        `StaffLookupId,StaffLookup/Title,ClientLookupId,ClientLookup/Title,` +
-        `EstimatedArrivalTime,EstimatedDepartureTime&` +
-        `$expand=StaffLookup,ClientLookup&` +
-        `$top=500`;
-
-      const response = await this.retryFetch(url, {
-        method: 'GET',
-        headers: {
-          'Authorization': `Bearer ${this.accessToken}`,
-          'Accept': 'application/json;odata=verbose'
-        }
-      });
-
-      if (!response.ok) {
-        // List may not exist yet — fail silently so it doesn't break the app
-        console.warn('⚠️ AbsenceSubmissions list not found or inaccessible — skipping.');
-        return [];
-      }
-
-      const data = await response.json();
-      const results = data.d?.results || [];
-      console.log(`📬 Found ${results.length} pending absence submission(s) for ${dateStr}`);
-        console.log(`📬 Found ${results.length} absence submission(s) for ${dateStr}`);
-      return results;
-    } catch (error) {
-      // Always fail silently so a missing list never breaks the app
-      console.warn('⚠️ Could not load AbsenceSubmissions:', error.message);
-      return [];
-    }
-  }
-
-  /**
-   * Mark a set of AbsenceSubmission IDs as 'Applied' so they are not re-processed.
-   */
-  async markSubmissionsApplied(ids = []) {
-    if (!ids.length) return;
-    try {
-      if (!this.isAuthenticated()) return;
-
-      const digest = await this.getRequestDigest();
-
-      await Promise.all(ids.map(id =>
-        this.retryFetch(
-          `${this.siteUrl}/_api/web/lists/getbytitle('AbsenceSubmissions')/items(${id})`,
-          {
-            method: 'POST',
-            headers: {
-              'Authorization': `Bearer ${this.accessToken}`,
-              'Accept': 'application/json;odata=verbose',
-              'Content-Type': 'application/json;odata=verbose',
-              'X-RequestDigest': digest,
-              'X-HTTP-Method': 'MERGE',
-              'If-Match': '*'
-            },
-            body: JSON.stringify({
-              __metadata: { type: 'SP.Data.AbsenceSubmissionsListItem' },
-              Status: 'Applied'
-            })
-          }
-        ).catch(err => console.warn(`Could not mark submission ${id} as Applied:`, err.message))
-      ));
-
-      console.log(`✅ Marked ${ids.length} absence submission(s) as Applied`);
-    } catch (error) {
-      console.warn('⚠️ Could not mark submissions as Applied:', error.message);
     }
   }
 

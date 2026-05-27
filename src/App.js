@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef, useCallback } from 'react';
+import React, { useState, useEffect } from 'react';
 import { 
   Calendar, 
   Save, 
@@ -105,114 +105,12 @@ const ABAScheduler = () => {
   const [testResults, setTestResults] = useState(null);
   const [isTestRunning, setIsTestRunning] = useState(false);
 
-  // Absence submission notifications
-  // Absence submission notifications
-  const [appliedSubmissions, setAppliedSubmissions] = useState([]); // [{name, type, status}]
-  const seenSubmissionIds = useRef(new Set()); // IDs already applied this session — prevents re-notification on poll
-  const absencePollInterval = useRef(null);
-
   useEffect(() => {
     initializeApp();
   }, []);
 
 
   // Initialize application
-    // ---------------------------------------------------------------------------
-    // Background poll: check AbsenceSubmissions every 60s and auto-apply new ones
-    // ---------------------------------------------------------------------------
-    const pollAbsenceSubmissions = useCallback(async () => {
-      if (!sharePointService.isAuthenticated()) return;
-
-      const formatTime = (iso) => {
-        if (!iso) return '';
-        try {
-          const d = new Date(iso);
-          return isNaN(d) ? iso : d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit', hour12: true });
-        } catch { return iso; }
-      };
-
-      try {
-        const submissions = await sharePointService.loadAbsenceSubmissions(currentDate).catch(() => []);
-        const newSubmissions = submissions.filter(s => !seenSubmissionIds.current.has(s.ID));
-        if (!newSubmissions.length) return;
-
-        const newlyApplied = [];
-        const updatedStaff    = [...staff];
-        const updatedStudents = [...students];
-
-        newSubmissions.forEach(sub => {
-          const normalizedType = (sub.PersonType || '').toLowerCase();
-          const isStaff  = normalizedType === 'staff';
-          const isClient = normalizedType === 'client' || normalizedType === 'student';
-          const nameLower = (sub.PersonName || '').trim().toLowerCase();
-
-          if (isStaff) {
-            const staffLookupId = sub.StaffLookupId ? Number(sub.StaffLookupId) : null;
-            const idx = staffLookupId
-              ? updatedStaff.findIndex(s => Number(s.listItemId) === staffLookupId)
-              : updatedStaff.findIndex(s => s.name.trim().toLowerCase() === nameLower);
-            if (idx !== -1) {
-              const match = updatedStaff[idx];
-              const absentAM      = sub.AbsentFullDay || sub.AbsentAM  || match.absentAM;
-              const absentPM      = sub.AbsentFullDay || sub.AbsentPM  || match.absentPM;
-              const absentFullDay = sub.AbsentFullDay || match.absentFullDay;
-              updatedStaff[idx] = new Staff({
-                ...match,
-                absentAM, absentPM, absentFullDay,
-                absentAMArrivalTime:   absentAM  && !absentFullDay && sub.EstimatedArrivalTime ? sub.EstimatedArrivalTime : match.absentAMArrivalTime || '',
-                absentPMDepartureTime: absentPM  && !absentFullDay && sub.EstimatedDepartureTime ? sub.EstimatedDepartureTime : match.absentPMDepartureTime || ''
-              });
-              const label = absentFullDay ? 'Full Day' : absentAM && absentPM ? 'Full Day' : absentAM ? 'AM' : 'PM';
-              const eta = absentAM && !absentFullDay && sub.EstimatedArrivalTime   ? ` · ETA ${formatTime(sub.EstimatedArrivalTime)}`   : '';
-              const etd = absentPM && !absentFullDay && sub.EstimatedDepartureTime ? ` · ETD ${formatTime(sub.EstimatedDepartureTime)}` : '';
-              newlyApplied.push({ name: match.name, type: 'Staff', status: label + eta + etd });
-            }
-          } else if (isClient) {
-            const clientLookupId = sub.ClientLookupId ? Number(sub.ClientLookupId) : null;
-            const idx = clientLookupId
-              ? updatedStudents.findIndex(s => Number(s.id) === clientLookupId)
-              : updatedStudents.findIndex(s => s.name.trim().toLowerCase() === nameLower);
-            if (idx !== -1) {
-              const match = updatedStudents[idx];
-              const absentAM      = sub.AbsentFullDay || sub.AbsentAM  || match.absentAM;
-              const absentPM      = sub.AbsentFullDay || sub.AbsentPM  || match.absentPM;
-              const absentFullDay = sub.AbsentFullDay || match.absentFullDay;
-              updatedStudents[idx] = new Student({
-                ...match,
-                absentAM, absentPM, absentFullDay
-              });
-              const label = absentFullDay ? 'Full Day' : absentAM && absentPM ? 'Full Day' : absentAM ? 'AM' : 'PM';
-              const eta = absentAM && !absentFullDay && sub.EstimatedArrivalTime   ? ` · ETA ${formatTime(sub.EstimatedArrivalTime)}`   : '';
-              const etd = absentPM && !absentFullDay && sub.EstimatedDepartureTime ? ` · ETD ${formatTime(sub.EstimatedDepartureTime)}` : '';
-              newlyApplied.push({ name: match.name, type: 'Client', status: label + eta + etd });
-            }
-          }
-
-          // Always mark as seen so we don't re-process
-          seenSubmissionIds.current.add(sub.ID);
-        });
-
-        if (newlyApplied.length > 0) {
-          setStaff(updatedStaff);
-          setStudents(updatedStudents);
-          setAppliedSubmissions(prev => [...newlyApplied, ...prev]);
-          console.log(`📬 Auto-applied ${newlyApplied.length} new absence submission(s) from poll`);
-        }
-      } catch (err) {
-        console.warn('⚠️ Absence poll error:', err.message);
-      }
-    }, [staff, students, currentDate]); // eslint-disable-line react-hooks/exhaustive-deps
-
-    // Start/restart the 60-second poll whenever auth state or date changes
-    useEffect(() => {
-      if (!isAuthenticated) return;
-      absencePollInterval.current = setInterval(pollAbsenceSubmissions, 60_000);
-      return () => clearInterval(absencePollInterval.current);
-    }, [isAuthenticated, pollAbsenceSubmissions]);
-
-    // ---------------------------------------------------------------------------
-
-    // Initialize application
   const initializeApp = async () => {
     try {
       // First ensure MSAL is initialized before any authentication checks
@@ -451,103 +349,6 @@ const ABAScheduler = () => {
           outOfSessionFullDay: false
         }));
       }
-
-      // -----------------------------------------------------------------------
-      // Merge pending AbsenceSubmissions entered by staff in SharePoint
-      // -----------------------------------------------------------------------
-      // Helper: format an ISO datetime string from SharePoint into readable h:mm AM/PM
-      const formatSubmissionTime = (iso) => {
-        if (!iso) return '';
-        try {
-          const d = new Date(iso);
-          if (isNaN(d)) return iso;
-          return d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit', hour12: true });
-        } catch { return iso; }
-      };
-
-      const submissions = await sharePointService.loadAbsenceSubmissions(currentDate).catch(() => []);
-      // Only process submissions we haven't already applied this session
-      const newSubmissions = submissions.filter(s => !seenSubmissionIds.current.has(s.ID));
-      const appliedNow = [];
-
-      if (submissions.length > 0) {
-      if (newSubmissions.length > 0) {
-        newSubmissions.forEach(sub => {
-          const normalizedType = (sub.PersonType || '').toLowerCase();
-          const isStaff = normalizedType === 'staff';
-          const isClient = normalizedType === 'client' || normalizedType === 'student';
-          const nameLower = (sub.PersonName || '').trim().toLowerCase();
-
-          if (isStaff) {
-            // Primary match: StaffLookup → list item ID (authoritative). Fallback: name.
-            const staffLookupId = sub.StaffLookupId ? Number(sub.StaffLookupId) : null;
-            const match = staffLookupId
-              ? finalStaffData.find(s => Number(s.listItemId) === staffLookupId)
-              : finalStaffData.find(s => s.name.trim().toLowerCase() === nameLower);
-            if (match) {
-              const idx = finalStaffData.indexOf(match);
-              finalStaffData = [...finalStaffData];
-              const absentAM      = sub.AbsentFullDay || sub.AbsentAM  || match.absentAM;
-              const absentPM      = sub.AbsentFullDay || sub.AbsentPM  || match.absentPM;
-              const absentFullDay = sub.AbsentFullDay || match.absentFullDay;
-              finalStaffData[idx] = new Staff({
-                ...match,
-                absentAM,
-                absentPM,
-                absentFullDay,
-                // Store raw ISO datetime — preserves full timestamp for downstream systems
-                absentAMArrivalTime:    absentAM  && !absentFullDay && sub.EstimatedArrivalTime
-                  ? sub.EstimatedArrivalTime
-                  : match.absentAMArrivalTime || '',
-                absentPMDepartureTime:  absentPM  && !absentFullDay && sub.EstimatedDepartureTime
-                  ? sub.EstimatedDepartureTime
-                  : match.absentPMDepartureTime || ''
-              });
-              const statusLabel = absentFullDay ? 'Full Day' : absentAM && absentPM ? 'Full Day' : absentAM ? 'AM' : 'PM';
-              // Format ISO to h:mm AM/PM for the UI banner only
-              const arrivalNote  = absentAM && !absentFullDay && sub.EstimatedArrivalTime
-                ? ` · ETA ${formatSubmissionTime(sub.EstimatedArrivalTime)}` : '';
-              const departNote   = absentPM && !absentFullDay && sub.EstimatedDepartureTime
-                ? ` · ETD ${formatSubmissionTime(sub.EstimatedDepartureTime)}` : '';
-              appliedNow.push({ name: match.name, type: 'Staff', status: statusLabel + arrivalNote + departNote });
-            } else {
-              const identifier = staffLookupId ? `ID ${staffLookupId}` : `"${sub.PersonName}"`;
-              console.warn(`⚠️ AbsenceSubmission: no staff match for ${identifier}`);
-            }
-          } else if (isClient) {
-            // Primary match: ClientLookup → student id (= Clients list item ID). Fallback: name.
-            const clientLookupId = sub.ClientLookupId ? Number(sub.ClientLookupId) : null;
-            const match = clientLookupId
-              ? finalStudentsData.find(s => Number(s.id) === clientLookupId)
-              : finalStudentsData.find(s => s.name.trim().toLowerCase() === nameLower);
-            if (match) {
-              const idx = finalStudentsData.indexOf(match);
-              finalStudentsData = [...finalStudentsData];
-              finalStudentsData[idx] = new Student({
-                ...match,
-                absentAM:      sub.AbsentFullDay || sub.AbsentAM  || match.absentAM,
-                absentPM:      sub.AbsentFullDay || sub.AbsentPM  || match.absentPM,
-                absentFullDay: sub.AbsentFullDay || match.absentFullDay
-              });
-              const statusLabel = sub.AbsentFullDay ? 'Full Day' : sub.AbsentAM && sub.AbsentPM ? 'Full Day' : sub.AbsentAM ? 'AM' : 'PM';
-              const arrivalNote  = sub.AbsentAM && !sub.AbsentFullDay && sub.EstimatedArrivalTime
-                ? ` · ETA ${formatSubmissionTime(sub.EstimatedArrivalTime)}` : '';
-              const departNote   = sub.AbsentPM && !sub.AbsentFullDay && sub.EstimatedDepartureTime
-                ? ` · ETD ${formatSubmissionTime(sub.EstimatedDepartureTime)}` : '';
-              appliedNow.push({ name: match.name, type: 'Client', status: statusLabel + arrivalNote + departNote });
-            } else {
-              const identifier = clientLookupId ? `ID ${clientLookupId}` : `"${sub.PersonName}"`;
-              console.warn(`⚠️ AbsenceSubmission: no client match for ${identifier}`);
-            }
-          }
-        });
-              // Track all processed IDs (matched or not) so the poll doesn't re-process them
-              newSubmissions.forEach(s => seenSubmissionIds.current.add(s.ID));
-            }
-      }
-
-      setAppliedSubmissions(appliedNow);
-      // -----------------------------------------------------------------------
 
       // Update staff and students
       setStaff(finalStaffData);
@@ -1893,7 +1694,7 @@ const handleAssignmentRemove = (assignmentId) => {
   const handleEditStaff = async (staffData) => {
     setSaving(true);
     try {
-      const updatedStaff = new Staff({ ...staffData, id: editingStaff.id });
+      const updatedStaff = new Staff({ ...staffData, id: editingStaff.id, listItemId: editingStaff.listItemId });
       await sharePointService.saveStaff(updatedStaff, true);
       await refreshDataOnly(); // Smart refresh: Update data without clearing schedule
       setEditingStaff(null);
@@ -2889,32 +2690,6 @@ const handleAssignmentRemove = (assignmentId) => {
             {/* Attendance Tab */}
             {activeTab === 'attendance' && (
               <div className="space-y-4">
-                {/* Absence Submissions Banner */}
-                {appliedSubmissions.length > 0 && (
-                  <div className="bg-green-50 border border-green-300 rounded-lg p-4 flex items-start gap-3">
-                    <span className="text-green-600 text-lg">✅</span>
-                    <div className="flex-1">
-                      <p className="text-sm font-semibold text-green-800">
-                        {appliedSubmissions.length} absence submission{appliedSubmissions.length > 1 ? 's' : ''} auto-applied from SharePoint
-                      </p>
-                      <ul className="mt-1 space-y-0.5">
-                        {appliedSubmissions.map((s, i) => (
-                          <li key={i} className="text-xs text-green-700">
-                            {s.name} <span className="text-green-500">({s.type})</span> — {s.status} absent
-                          </li>
-                        ))}
-                      </ul>
-                      <p className="text-xs text-green-600 mt-2">
-                        Save the schedule to lock in the updated attendance.
-                      </p>
-                    </div>
-                    <button
-                      onClick={() => setAppliedSubmissions([])}
-                      className="text-green-500 hover:text-green-700 text-xs"
-                      title="Dismiss"
-                    >✕</button>
-                  </div>
-                )}
                 <AttendanceManagement
                   staff={staff}
                   students={students}

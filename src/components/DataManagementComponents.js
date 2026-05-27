@@ -14,13 +14,12 @@ export const StaffForm = ({
 }) => {
   const [formData, setFormData] = useState({
     name: staff?.name || '',
-    role: staff?.role || ROLES.RBT,
+    role: staff?.role || 'RBT',
     email: staff?.email || '',
     phone: staff?.phone || '',
     isActive: staff?.isActive ?? true,
     primaryProgram: staff?.primaryProgram || false, // Yes/No field
     secondaryProgram: staff?.secondaryProgram || false, // Yes/No field
-    certificationExpiry: staff?.certificationExpiry || '',
     userId: staff?.userId || '',
     staffPerson: staff?.staffPerson || null
   });
@@ -166,8 +165,8 @@ export const StaffForm = ({
                 onChange={(e) => handleInputChange('role', e.target.value)}
                 className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
               >
-                {Object.values(ROLES).map(role => (
-                  <option key={role} value={role}>{role}</option>
+                {Object.entries(ROLES).map(([key, role]) => (
+                  <option key={key} value={key}>{role.name || key}</option>
                 ))}
               </select>
               {errors.role && (
@@ -207,20 +206,6 @@ export const StaffForm = ({
                 className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
               />
             </div>
-          </div>
-
-          {/* Work Details */}
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-2">
-              <Calendar className="w-4 h-4 inline mr-1" />
-              Certification Expiry
-            </label>
-            <input
-              type="date"
-              value={formData.certificationExpiry}
-              onChange={(e) => handleInputChange('certificationExpiry', e.target.value)}
-              className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
-            />
           </div>
 
           {/* Programs */}
