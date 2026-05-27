@@ -2978,6 +2978,31 @@ export class AutoAssignmentEngine {
               }
             }
           }
+          // LAST RESORT: no team-based solution found — try any available program-compatible direct-service staff
+          const stillUnfilled = !newAssignments.some(a => a.studentId === gapStudent.id && a.session === session);
+          if (stillUnfilled) {
+            const lastResortStaff = unassignedStaff.find(s =>
+              !this.isStaffInTrainingForStudent(s, gapStudent) &&
+              !this.hasStaffWorkedWithStudentIncludingPending(schedule, s.id, gapStudent.id) &&
+              !newAssignments.some(a => a.staffId === s.id && a.session === session)
+            );
+            if (lastResortStaff) {
+              console.log(`\n   ⚡ LAST RESORT: ${lastResortStaff.name} → ${gapStudent.name} (available but not on team)`);
+              newAssignments.push(new Assignment({
+                id: SchedulingUtils.generateAssignmentId(),
+                staffId: lastResortStaff.id,
+                staffName: lastResortStaff.name,
+                studentId: gapStudent.id,
+                studentName: gapStudent.name,
+                session: session,
+                program: program,
+                date: schedule.date,
+                isLocked: false,
+                assignedBy: 'auto-swap'
+              }));
+              gapsFilled++;
+            }
+          }
         }
       }
     }
