@@ -2407,8 +2407,8 @@ export class AutoAssignmentEngine {
    * @param {number} depth - Current recursion depth (max 3)
    * @returns {Object} { success: boolean, assignments: Array, removals: Array }
    */
-  async tryCascadingReassignment(gapStudent, session, program, staff, students, schedule, depth = 0) {
-    const MAX_DEPTH = 3;
+  async tryCascadingReassignment(gapStudent, session, program, staff, students, schedule, depth = 0, committedStaff = new Set()) {
+    const MAX_DEPTH = 6;
     if (depth >= MAX_DEPTH) {
       console.log(`      ⚠️ Max cascade depth reached for ${gapStudent.name}`);
       return { success: false, assignments: [], removals: [] };
@@ -2416,9 +2416,10 @@ export class AutoAssignmentEngine {
 
     console.log(`${'  '.repeat(depth)}🔗 CASCADE LEVEL ${depth + 1}: Finding assignment for ${gapStudent.name}`);
 
-    // Find team members of gap student
-    const gapTeamMembers = staff.filter(s => 
+    // Find team members of gap student, excluding staff already committed in this chain
+    const gapTeamMembers = staff.filter(s =>
       gapStudent.teamIds.includes(s.id) &&
+      !committedStaff.has(s.id) &&
       s.isAvailableForSession(session) &&
       s.canWorkProgram(program) &&
       this.canStaffDoDirectService(s) &&
@@ -2441,7 +2442,7 @@ export class AutoAssignmentEngine {
       if (!currentAssignment) {
         // Staff is free - direct assignment!
         console.log(`${'  '.repeat(depth)}   ✅ DIRECT: ${teamStaff.name} is free → ${gapStudent.name}`);
-        
+
         const newAssignment = new Assignment({
           id: SchedulingUtils.generateAssignmentId(),
           staffId: teamStaff.id,
@@ -2474,14 +2475,15 @@ export class AutoAssignmentEngine {
 
       console.log(`${'  '.repeat(depth)}   🔄 ${teamStaff.name} currently with ${currentStudent.name}, need replacement...`);
 
-      // Try to recursively fill the current student's spot
+      // Commit this staff to gapStudent and recurse to fill currentStudent's slot
+      const nextCommitted = new Set([...committedStaff, teamStaff.id]);
       const cascadeResult = await this.tryCascadingReassignment(
-        currentStudent, session, program, staff, students, schedule, depth + 1
+        currentStudent, session, program, staff, students, schedule, depth + 1, nextCommitted
       );
 
       if (cascadeResult.success) {
         console.log(`${'  '.repeat(depth)}   ✅ CASCADE SUCCESS: ${teamStaff.name} → ${gapStudent.name}`);
-        
+
         // Create the assignment for gap student
         const newAssignment = new Assignment({
           id: SchedulingUtils.generateAssignmentId(),
