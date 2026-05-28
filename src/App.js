@@ -1141,33 +1141,7 @@ const ABAScheduler = () => {
                 }
 
                 if (!staffFreed) {
-                  console.log(`   ❌ No cascade found for ${gapStudent.name} ${gapSession} — trying last-resort any-available staff`);
-                  // Last resort: any available program-compatible direct-service staff not already assigned
-                  const canWorkProgram = (s) => gapStudent.program === 'Primary' ? s.primaryProgram : s.secondaryProgram;
-                  const lastResort = preservedStaff.find(s =>
-                    (s.role === 'RBT' || s.role === 'BS') &&
-                    s.isAvailableForSession(gapSession) &&
-                    canWorkProgram(s) &&
-                    !modifiedAssignments.some(a => a.staffId === s.id && a.session === gapSession) &&
-                    !modifiedAssignments.some(a => a.staffId === s.id && a.studentId === gapStudent.id)
-                  );
-                  if (lastResort) {
-                    modifiedAssignments.push(new Assignment({
-                      id: SchedulingUtils.generateAssignmentId(),
-                      staffId: lastResort.id,
-                      staffName: lastResort.name,
-                      studentId: gapStudent.id,
-                      studentName: gapStudent.name,
-                      session: gapSession,
-                      program: gapStudent.program,
-                      date: schedule.date,
-                      isLocked: false,
-                      assignedBy: 'auto-trace-swap'
-                    }));
-                    totalFilled++;
-                    madeProgress = true;
-                    console.log(`   ⚡ Last-resort: assigned ${lastResort.name} to ${gapStudent.name}`);
-                  }
+                  console.log(`   ❌ No cascade found for ${gapStudent.name} ${gapSession}`);
                 }
               }
             }
