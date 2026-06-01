@@ -1661,12 +1661,8 @@ export class SharePointService {
         );
 
         if (attendanceChanged) {
-          console.log('💾 Attendance changed - overwriting DailyAttendance for', schedule.date);
-          const deleteResult = await this.deleteAttendanceForDate(schedule.date);
-          if (deleteResult && deleteResult.success === false) {
-            console.warn('⚠️ Attendance delete step had failures before overwrite:', deleteResult);
-          }
-
+          console.log('💾 Attendance changed - updating DailyAttendance for', schedule.date);
+          // No need to delete - saveAttendanceForDate now only updates changed records
           const saveAttendanceResult = await this.saveAttendanceForDate(
             schedule.date,
             this.cachedStaff,
@@ -1674,10 +1670,10 @@ export class SharePointService {
           );
 
           if (!saveAttendanceResult) {
-            console.warn('⚠️ Attendance overwrite save had failures for', schedule.date);
+            console.warn('⚠️ Attendance save had failures for', schedule.date);
           }
         } else {
-          console.log('✅ Attendance unchanged for', schedule.date, '- skipping attendance overwrite');
+          console.log('✅ Attendance unchanged for', schedule.date, '- skipping attendance sync');
         }
       } else {
         console.log('ℹ️ Skipping attendance sync during schedule save (staff/students not provided)');
@@ -2494,64 +2490,16 @@ export class SharePointService {
         console.log(`✅ Using provided staff (${staff.length}) and students (${students.length}) with current attendance data`);
       }
 
-      const attendanceRecords = [];
-
-      // Create records for ALL active staff (not just absent)
-      staff.forEach(staffMember => {
-        if (!staffMember.isActive) return;
-        const status = this.getAttendanceStatusForPerson(staffMember);
-
-        attendanceRecords.push({
-          __metadata: { type: 'SP.Data.DailyAttendanceListItem' },
-          Title: `${staffMember.name}_${dateStr}`,
-          AttendanceDate: dateStr,
-          PersonType: 'Staff',
-          PersonID: staffMember.id,
-          PersonName: staffMember.name,
-          Status: status,
-          AbsentAM: staffMember.absentAM || false,
-          AbsentPM: staffMember.absentPM || false,
-          AbsentFullDay: staffMember.absentFullDay || false,
-          OutOfSessionAM: staffMember.outOfSessionAM || false,
-          OutOfSessionPM: staffMember.outOfSessionPM || false,
-          OutOfSessionFullDay: staffMember.outOfSessionFullDay || false,
-          CreatedDate: new Date().toISOString()
-        });
-      });
-
-      // Create records for ALL active students (not just absent)
-      students.forEach(student => {
-        if (!student.isActive) return;
-        const status = this.getAttendanceStatusForPerson(student);
-
-        attendanceRecords.push({
-          __metadata: { type: 'SP.Data.DailyAttendanceListItem' },
-          Title: `${student.name}_${dateStr}`,
-          AttendanceDate: dateStr,
-          PersonType: 'Client',
-          PersonID: student.id,
-          PersonName: student.name,
-          Status: status,
-          AbsentAM: student.absentAM || false,
-          AbsentPM: student.absentPM || false,
-          AbsentFullDay: student.absentFullDay || false,
-          OutOfSessionAM: student.outOfSessionAM || false,
-          OutOfSessionPM: student.outOfSessionPM || false,
-          OutOfSessionFullDay: student.outOfSessionFullDay || false,
-          CreatedDate: new Date().toISOString()
-        });
-      });
-
-      console.log(`📝 Saving ${attendanceRecords.length} attendance records...`);
-
       // Get request digest once
       const digest = await this.getRequestDigest();
 
       const start = `${dateStr}T00:00:00Z`;
       const end = `${dateStr}T23:59:59Z`;
+
+      // Load FULL existing records (with all attendance details) to compare
       const existingUrl = `${this.siteUrl}/_api/web/lists/getbytitle('DailyAttendance')/items?` +
         `$filter=AttendanceDate ge datetime'${start}' and AttendanceDate le datetime'${end}'&` +
-        `$select=ID,PersonType,PersonID&` +
+        `$select=ID,PersonType,PersonID,PersonName,AbsentAM,AbsentPM,AbsentFullDay,OutOfSessionAM,OutOfSessionPM,OutOfSessionFullDay&` +
         `$top=5000`;
 
       const existingResponse = await this.retryFetch(existingUrl, {
@@ -2573,17 +2521,100 @@ export class SharePointService {
         });
       }
 
+      console.log(`📊 Found ${existingByKey.size} existing attendance records for ${dateStr}`);
+
+      // Build records ONLY for people whose attendance changed or who are absent/out of session
+      const attendanceRecords = [];
       const toCreate = [];
       const toUpdate = [];
-      attendanceRecords.forEach(record => {
-        const key = this.getAttendanceIdentityKey(record.PersonType, record.PersonID);
+
+      // Check staff for changes
+      staff.forEach(staffMember => {
+        if (!staffMember.isActive) return;
+
+        const key = this.getAttendanceIdentityKey('Staff', staffMember.id);
         const existing = existingByKey.get(key);
-        if (existing) {
-          toUpdate.push({ id: existing.ID, record });
-        } else {
-          toCreate.push(record);
+        const status = this.getAttendanceStatusForPerson(staffMember);
+
+        // Build new record
+        const newRecord = {
+          __metadata: { type: 'SP.Data.DailyAttendanceListItem' },
+          Title: `${staffMember.name}_${dateStr}`,
+          AttendanceDate: dateStr,
+          PersonType: 'Staff',
+          PersonID: staffMember.id,
+          PersonName: staffMember.name,
+          Status: status,
+          AbsentAM: staffMember.absentAM || false,
+          AbsentPM: staffMember.absentPM || false,
+          AbsentFullDay: staffMember.absentFullDay || false,
+          OutOfSessionAM: staffMember.outOfSessionAM || false,
+          OutOfSessionPM: staffMember.outOfSessionPM || false,
+          OutOfSessionFullDay: staffMember.outOfSessionFullDay || false,
+          CreatedDate: new Date().toISOString()
+        };
+
+        // Compare with existing - only update if changed
+        const hasChanged = !existing ||
+          existing.AbsentAM !== newRecord.AbsentAM ||
+          existing.AbsentPM !== newRecord.AbsentPM ||
+          existing.AbsentFullDay !== newRecord.AbsentFullDay ||
+          existing.OutOfSessionAM !== newRecord.OutOfSessionAM ||
+          existing.OutOfSessionPM !== newRecord.OutOfSessionPM ||
+          existing.OutOfSessionFullDay !== newRecord.OutOfSessionFullDay;
+
+        if (hasChanged) {
+          if (existing) {
+            toUpdate.push({ id: existing.ID, record: newRecord });
+          } else {
+            toCreate.push(newRecord);
+          }
         }
       });
+
+      // Check students for changes
+      students.forEach(student => {
+        if (!student.isActive) return;
+
+        const key = this.getAttendanceIdentityKey('Client', student.id);
+        const existing = existingByKey.get(key);
+        const status = this.getAttendanceStatusForPerson(student);
+
+        const newRecord = {
+          __metadata: { type: 'SP.Data.DailyAttendanceListItem' },
+          Title: `${student.name}_${dateStr}`,
+          AttendanceDate: dateStr,
+          PersonType: 'Client',
+          PersonID: student.id,
+          PersonName: student.name,
+          Status: status,
+          AbsentAM: student.absentAM || false,
+          AbsentPM: student.absentPM || false,
+          AbsentFullDay: student.absentFullDay || false,
+          OutOfSessionAM: student.outOfSessionAM || false,
+          OutOfSessionPM: student.outOfSessionPM || false,
+          OutOfSessionFullDay: student.outOfSessionFullDay || false,
+          CreatedDate: new Date().toISOString()
+        };
+
+        const hasChanged = !existing ||
+          existing.AbsentAM !== newRecord.AbsentAM ||
+          existing.AbsentPM !== newRecord.AbsentPM ||
+          existing.AbsentFullDay !== newRecord.AbsentFullDay ||
+          existing.OutOfSessionAM !== newRecord.OutOfSessionAM ||
+          existing.OutOfSessionPM !== newRecord.OutOfSessionPM ||
+          existing.OutOfSessionFullDay !== newRecord.OutOfSessionFullDay;
+
+        if (hasChanged) {
+          if (existing) {
+            toUpdate.push({ id: existing.ID, record: newRecord });
+          } else {
+            toCreate.push(newRecord);
+          }
+        }
+      });
+
+      console.log(`📝 Attendance changes for ${dateStr}: ${toCreate.length} to create, ${toUpdate.length} to update`);
 
       const createResults = await executeInBatches(toCreate, async record => {
         try {

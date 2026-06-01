@@ -1454,7 +1454,7 @@ const handleAssignmentRemove = (assignmentId) => {
       if (scheduleModifiedAt > dataLoadedAt) {
         const timeDiff = Math.floor((scheduleModifiedAt - dataLoadedAt) / 1000 / 60); // minutes
         const confirmMessage = `⚠️ WARNING: This schedule was modified by ${schedule.lastModifiedBy} ${timeDiff} minute${timeDiff !== 1 ? 's' : ''} after you loaded the page.\n\nSaving now may overwrite their changes.\n\nRecommendation: Click "Cancel", then click the "Refresh" button to see their changes before making your edits.\n\nDo you want to save anyway and potentially overwrite their work?`;
-        
+
         if (!window.confirm(confirmMessage)) {
           return; // User chose not to save
         }
@@ -1477,7 +1477,7 @@ const handleAssignmentRemove = (assignmentId) => {
 
       // Pass current staff and students so attendance data is saved
       const success = await sharePointService.saveSchedule(scheduleToSave, staff, students);
-      
+
       if (success) {
         // Update local schedule state with metadata
         setSchedule(scheduleToSave);
@@ -1490,9 +1490,9 @@ const handleAssignmentRemove = (assignmentId) => {
       }
     } catch (error) {
       console.error('❌ Error saving schedule:', error);
-      
+
       let errorMessage = 'An error occurred while saving the schedule.';
-      
+
       if (error.message.includes('Authentication required')) {
         errorMessage = 'Authentication expired. Please refresh the page and sign in again.';
       } else if (error.message.includes('fetch')) {
@@ -1502,7 +1502,7 @@ const handleAssignmentRemove = (assignmentId) => {
       } else {
         errorMessage = `Error: ${error.message}`;
       }
-      
+
       alert(errorMessage + '\n\nFor technical details, check the browser console (F12 → Console).');
     } finally {
       setSaving(false);
@@ -1876,10 +1876,9 @@ const handleAssignmentRemove = (assignmentId) => {
         }
       }
 
-      // Persist attendance per selected date in DailyAttendance (do not write date-specific flags to Staff list)
-      await sharePointService.saveAttendanceForDate(currentDate, updatedStaff, students);
-      
-      console.log('✅ Staff attendance updated for date:', currentDate.toDateString(), staffMember.name, attendanceData);
+      // DO NOT save to SharePoint here - attendance will be saved when user clicks the main Save button
+      // This allows user to make multiple edits and save everything at once
+      console.log('📝 Staff attendance updated in UI (will be saved when you click Save):', staffMember.name, attendanceData);
     } catch (error) {
       console.error('Error updating staff attendance:', error);
       // Don't reload on error - keep local state
@@ -1936,9 +1935,9 @@ const handleAssignmentRemove = (assignmentId) => {
         }
       }
 
-      // Persist attendance per selected date in DailyAttendance (do not write date-specific flags to Clients list)
-      await sharePointService.saveAttendanceForDate(currentDate, staff, updatedStudents);
-      
+      // DO NOT save to SharePoint here - attendance will be saved when user clicks the main Save button
+      // This allows user to make multiple edits and save everything at once
+      console.log('📝 Student attendance updated in UI (will be saved when you click Save):', student.name, attendanceData);
       console.log('✅ Student attendance updated for date:', currentDate.toDateString(), student.name, attendanceData);
     } catch (error) {
       console.error('Error updating student attendance:', error);
