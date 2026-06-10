@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { 
   Calendar, 
   Save, 
@@ -794,6 +794,124 @@ const ABAScheduler = () => {
     // Preserve current staff/students state (including attendance data)
     const preservedStaff = [...staff];
     const preservedStudents = [...students];
+
+    const normalizeSmartSwapAssignments = (candidateAssignments, label = 'SMART SWAP') => {
+      let normalizedAssignments = [...candidateAssignments];
+
+      const beforeExactDedup = normalizedAssignments.length;
+      const seenAssignmentKeys = new Set();
+      normalizedAssignments = normalizedAssignments.filter(assignment => {
+        const key = [
+          assignment.staffId,
+          assignment.studentId,
+          assignment.session,
+          assignment.program,
+          assignment.isTrainee ? 'trainee' : 'main'
+        ].join('-');
+
+        if (seenAssignmentKeys.has(key)) {
+          console.warn(`⚠️ ${label} DEDUP: Removing duplicate assignment ${assignment.staffName || assignment.staffId} → ${assignment.studentName || assignment.studentId} (${assignment.session})`);
+          return false;
+        }
+
+        seenAssignmentKeys.add(key);
+        return true;
+      });
+      if (beforeExactDedup !== normalizedAssignments.length) {
+        console.log(`   📊 After exact dedupe: ${beforeExactDedup} → ${normalizedAssignments.length} (removed ${beforeExactDedup - normalizedAssignments.length})`);
+      }
+
+      // SAFETY CHECK 0: Remove any assignments where staff is unavailable (absent or out of session)
+      const beforeSafetyCheck0 = normalizedAssignments.length;
+      normalizedAssignments = normalizedAssignments.filter(assignment => {
+        const staffMember = staff.find(s => s.id === assignment.staffId);
+        if (!staffMember) return true;
+
+        const isUnavailable = !staffMember.isAvailableForSession(assignment.session);
+        if (isUnavailable) {
+          console.warn(`⚠️ ${label} SAFETY 0: Removed ${staffMember.name} → ${assignment.studentName || 'student'} (${assignment.session}) - unavailable`);
+          return false;
+        }
+        return true;
+      });
+      if (beforeSafetyCheck0 !== normalizedAssignments.length) {
+        console.log(`   📊 After SAFETY CHECK 0: ${beforeSafetyCheck0} → ${normalizedAssignments.length} (removed ${beforeSafetyCheck0 - normalizedAssignments.length})`);
+      }
+
+      // SAFETY CHECK 1: Limit assignments per student based on their ratio
+      const assignmentsByStudent = {};
+      normalizedAssignments.forEach(a => {
+        const key = `${a.studentId}-${a.session}`;
+        if (!assignmentsByStudent[key]) assignmentsByStudent[key] = [];
+        assignmentsByStudent[key].push(a);
+      });
+
+      let validAssignments = [];
+      Object.entries(assignmentsByStudent).forEach(([key, assignments]) => {
+        const [studentId, session] = key.split('-');
+        const student = students.find(s => s.id == studentId);
+        if (!student) {
+          validAssignments.push(...assignments);
+          return;
+        }
+
+        const ratio = session === 'AM' ? student.ratioAM : student.ratioPM;
+        const maxStaff = ratio === '2:1' ? 2 : 1;
+
+        const mainStaff = assignments.filter(a => !a.isTrainee);
+        const trainees = assignments.filter(a => a.isTrainee);
+
+        const sortedMainStaff = mainStaff.sort((a, b) => {
+          const aPriority = (a.assignedBy === 'manual' || a.isLocked) ? 3 : (a.assignedBy === 'loaded') ? 2 : 1;
+          const bPriority = (b.assignedBy === 'manual' || b.isLocked) ? 3 : (b.assignedBy === 'loaded') ? 2 : 1;
+          return bPriority - aPriority;
+        });
+
+        const keptMainStaff = sortedMainStaff.slice(0, maxStaff);
+        const removedMainStaff = sortedMainStaff.slice(maxStaff);
+
+        validAssignments.push(...keptMainStaff, ...trainees);
+
+        if (removedMainStaff.length > 0) {
+          console.warn(`⚠️ ${label} SAFETY 1 TRIMMING ${student.name} ${session}: ${mainStaff.length} → ${maxStaff} (ratio: ${ratio})`);
+          console.warn(`   KEEPING: ${keptMainStaff.map(a => `${a.staffName}(${a.assignedBy}, id:${a.id})`).join(', ')}`);
+          console.warn(`   REMOVED: ${removedMainStaff.map(a => `${a.staffName}(${a.assignedBy}, id:${a.id})`).join(', ')}`);
+        }
+      });
+      console.log(`   📊 After SAFETY CHECK 1 (ratio limits): ${normalizedAssignments.length} → ${validAssignments.length}`);
+
+      // SAFETY CHECK 2: Prevent double-booking of staff in the same session
+      const beforeSafetyCheck2 = validAssignments.length;
+      const staffDoubleBookings = {};
+      validAssignments = validAssignments.filter(assignment => {
+        const key = `${assignment.staffId}-${assignment.session}`;
+
+        if (staffDoubleBookings[key]) {
+          const existingAssignment = staffDoubleBookings[key];
+          const currentStudent = students.find(s => s.id === assignment.studentId);
+          const existingStudent = students.find(s => s.id === existingAssignment.studentId);
+
+          const arePaired = currentStudent && existingStudent &&
+            currentStudent.isPaired() &&
+            currentStudent.pairedWith === existingStudent.id;
+
+          if (!arePaired) {
+            const staffMember = staff.find(s => s.id === assignment.staffId);
+            console.warn(`⚠️ ${label} BLOCKED DOUBLE-BOOKING: ${staffMember?.name || 'Staff'} cannot be assigned to ${currentStudent?.name || 'student'} - already assigned to ${existingStudent?.name || 'another student'} in ${assignment.session}`);
+            return false;
+          }
+        }
+
+        staffDoubleBookings[key] = assignment;
+        return true;
+      });
+      if (beforeSafetyCheck2 !== validAssignments.length) {
+        console.log(`   📊 After SAFETY CHECK 2 (double-booking): ${beforeSafetyCheck2} → ${validAssignments.length} (removed ${beforeSafetyCheck2 - validAssignments.length})`);
+      }
+
+      console.log(`   📊 FINAL: ${validAssignments.length} assignments in schedule`);
+      return validAssignments;
+    };
     
     try {
       console.log('🔀 Starting Smart Swap Optimization...');
@@ -845,88 +963,7 @@ const ABAScheduler = () => {
           `${a.staffName} → ${a.studentName} (${a.session}, ${a.assignedBy})`
         ));
         
-        // SAFETY CHECK 1: Limit assignments per student based on their ratio
-        const assignmentsByStudent = {};
-        updatedAssignments.forEach(a => {
-          const key = `${a.studentId}-${a.session}`;
-          if (!assignmentsByStudent[key]) assignmentsByStudent[key] = [];
-          assignmentsByStudent[key].push(a);
-        });
-        
-        let validAssignments = [];
-        Object.entries(assignmentsByStudent).forEach(([key, assignments]) => {
-          const [studentId, session] = key.split('-');
-          const student = students.find(s => s.id == studentId);
-          if (!student) {
-            validAssignments.push(...assignments);
-            return;
-          }
-          
-          const ratio = session === 'AM' ? student.ratioAM : student.ratioPM;
-          const maxStaff = ratio === '2:1' ? 2 : 1;
-          
-          // CRITICAL: Separate main staff from trainees
-          const mainStaff = assignments.filter(a => !a.isTrainee);
-          const trainees = assignments.filter(a => a.isTrainee);
-          
-          // Limit only main staff, prioritize manual/locked/loaded
-          const sortedMainStaff = mainStaff.sort((a, b) => {
-            const aPriority = (a.assignedBy === 'manual' || a.isLocked) ? 3 : (a.assignedBy === 'loaded') ? 2 : 1;
-            const bPriority = (b.assignedBy === 'manual' || b.isLocked) ? 3 : (b.assignedBy === 'loaded') ? 2 : 1;
-            return bPriority - aPriority;
-          });
-          
-          const keptMainStaff = sortedMainStaff.slice(0, maxStaff);
-          const removedMainStaff = sortedMainStaff.slice(maxStaff);
-          
-          // Keep limited main staff + ALL trainees
-          validAssignments.push(...keptMainStaff, ...trainees);
-          
-          if (removedMainStaff.length > 0) {
-            console.warn(`⚠️ SMART SWAP SAFETY 1 TRIMMING ${student.name} ${session}: ${mainStaff.length} → ${maxStaff} (ratio: ${ratio})`);
-            console.warn(`   KEEPING: ${keptMainStaff.map(a => `${a.staffName}(${a.assignedBy}, id:${a.id})`).join(', ')}`);
-            console.warn(`   REMOVED: ${removedMainStaff.map(a => `${a.staffName}(${a.assignedBy}, id:${a.id})`).join(', ')}`);
-          } else if (mainStaff.length > 0) {
-            console.log(`   ✅ KEEPING ${student.name} ${session}: ${keptMainStaff.map(a => `${a.staffName}(${a.assignedBy})`).join(', ')}`);
-          }
-          if (trainees.length > 0) {
-            console.log(`   ✅ KEEPING ${trainees.length} trainee(s): ${trainees.map(a => a.staffName).join(', ')}`);
-          }
-        });
-        
-        console.log(`   📊 After SAFETY CHECK 1 (ratio limits): ${updatedAssignments.length} → ${validAssignments.length}`);
-        
-        // SAFETY CHECK 2: Prevent double-booking of staff in the same session
-        const beforeSafetyCheck2 = validAssignments.length;
-        const staffDoubleBookings = {};
-        validAssignments = validAssignments.filter(assignment => {
-          const key = `${assignment.staffId}-${assignment.session}`;
-          
-          if (staffDoubleBookings[key]) {
-            const existingAssignment = staffDoubleBookings[key];
-            const currentStudent = students.find(s => s.id === assignment.studentId);
-            const existingStudent = students.find(s => s.id === existingAssignment.studentId);
-            
-            // Allow only if students are paired (1:2 ratio)
-            const arePaired = currentStudent && existingStudent && 
-              currentStudent.isPaired() && 
-              currentStudent.pairedWith === existingStudent.id;
-            
-            if (!arePaired) {
-              const staffMember = staff.find(s => s.id === assignment.staffId);
-              console.warn(`⚠️ SMART SWAP BLOCKED DOUBLE-BOOKING: ${staffMember?.name || 'Staff'} cannot be assigned to ${currentStudent?.name || 'student'} - already assigned to ${existingStudent?.name || 'another student'} in ${assignment.session}`);
-              return false;
-            }
-          }
-          
-          staffDoubleBookings[key] = assignment;
-          return true;
-        });
-        if (beforeSafetyCheck2 !== validAssignments.length) {
-          console.log(`   📊 After SAFETY CHECK 2 (double-booking): ${beforeSafetyCheck2} → ${validAssignments.length} (removed ${beforeSafetyCheck2 - validAssignments.length})`);
-        }
-        
-        console.log(`   📊 FINAL: ${validAssignments.length} assignments in schedule`);
+        const validAssignments = normalizeSmartSwapAssignments(updatedAssignments);
         
         
         // Create new schedule instance
@@ -985,6 +1022,68 @@ const ABAScheduler = () => {
             let passNumber = 0;
             let madeProgress = true;
 
+            // Recursive augmenting path finder (bipartite matching).
+            // Finds a chain of reassignments of arbitrary length that ultimately
+            // frees up a valid team member for targetStudent.
+            // Returns an ordered array of swap steps, or null if no path exists.
+            // visitedStaffIds prevents cycles within a single gap's search.
+            const findAugmentingPath = (targetStudent, session, assignments, visitedStaffIds) => {
+              const otherSession = session === 'AM' ? 'PM' : 'AM';
+              const candidates = preservedStaff.filter(s =>
+                targetStudent.teamIds.includes(s.id) &&
+                (s.role === 'RBT' || s.role === 'BS') &&
+                s.isAvailableForSession(session)
+              );
+
+              for (const staffMember of candidates) {
+                if (visitedStaffIds.has(staffMember.id)) continue;
+                visitedStaffIds.add(staffMember.id);
+
+                // Same-student-all-day rule
+                const alreadyWithTargetOtherSession = assignments.some(a =>
+                  a.staffId === staffMember.id && a.studentId === targetStudent.id && a.session === otherSession
+                );
+                if (alreadyWithTargetOtherSession) continue;
+
+                const currentAssignment = assignments.find(a =>
+                  a.staffId === staffMember.id &&
+                  a.session === session &&
+                  !a.isLocked &&
+                  a.assignedBy !== 'manual'
+                );
+
+                if (!currentAssignment) {
+                  // Staff is free — base case, path found
+                  return [{
+                    staffId: staffMember.id,
+                    staffName: staffMember.name,
+                    toStudentId: targetStudent.id,
+                    toStudentName: targetStudent.name,
+                    program: targetStudent.program,
+                    removeAssignmentId: null
+                  }];
+                }
+
+                // Staff is busy with another student — recurse to try to free them
+                const displaceStudent = activeStudents.find(s => s.id === currentAssignment.studentId);
+                if (!displaceStudent) continue;
+
+                const subPath = findAugmentingPath(displaceStudent, session, assignments, visitedStaffIds);
+                if (subPath) {
+                  return [{
+                    staffId: staffMember.id,
+                    staffName: staffMember.name,
+                    toStudentId: targetStudent.id,
+                    toStudentName: targetStudent.name,
+                    program: targetStudent.program,
+                    removeAssignmentId: currentAssignment.id
+                  }, ...subPath];
+                }
+              }
+
+              return null; // No path found
+            };
+
             while (madeProgress) {
               madeProgress = false;
               passNumber++;
@@ -996,161 +1095,48 @@ const ABAScheduler = () => {
             // Process each gap
             for (const gap of gapsThisPass) {
               const { student: gapStudent, session: gapSession } = gap;
-              
+
               console.log(`\n🎯 Targeting gap: ${gapStudent.name} ${gapSession}`);
 
-              // Find this student's team members — RBT/BS only
-              const gapTeamMembers = preservedStaff.filter(s => 
-                gapStudent.teamIds.includes(s.id) &&
-                (s.role === 'RBT' || s.role === 'BS') &&
-                s.isAvailableForSession(gapSession)
-              );
-              
-              console.log(`   Team members available: ${gapTeamMembers.map(s => s.name).join(', ')}`);
-              
-              // Find where each team member is currently assigned in this session
-              let staffFreed = false;
-              
-              for (const teamStaff of gapTeamMembers) {
-                const conflictingAssignment = modifiedAssignments.find(a => 
-                  a.staffId === teamStaff.id && 
-                  a.session === gapSession &&
-                  !a.isLocked &&
-                  a.assignedBy !== 'manual'
-                );
-                
-                if (conflictingAssignment) {
-                  const conflictStudent = activeStudents.find(s => s.id === conflictingAssignment.studentId);
-                  console.log(`   Found conflict: ${teamStaff.name} is with ${conflictStudent?.name} (will only move via cascade with coverage)`);
-                  continue;
-                } else if (!modifiedAssignments.some(a => a.staffId === teamStaff.id && a.session === gapSession)) {
-                  // Staff is free! But skip if they already worked with this student in the other session
-                  const otherSession = gapSession === 'AM' ? 'PM' : 'AM';
-                  const alreadyWithStudentToday = modifiedAssignments.some(a =>
-                    a.staffId === teamStaff.id && a.studentId === gapStudent.id && a.session === otherSession
-                  );
-                  if (alreadyWithStudentToday) {
-                    console.log(`   ⛔ ${teamStaff.name} already with ${gapStudent.name} in ${otherSession} — skipping`);
-                    continue;
+              const path = findAugmentingPath(gapStudent, gapSession, modifiedAssignments, new Set());
+
+              if (path) {
+                console.log(`   ✅ Found swap chain (${path.length} step${path.length !== 1 ? 's' : ''}):`);
+                // Apply each step: remove old assignment (if any), add new assignment
+                for (const step of path) {
+                  if (step.removeAssignmentId) {
+                    const idx = modifiedAssignments.findIndex(a => a.id === step.removeAssignmentId);
+                    if (idx !== -1) modifiedAssignments.splice(idx, 1);
+                    totalCleared++;
                   }
-                  
-                  const newAssignment = new Assignment({
+                  modifiedAssignments.push(new Assignment({
                     id: SchedulingUtils.generateAssignmentId(),
-                    staffId: teamStaff.id,
-                    staffName: teamStaff.name,
-                    studentId: gapStudent.id,
-                    studentName: gapStudent.name,
+                    staffId: step.staffId,
+                    staffName: step.staffName,
+                    studentId: step.toStudentId,
+                    studentName: step.toStudentName,
                     session: gapSession,
-                    program: gapStudent.program,
+                    program: step.program,
                     date: schedule.date,
                     isLocked: false,
                     assignedBy: 'auto-trace-swap'
-                  });
-                  
-                  modifiedAssignments.push(newAssignment);
-                  totalFilled++;
-                  console.log(`   ✅ Assigned ${teamStaff.name} to ${gapStudent.name}`);
-                  
-                  staffFreed = true;
-                  madeProgress = true;
-                  break;
+                  }));
+                  console.log(`     ${step.removeAssignmentId ? '🔗' : '✨'} ${step.staffName} → ${step.toStudentName}`);
                 }
-              }
-              
-              if (!staffFreed) {
-                console.log(`   ❌ No free team member for ${gapStudent.name} ${gapSession} — attempting cascade swap...`);
-
-                // Cascade: find a busy team member, then find someone who can cover THEIR current student
-                for (const teamStaff of gapTeamMembers) {
-                  const conflictingAssignment = modifiedAssignments.find(a =>
-                    a.staffId === teamStaff.id &&
-                    a.session === gapSession &&
-                    !a.isLocked &&
-                    a.assignedBy !== 'manual'
-                  );
-
-                  if (!conflictingAssignment) continue;
-
-                  const conflictStudent = activeStudents.find(s => s.id === conflictingAssignment.studentId);
-                  if (!conflictStudent) continue;
-
-                  console.log(`   🔗 ${teamStaff.name} is with ${conflictStudent.name} — looking for someone to take over...`);
-
-                  // Find any free RBT/BS who is on conflictStudent's team and available
-                  const coverStaff = preservedStaff.find(s =>
-                    s.id !== teamStaff.id &&
-                    (s.role === 'RBT' || s.role === 'BS') &&
-                    conflictStudent.teamIds.includes(s.id) &&
-                    s.isAvailableForSession(gapSession) &&
-                    !modifiedAssignments.some(a => a.staffId === s.id && a.session === gapSession)
-                  );
-
-                  if (coverStaff) {
-                    // Don't use coverStaff if they already worked with conflictStudent in the other session
-                    const otherSession = gapSession === 'AM' ? 'PM' : 'AM';
-                    const coverAlreadyWithConflictStudent = modifiedAssignments.some(a =>
-                      a.staffId === coverStaff.id && a.studentId === conflictStudent.id && a.session === otherSession
-                    );
-                    // Don't free teamStaff if they already worked with gapStudent in the other session
-                    const teamStaffAlreadyWithGapStudent = modifiedAssignments.some(a =>
-                      a.staffId === teamStaff.id && a.studentId === gapStudent.id && a.session === otherSession
-                    );
-                    if (coverAlreadyWithConflictStudent || teamStaffAlreadyWithGapStudent) {
-                      console.log(`   ⛔ Cascade blocked — same-student-all-day rule`);
-                      continue;
-                    }
-
-                    // Reassign conflictStudent to coverStaff
-                    const conflictIndex = modifiedAssignments.findIndex(a => a.id === conflictingAssignment.id);
-                    if (conflictIndex !== -1) modifiedAssignments.splice(conflictIndex, 1);
-
-                    modifiedAssignments.push(new Assignment({
-                      id: SchedulingUtils.generateAssignmentId(),
-                      staffId: coverStaff.id,
-                      staffName: coverStaff.name,
-                      studentId: conflictStudent.id,
-                      studentName: conflictStudent.name,
-                      session: gapSession,
-                      program: conflictStudent.program,
-                      date: schedule.date,
-                      isLocked: false,
-                      assignedBy: 'auto-trace-swap'
-                    }));
-
-                    // Now assign freed team member to gap student
-                    modifiedAssignments.push(new Assignment({
-                      id: SchedulingUtils.generateAssignmentId(),
-                      staffId: teamStaff.id,
-                      staffName: teamStaff.name,
-                      studentId: gapStudent.id,
-                      studentName: gapStudent.name,
-                      session: gapSession,
-                      program: gapStudent.program,
-                      date: schedule.date,
-                      isLocked: false,
-                      assignedBy: 'auto-trace-swap'
-                    }));
-
-                    totalCleared++;
-                    totalFilled++;
-                    staffFreed = true;
-                    madeProgress = true;
-                    console.log(`   ✅ Cascade complete: ${teamStaff.name} → ${gapStudent.name}`);
-                    break;
-                  }
-                }
-
-                if (!staffFreed) {
-                  console.log(`   ❌ No cascade found for ${gapStudent.name} ${gapSession}`);
-                }
+                totalFilled++;
+                madeProgress = true;
+              } else {
+                console.log(`   ❌ No swap chain found for ${gapStudent.name} ${gapSession}`);
               }
             }
             } // end while madeProgress
             
             // Create new schedule with modified assignments
+            const normalizedTraceAssignments = normalizeSmartSwapAssignments(modifiedAssignments, 'TRACE & SWAP');
+
             const newSchedule = new Schedule({
               date: schedule.date,
-              assignments: modifiedAssignments,
+              assignments: normalizedTraceAssignments,
               traineeAssignments: [...(schedule.traineeAssignments || [])],
               lockedAssignments: schedule.lockedAssignments,
               isFinalized: schedule.isFinalized
@@ -1228,8 +1214,17 @@ const handleAssignmentUnlock = (assignmentId) => {
   setSchedule(newSchedule);
 };
 
-const handleManualAssignment = ({ staffId, studentId, session, program, bypassTeamCheck = false, isTrainee = false }) => {
-  console.log('📝 handleManualAssignment called:', { staffId, studentId, session, program, isTrainee });
+const handleManualAssignment = ({
+  staffId,
+  studentId,
+  session,
+  program,
+  bypassTeamCheck = false,
+  isTrainee = false,
+  trainerId = null,
+  trainerName = null
+}) => {
+  console.log('📝 handleManualAssignment called:', { staffId, studentId, session, program, isTrainee, trainerId });
   
   // Get staff and student names
   const staffMember = staff.find(s => s.id === staffId);
@@ -1292,6 +1287,8 @@ const handleManualAssignment = ({ staffId, studentId, session, program, bypassTe
       id: traineeAssignmentId,
       staffId: staffId,
       staffName: staffMember.name,
+      trainerId: trainerId,
+      trainerName: trainerName,
       studentId: studentId,
       studentName: student.name,
       session: session,
@@ -1325,6 +1322,8 @@ const handleManualAssignment = ({ staffId, studentId, session, program, bypassTe
             id: pairedTraineeAssignmentId,
             staffId: staffId,
             staffName: staffMember.name,
+            trainerId: trainerId,
+            trainerName: trainerName,
             studentId: pairedStudent.id,
             studentName: pairedStudent.name,
             session: session,
@@ -2098,6 +2097,15 @@ const handleAssignmentRemove = (assignmentId) => {
     setValidationResults(results);
   };
 
+  const handleGetRecentTrainingPairs = useCallback(async (candidates) => {
+    try {
+      return await sharePointService.getMostRecentTrainingPairsForCandidates(candidates);
+    } catch (error) {
+      console.error('Failed loading recent training pairs:', error);
+      return {};
+    }
+  }, [sharePointService]);
+
   // Test runner
   const handleRunTests = async () => {
     setIsTestRunning(true);
@@ -2201,7 +2209,7 @@ const handleAssignmentRemove = (assignmentId) => {
                   {autoAssigning ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <Play className="w-3.5 h-3.5" />}
                   Auto Assign
                 </button>
-                
+
                 <button
                   onClick={handleSmartSwap}
                   disabled={autoAssigning || loading || schedule.assignments.length === 0}
@@ -2423,6 +2431,7 @@ const handleAssignmentRemove = (assignmentId) => {
                     selectedDate={currentDate}
                     onManualAssignment={handleManualAssignment}
                     onAssignmentRemove={handleAssignmentRemove}
+                    onGetRecentTrainingPairs={handleGetRecentTrainingPairs}
                   />
                   <SessionSummary 
                     schedule={schedule} 
@@ -2433,6 +2442,7 @@ const handleAssignmentRemove = (assignmentId) => {
                     selectedDate={currentDate}
                     onManualAssignment={handleManualAssignment}
                     onAssignmentRemove={handleAssignmentRemove}
+                    onGetRecentTrainingPairs={handleGetRecentTrainingPairs}
                   />
                   <SessionSummary 
                     schedule={schedule} 
@@ -2443,6 +2453,7 @@ const handleAssignmentRemove = (assignmentId) => {
                     selectedDate={currentDate}
                     onManualAssignment={handleManualAssignment}
                     onAssignmentRemove={handleAssignmentRemove}
+                    onGetRecentTrainingPairs={handleGetRecentTrainingPairs}
                   />
                   <SessionSummary 
                     schedule={schedule} 
@@ -2453,6 +2464,7 @@ const handleAssignmentRemove = (assignmentId) => {
                     selectedDate={currentDate}
                     onManualAssignment={handleManualAssignment}
                     onAssignmentRemove={handleAssignmentRemove}
+                    onGetRecentTrainingPairs={handleGetRecentTrainingPairs}
                   />
                 </div>
                 

@@ -743,7 +743,7 @@ export class SchedulingUtils {
       
       // EXCLUDE staff who are in training for THIS specific student
       // They should only be manually assigned via the trainee dropdown
-      const trainingStatus = student.getStaffTrainingStatus ? student.getStaffTrainingStatus(staffMember.id) : TRAINING_STATUS.SOLO;
+      const trainingStatus = student.getStaffTrainingStatus ? student.getStaffTrainingStatus(staffMember.id) : null;
       if (trainingStatus === TRAINING_STATUS.OVERLAP_STAFF || trainingStatus === TRAINING_STATUS.OVERLAP_BCBA) {
         // This staff member is in training with this student - don't auto-assign them
         return false;
@@ -758,7 +758,7 @@ export class SchedulingUtils {
         for (const checkStudent of activeStudents) {
           if (checkStudent.teamIds && checkStudent.teamIds.includes(staffMember.id)) {
             const checkTrainingStatus = checkStudent.getStaffTrainingStatus ? 
-              checkStudent.getStaffTrainingStatus(staffMember.id) : TRAINING_STATUS.SOLO;
+              checkStudent.getStaffTrainingStatus(staffMember.id) : null;
             
             if (checkTrainingStatus === TRAINING_STATUS.SOLO || checkTrainingStatus === TRAINING_STATUS.TRAINER) {
               hasAnySoloCase = true;

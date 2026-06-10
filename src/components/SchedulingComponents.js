@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { Lock, Unlock, Users, Clock, AlertTriangle, CheckCircle, GraduationCap, Star, ChevronDown, ChevronUp } from 'lucide-react';
 import { SESSION_TIMES, RATIOS, TRAINING_STATUS } from '../types/index.js';
 
@@ -1973,9 +1973,285 @@ const BSBTSwapFinder = ({ schedule, staff, students, session, program, assignmen
 };
 
 /**
+ * Training Pair Finder - shows trainees and their last trainer for the same student.
+ * Users can apply the pair into the current session; applied rows drop off automatically.
+ */
+const TrainingPairFinder = ({
+  schedule,
+  staff,
+  students,
+  session,
+  program,
+  selectedDate,
+  assignments,
+  onManualAssignment,
+  onGetRecentTrainingPairs
+}) => {
+  const [searchTerm, setSearchTerm] = useState('');
+  const [isExpanded, setIsExpanded] = useState(false);
+  const [loadingPairs, setLoadingPairs] = useState(false);
+  const [recentPairsByKey, setRecentPairsByKey] = useState({});
+
+  const trainingCandidates = students
+    .filter(student =>
+      student.isActive &&
+      student.program === program &&
+      student.isScheduledForDay(selectedDate) &&
+      student.isAvailableForSession(session, selectedDate)
+    )
+    .flatMap(student => {
+      const teamIds = Array.isArray(student.teamIds) ? student.teamIds : [];
+      return teamIds
+        .map(staffId => {
+          const trainee = staff.find(s => s.id === staffId);
+          if (!trainee || !trainee.isActive) return null;
+
+          const trainingStatus = student.getStaffTrainingStatus
+            ? student.getStaffTrainingStatus(staffId)
+            : null;
+
+          const isInTraining = trainingStatus === TRAINING_STATUS.OVERLAP_STAFF ||
+            trainingStatus === TRAINING_STATUS.OVERLAP_BCBA;
+          if (!isInTraining) return null;
+
+          if (!trainee.isAvailableForSession(session, selectedDate)) return null;
+
+          // If trainee is already placed this session, remove from list.
+          const alreadyPlacedAsTrainee = (schedule.traineeAssignments || []).some(ta =>
+            ta.staffId === trainee.id && ta.session === session
+          );
+          if (alreadyPlacedAsTrainee) return null;
+
+          const key = `${trainee.id}__${student.id}`;
+          return {
+            key,
+            trainee,
+            student,
+            trainingStatus
+          };
+        })
+        .filter(Boolean);
+    });
+
+  const uniqueCandidates = Array.from(
+    trainingCandidates.reduce((map, candidate) => {
+      if (!map.has(candidate.key)) map.set(candidate.key, candidate);
+      return map;
+    }, new Map()).values()
+  );
+
+  const candidateSignature = useMemo(
+    () => uniqueCandidates.map(c => c.key).sort().join('|'),
+    [uniqueCandidates]
+  );
+
+  useEffect(() => {
+    let cancelled = false;
+
+    const loadRecentPairs = async () => {
+      if (!isExpanded || !onGetRecentTrainingPairs || uniqueCandidates.length === 0) {
+        if (!cancelled) setRecentPairsByKey({});
+        return;
+      }
+
+      setLoadingPairs(true);
+      try {
+        const results = await onGetRecentTrainingPairs(
+          uniqueCandidates.map(c => ({ traineeId: c.trainee.id, studentId: c.student.id }))
+        );
+
+        if (!cancelled) {
+          setRecentPairsByKey(results || {});
+        }
+      } catch (error) {
+        if (!cancelled) {
+          console.error('Failed loading training pair history:', error);
+          setRecentPairsByKey({});
+        }
+      } finally {
+        if (!cancelled) setLoadingPairs(false);
+      }
+    };
+
+    loadRecentPairs();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [isExpanded, onGetRecentTrainingPairs, candidateSignature]);
+
+  if (uniqueCandidates.length === 0) {
+    return null;
+  }
+
+  const candidatesWithHistory = uniqueCandidates.filter(candidate => {
+    const recent = recentPairsByKey[candidate.key];
+    return !!recent?.trainerId;
+  });
+
+  const visibleCount = isExpanded && !loadingPairs
+    ? candidatesWithHistory.length
+    : uniqueCandidates.length;
+
+  const filteredCandidates = candidatesWithHistory.filter(candidate => {
+    if (!searchTerm) return true;
+    const search = searchTerm.toLowerCase();
+    const recent = recentPairsByKey[candidate.key];
+
+    return candidate.trainee.name.toLowerCase().includes(search) ||
+      candidate.student.name.toLowerCase().includes(search) ||
+      (recent?.trainerName || '').toLowerCase().includes(search);
+  });
+
+  const applyTrainingPair = (candidate) => {
+    const recent = recentPairsByKey[candidate.key];
+    if (!recent || !recent.trainerId) {
+      alert(`No recent trainer was found for ${candidate.trainee.name} with ${candidate.student.name}.`);
+      return;
+    }
+
+    const trainer = staff.find(s => s.id == recent.trainerId);
+    if (!trainer || !trainer.isActive) {
+      alert(`Last trainer (${recent.trainerName || 'Unknown'}) is not active in staff.`);
+      return;
+    }
+
+    if (!candidate.student.teamIds.includes(trainer.id)) {
+      alert(`${trainer.name} is not on ${candidate.student.name}'s team, so this pair cannot be auto-applied.`);
+      return;
+    }
+
+    if (!trainer.isAvailableForSession(session, selectedDate)) {
+      alert(`${trainer.name} is not available for ${session}.`);
+      return;
+    }
+
+    // If trainer is already assigned in this session, it must be this same student.
+    const trainerConflict = schedule.assignments.find(a =>
+      a.staffId === trainer.id &&
+      a.session === session &&
+      a.studentId !== candidate.student.id &&
+      !a.isTrainee
+    );
+    if (trainerConflict) {
+      alert(`${trainer.name} is already assigned in ${session} to another student.`);
+      return;
+    }
+
+    const trainerAlreadyAssignedToStudent = schedule.assignments.some(a =>
+      a.staffId === trainer.id && a.studentId === candidate.student.id && a.session === session
+    );
+    if (!trainerAlreadyAssignedToStudent) {
+      onManualAssignment({
+        staffId: trainer.id,
+        studentId: candidate.student.id,
+        session,
+        program,
+        isTrainee: false
+      });
+    }
+
+    const traineeAlreadyPlaced = (schedule.traineeAssignments || []).some(ta =>
+      ta.staffId === candidate.trainee.id && ta.session === session
+    );
+
+    if (!traineeAlreadyPlaced) {
+      onManualAssignment({
+        staffId: candidate.trainee.id,
+        studentId: candidate.student.id,
+        session,
+        program,
+        isTrainee: true,
+        trainerId: trainer.id,
+        trainerName: trainer.name
+      });
+    }
+  };
+
+  return (
+    <div className="mt-3 border-t pt-3">
+      <button
+        onClick={() => setIsExpanded(!isExpanded)}
+        className="w-full flex items-center justify-between text-xs font-medium text-cyan-700 mb-2 hover:bg-cyan-50 p-1 rounded transition-colors"
+      >
+        <span className="flex items-center gap-1">
+          <GraduationCap className="w-3 h-3" />
+          Training Pair Finder ({visibleCount})
+        </span>
+        {isExpanded ? <ChevronUp className="w-3 h-3" /> : <ChevronDown className="w-3 h-3" />}
+      </button>
+
+      {isExpanded && (
+        <div className="space-y-2">
+          <div className="text-xs text-gray-600 mb-2">
+            In-training staff and their most recent trainer for the same client:
+          </div>
+
+          <input
+            type="text"
+            placeholder="Search Trainee, Trainer, or Client..."
+            value={searchTerm}
+            onChange={(e) => setSearchTerm(e.target.value)}
+            className="w-full px-2 py-1 text-xs border border-gray-300 rounded focus:outline-none focus:ring-1 focus:ring-cyan-500"
+          />
+
+          <div className="space-y-2 max-h-44 overflow-y-auto">
+            {loadingPairs ? (
+              <div className="text-xs text-gray-500 italic">Loading training history...</div>
+            ) : filteredCandidates.length === 0 ? (
+              <div className="text-xs text-gray-500 italic">
+                {searchTerm ? 'No matches found' : 'No training pairs with history'}
+              </div>
+            ) : (
+              filteredCandidates.map(candidate => {
+                const recent = recentPairsByKey[candidate.key];
+                const hasRecentTrainer = !!recent?.trainerId;
+                const trainerText = hasRecentTrainer ? (recent.trainerName || `ID ${recent.trainerId}`) : 'No trainer history';
+                const dateText = recent?.scheduleDate ? new Date(recent.scheduleDate).toLocaleDateString() : null;
+
+                return (
+                  <div key={candidate.key} className="bg-cyan-50 p-2 rounded text-xs space-y-1">
+                    <div className="flex items-center justify-between">
+                      <div className="font-medium text-cyan-900">
+                        <span className="bg-cyan-200 px-1.5 py-0.5 rounded">Trainee</span> {candidate.trainee.name}
+                      </div>
+                      <div className="text-gray-600">→ Client: {candidate.student.name}</div>
+                    </div>
+
+                    <div className="text-gray-700 pl-2 flex items-center justify-between gap-2">
+                      <div>
+                        Last trainer: <span className="font-medium">{trainerText}</span>
+                        {dateText && <span className="text-gray-500"> ({dateText})</span>}
+                      </div>
+                      <button
+                        onClick={() => applyTrainingPair(candidate)}
+                        disabled={!hasRecentTrainer}
+                        className="px-2 py-0.5 bg-cyan-700 text-white rounded hover:bg-cyan-800 disabled:opacity-40 disabled:cursor-not-allowed transition-colors text-xs font-medium"
+                      >
+                        Pair
+                      </button>
+                    </div>
+                  </div>
+                );
+              })
+            )}
+          </div>
+
+          {filteredCandidates.length > 0 && !loadingPairs && (
+            <div className="text-xs text-gray-500 italic mt-2">
+              Tip: Selecting a pair adds trainer + trainee for this session and removes that trainee from this list.
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+};
+
+/**
  * Session Summary Component - Shows summary statistics for a session
  */
-export const SessionSummary = ({ schedule, staff, students, session, program, selectedDate, onManualAssignment, onAssignmentRemove }) => {
+export const SessionSummary = ({ schedule, staff, students, session, program, selectedDate, onManualAssignment, onAssignmentRemove, onGetRecentTrainingPairs }) => {
   // State for collapsible sections
   const [isAbsentStaffOpen, setIsAbsentStaffOpen] = useState(false);
   const [isAbsentStudentsOpen, setIsAbsentStudentsOpen] = useState(false);
@@ -2814,6 +3090,18 @@ export const SessionSummary = ({ schedule, staff, students, session, program, se
           )}
         </div>
       )}
+
+      <TrainingPairFinder
+        schedule={schedule}
+        staff={staff}
+        students={students}
+        session={session}
+        program={program}
+        selectedDate={selectedDate}
+        assignments={assignments}
+        onManualAssignment={onManualAssignment}
+        onGetRecentTrainingPairs={onGetRecentTrainingPairs}
+      />
 
       {/* BS/BT Swap Finder - Show if there are available BTs and scheduled BSs */}
       <BSBTSwapFinder 

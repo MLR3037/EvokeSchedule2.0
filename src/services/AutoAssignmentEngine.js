@@ -104,7 +104,7 @@ export class AutoAssignmentEngine {
       // Check if staff is on this student's team
       if (student.teamIds && student.teamIds.includes(staffMember.id)) {
         const trainingStatus = student.getStaffTrainingStatus ? 
-          student.getStaffTrainingStatus(staffMember.id) : TRAINING_STATUS.SOLO;
+          student.getStaffTrainingStatus(staffMember.id) : null;
         
         // They have a solo case if status is 'solo' or 'trainer'
         if (trainingStatus === TRAINING_STATUS.SOLO || trainingStatus === TRAINING_STATUS.TRAINER) {
@@ -876,6 +876,8 @@ export class AutoAssignmentEngine {
       id: traineeAssignmentId,
       staffId: trainee.id,
       staffName: trainee.name,
+      trainerId: trainer.id,
+      trainerName: trainer.name,
       studentId: student.id,
       studentName: student.name,
       session,

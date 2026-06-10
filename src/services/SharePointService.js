@@ -524,8 +524,8 @@ export class SharePointService {
    */
   normalizeTrainingStatus(spValue) {
     if (!spValue) {
-      console.warn(`⚠️ Training status is empty/null - defaulting to 'solo'. This may cause staff in training to be incorrectly assigned!`);
-      return 'solo';
+      console.warn(`⚠️ Training status is empty/null - defaulting to 'overlap-staff' so assignment remains manual until reviewed.`);
+      return 'overlap-staff';
     }
     
     const normalized = spValue.toLowerCase().trim();
@@ -542,8 +542,8 @@ export class SharePointService {
     
     const result = mappings[normalized];
     if (!result) {
-      console.warn(`⚠️ Unknown training status '${spValue}' - defaulting to 'solo'. This may cause issues!`);
-      return 'solo';
+      console.warn(`⚠️ Unknown training status '${spValue}' - defaulting to 'overlap-staff' so assignment remains manual until reviewed.`);
+      return 'overlap-staff';
     }
     
     return result;
@@ -810,12 +810,12 @@ export class SharePointService {
         
         // Build training status object from team data
         team.forEach(member => {
-          const status = member.trainingStatus || 'solo';
+          const status = member.trainingStatus || 'overlap-staff';
           teamTrainingStatus[member.id] = status;
           
-          // Log when defaulting to 'solo' for missing training status
+          // Log when defaulting for missing training status
           if (!member.trainingStatus) {
-            console.warn(`  ⚠️ ${member.name} (ID: ${member.id}) on ${item.Title}'s team has NO training status - defaulting to 'solo'`);
+            console.warn(`  ⚠️ ${member.name} (ID: ${member.id}) on ${item.Title}'s team has NO training status - defaulting to 'overlap-staff'`);
           } else {
             console.log(`  ✅ ${member.name} (ID: ${member.id}) training status: ${status}`);
           }
@@ -3365,5 +3365,157 @@ export class SharePointService {
       console.error('Error getting training session count:', error);
       return { count: 0, firstSessionDate: null };
     }
+  }
+
+  /**
+   * Find most-recent trainee/trainer pairing for each candidate from schedule history.
+   * candidates: [{ traineeId, studentId }]
+   * returns: { "traineeId__studentId": pairInfo }
+   */
+  async getMostRecentTrainingPairsForCandidates(candidates = [], lookbackDays = 120) {
+    try {
+      if (!this.isAuthenticated()) {
+        console.error('Cannot get recent training pair - not authenticated');
+        return {};
+      }
+
+      if (!Array.isArray(candidates) || candidates.length === 0) {
+        return {};
+      }
+
+      const normalizeId = (value) => {
+        const numeric = Number(value);
+        return Number.isFinite(numeric) ? numeric : String(value);
+      };
+
+      const candidateKeySet = new Set(
+        candidates.map(c => `${normalizeId(c.traineeId)}__${normalizeId(c.studentId)}`)
+      );
+
+      const startDate = new Date();
+      startDate.setDate(startDate.getDate() - lookbackDays);
+      const startISO = startDate.toISOString();
+
+      const scheduleUrl = `${this.siteUrl}/_api/web/lists/getbytitle('ScheduleHistory')/items?` +
+        `$select=Id,ScheduleDate,traineeAssignments&` +
+        `$filter=ScheduleDate ge datetime'${startISO}'&` +
+        `$orderby=ScheduleDate desc&` +
+        `$top=500`;
+
+      const response = await this.makeRequest(scheduleUrl, {
+        headers: await this.getHeaders()
+      });
+
+      if (!response.ok) {
+        const errorText = await response.text();
+        console.error('Failed to fetch schedule history for recent training pair:', response.status, errorText);
+        return {};
+      }
+
+      const data = await response.json();
+      const schedules = data?.d?.results || [];
+      const assignmentsBySchedule = new Map();
+      const resultsByKey = {};
+
+      const inferTrainerForTraineeAssignment = async (scheduleRecordId, traineeAssignment, traineeId, studentId) => {
+        let scheduleAssignments = assignmentsBySchedule.get(scheduleRecordId);
+        if (!scheduleAssignments) {
+          scheduleAssignments = await this.loadAssignmentsForSchedule(scheduleRecordId);
+          assignmentsBySchedule.set(scheduleRecordId, scheduleAssignments || []);
+        }
+
+        const normalizedSession = this.normalizeAssignmentSession(traineeAssignment.session);
+        const matchingMainAssignments = (scheduleAssignments || []).filter(item =>
+          normalizeId(item.StudentID) === studentId &&
+          this.normalizeAssignmentSession(item.Session) === normalizedSession &&
+          normalizeId(item.StaffID) !== traineeId
+        );
+
+        if (matchingMainAssignments.length === 0) {
+          return { trainerId: null, trainerName: null };
+        }
+
+        const lockedFirst = [...matchingMainAssignments].sort((a, b) => {
+          const aLocked = a.IsLocked === true ? 1 : 0;
+          const bLocked = b.IsLocked === true ? 1 : 0;
+          return bLocked - aLocked;
+        });
+
+        const inferredTrainer = lockedFirst[0];
+        return {
+          trainerId: normalizeId(inferredTrainer.StaffID),
+          trainerName: inferredTrainer.StaffName || null
+        };
+      };
+
+      for (const schedule of schedules) {
+        if (!schedule.traineeAssignments) continue;
+
+        let traineeAssignments = [];
+        try {
+          traineeAssignments = JSON.parse(schedule.traineeAssignments);
+        } catch (parseError) {
+          console.warn('Failed to parse traineeAssignments for schedule', schedule.Id, parseError);
+          continue;
+        }
+
+        if (!Array.isArray(traineeAssignments) || traineeAssignments.length === 0) continue;
+
+        for (const ta of traineeAssignments) {
+          const traineeId = normalizeId(ta.staffId);
+          const studentId = normalizeId(ta.studentId);
+          const key = `${traineeId}__${studentId}`;
+          if (!candidateKeySet.has(key)) continue;
+          if (resultsByKey[key]) continue;
+
+          let trainerId = ta.trainerId != null ? normalizeId(ta.trainerId) : null;
+          let trainerName = ta.trainerName || null;
+
+          // Backward compatibility: infer trainer from main assignments in the same schedule/session.
+          if (!trainerId) {
+            const inferred = await inferTrainerForTraineeAssignment(schedule.Id, ta, traineeId, studentId);
+            trainerId = inferred.trainerId;
+            trainerName = inferred.trainerName;
+          }
+
+          if (!trainerId) {
+            continue;
+          }
+
+          resultsByKey[key] = {
+            scheduleDate: schedule.ScheduleDate,
+            session: this.normalizeAssignmentSession(ta.session),
+            traineeId,
+            traineeName: ta.staffName || null,
+            trainerId,
+            trainerName,
+            studentId,
+            studentName: ta.studentName || null
+          };
+
+          if (Object.keys(resultsByKey).length === candidateKeySet.size) {
+            return resultsByKey;
+          }
+        }
+      }
+
+      return resultsByKey;
+    } catch (error) {
+      console.error('Error getting most recent training pair for candidates:', error);
+      return {};
+    }
+  }
+
+  /**
+   * Find the single most-recent trainee/trainer pairing from a candidate list.
+   * Returns one pair (or null) in candidate order.
+   */
+  async getMostRecentTrainingPairForCandidates(candidates = [], lookbackDays = 120) {
+    const resultsByKey = await this.getMostRecentTrainingPairsForCandidates(candidates, lookbackDays);
+    for (const candidate of candidates || []) {
+      const key = `${Number.isFinite(Number(candidate.traineeId)) ? Number(candidate.traineeId) : String(candidate.traineeId)}__${Number.isFinite(Number(candidate.studentId)) ? Number(candidate.studentId) : String(candidate.studentId)}`;
+      if (resultsByKey[key]) return resultsByKey[key];
+    }
+    return null;
   }
 }
