@@ -3270,10 +3270,10 @@ export class SharePointService {
 
   /**
    * Load training completions from SharePoint
-   * @param {number} daysBack - How many days back to load (default 90)
+    * @param {number} daysBack - How many days back to load (default 60)
    * @returns {Array} Array of completion records
    */
-  async loadTrainingCompletions(daysBack = 90) {
+    async loadTrainingCompletions(daysBack = 60) {
     try {
       if (!this.isAuthenticated()) {
         console.error('Cannot load training completions - not authenticated');

@@ -30,8 +30,8 @@ export const TrainingTracker = ({ staff, students, sharePointService }) => {
       
       const trainingHistory = await sharePointService.getTrainingHistory(ninetyDaysAgo, new Date());
       
-      // Load completions
-      const completionData = await sharePointService.loadTrainingCompletions(90);
+      // Load completions (last 60 days)
+      const completionData = await sharePointService.loadTrainingCompletions(60);
       
       // Get client names for completions
       const completionsWithNames = completionData.map(c => {
@@ -183,6 +183,33 @@ export const TrainingTracker = ({ staff, students, sharePointService }) => {
     return null;
   };
 
+  const getRequiredTrainingSessions = (staffId, currentStudentId) => {
+    const hasSoloOnOtherClients = students.some(student => {
+      if (!student?.isActive) return false;
+      if (String(student.id) === String(currentStudentId)) return false;
+
+      const teamIds = student.teamIds || [];
+      const team = student.team || [];
+      const isOnTeam =
+        teamIds.some(id => String(id) === String(staffId)) ||
+        team.some(member => String(member.id) === String(staffId));
+
+      if (!isOnTeam) return false;
+
+      const status = student.getStaffTrainingStatus
+        ? student.getStaffTrainingStatus(staffId)
+        : TRAINING_STATUS.SOLO;
+
+      return status === TRAINING_STATUS.SOLO ||
+        status === TRAINING_STATUS.TRAINER ||
+        status === TRAINING_STATUS.CERTIFIED;
+    });
+
+    // First training client gets up to 5 overlaps (including BCBA overlap).
+    // Staff with solo cases on other clients get up to 3 overlaps.
+    return hasSoloOnOtherClients ? 3 : 5;
+  };
+
   const filteredData = getFilteredData();
   const filteredCompletions = getFilteredCompletions();
 
@@ -324,8 +351,24 @@ export const TrainingTracker = ({ staff, students, sharePointService }) => {
                 </thead>
                 <tbody className="bg-white divide-y divide-gray-200">
                   {filteredData.map(staffData => (
-                    staffData.clients.map((client, idx) => (
-                      <tr key={`${staffData.staffId}-${client.studentId}`} className="hover:bg-gray-50">
+                    staffData.clients.map((client, idx) => {
+                      const requiredSessions = getRequiredTrainingSessions(staffData.staffId, client.studentId);
+                      const isTrainingComplete = client.sessionsCompleted >= requiredSessions;
+                      const isOverTarget = client.sessionsCompleted > requiredSessions;
+                      const sessionsColor =
+                        client.sessionsCompleted === 0
+                          ? 'text-gray-400'
+                          : isOverTarget
+                            ? 'text-yellow-700'
+                            : isTrainingComplete
+                            ? 'text-green-600'
+                            : 'text-yellow-600';
+                      const rowClassName = isOverTarget
+                        ? 'bg-yellow-50 hover:bg-yellow-100'
+                        : 'hover:bg-gray-50';
+
+                      return (
+                      <tr key={`${staffData.staffId}-${client.studentId}`} className={rowClassName}>
                         {idx === 0 && (
                           <td 
                             className="px-6 py-4 whitespace-nowrap border-r bg-gray-50" 
@@ -361,22 +404,28 @@ export const TrainingTracker = ({ staff, students, sharePointService }) => {
                           )}
                         </td>
                         <td className="px-6 py-4 whitespace-nowrap">
-                          <div className="flex items-center gap-2">
-                            <span className={`text-sm font-medium ${
-                              client.sessionsCompleted === 0 ? 'text-gray-400' :
-                              client.sessionsCompleted < 3 ? 'text-yellow-600' :
-                              client.sessionsCompleted < 6 ? 'text-blue-600' :
-                              'text-green-600'
-                            }`}>
-                              {client.sessionsCompleted}
-                            </span>
-                            {client.sessionsCompleted >= 6 && (
-                              <CheckCircle className="w-4 h-4 text-green-600" title="6+ sessions completed" />
+                          <div className="flex flex-col gap-1">
+                            <div className="flex items-center gap-2">
+                              <span className={`text-sm font-medium ${sessionsColor}`}>
+                                {client.sessionsCompleted}
+                              </span>
+                              {isTrainingComplete && (
+                                <CheckCircle
+                                  className="w-4 h-4 text-green-600"
+                                  title={`${requiredSessions}+ sessions completed`}
+                                />
+                              )}
+                            </div>
+                            {isOverTarget && (
+                              <span className="text-xs font-medium text-yellow-700">
+                                Above target ({client.sessionsCompleted}/{requiredSessions}) - review for solo move
+                              </span>
                             )}
                           </div>
                         </td>
                       </tr>
-                    ))
+                      );
+                    })
                   ))}
                 </tbody>
               </table>
@@ -396,7 +445,7 @@ export const TrainingTracker = ({ staff, students, sharePointService }) => {
                 When staff complete training and move to Solo status, they'll appear here.
               </p>
               <p className="text-sm text-gray-500 mt-2">
-                Note: Only completions after this feature was added will be tracked.
+                Note: Completed trainings remain in this list for 60 days.
               </p>
             </div>
           ) : (
@@ -517,7 +566,7 @@ export const TrainingTracker = ({ staff, students, sharePointService }) => {
               <Award className="w-6 h-6 text-green-600" />
             </div>
             <div>
-              <div className="text-sm text-gray-600">Completions (90 days)</div>
+              <div className="text-sm text-gray-600">Completions (60 days)</div>
               <div className="text-2xl font-bold text-gray-900">{completions.length}</div>
             </div>
           </div>
