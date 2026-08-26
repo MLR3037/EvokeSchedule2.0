@@ -24,6 +24,14 @@ export const PROGRAMS = {
   SECONDARY: 'Secondary'
 };
 
+// Collapse the future four-program taxonomy into the app's two scheduling buckets.
+export const normalizeProgram = (program) => {
+  const normalized = String(program || '').trim().toLowerCase();
+  if (normalized === 'ei' || normalized === 'primary') return PROGRAMS.PRIMARY;
+  if (normalized === 'secondary' || normalized === 'transition') return PROGRAMS.SECONDARY;
+  return PROGRAMS.PRIMARY;
+};
+
 // Session times
 export const SESSION_TIMES = {
   PRIMARY: {
@@ -55,6 +63,7 @@ export class Staff {
     email = '',
     userId = null,
     staffPerson = null,
+    program = null,
     primaryProgram = false, // Can be boolean or program string
     secondaryProgram = false, // Can be boolean or program string
     isActive = true,
@@ -75,23 +84,28 @@ export class Staff {
     this.userId = userId; // SharePoint User ID for People Picker
     this.staffPerson = staffPerson; // People Picker data
     
-    // Handle both boolean and string values for program assignment
-    if (typeof primaryProgram === 'string') {
-      // If it's a string, convert to boolean and store the program
-      this.primaryProgram = true;
-      this.primaryProgramType = primaryProgram;
+    // Handle current boolean flags and incoming four-program values.
+    const rawStaffProgram = program ||
+      (typeof primaryProgram === 'string' ? primaryProgram : null) ||
+      (typeof secondaryProgram === 'string' ? secondaryProgram : null);
+    const staffPrimaryProgram = rawStaffProgram || primaryProgram;
+    const staffSecondaryProgram = rawStaffProgram || secondaryProgram;
+    if (rawStaffProgram) {
+      const normalizedProgram = normalizeProgram(rawStaffProgram);
+      this.primaryProgram = normalizedProgram === PROGRAMS.PRIMARY;
+      this.primaryProgramType = this.primaryProgram ? normalizedProgram : null;
     } else {
-      this.primaryProgram = primaryProgram; // Boolean for Yes/No column
-      this.primaryProgramType = primaryProgram ? PROGRAMS.PRIMARY : null;
+      this.primaryProgram = staffPrimaryProgram; // Boolean for Yes/No column
+      this.primaryProgramType = staffPrimaryProgram ? PROGRAMS.PRIMARY : null;
     }
     
-    if (typeof secondaryProgram === 'string') {
-      // If it's a string, convert to boolean and store the program
-      this.secondaryProgram = true;
-      this.secondaryProgramType = secondaryProgram;
+    if (typeof staffSecondaryProgram === 'string') {
+      const normalizedProgram = normalizeProgram(staffSecondaryProgram);
+      this.secondaryProgram = normalizedProgram === PROGRAMS.SECONDARY;
+      this.secondaryProgramType = this.secondaryProgram ? normalizedProgram : null;
     } else {
-      this.secondaryProgram = secondaryProgram; // Boolean for Yes/No column
-      this.secondaryProgramType = secondaryProgram ? PROGRAMS.SECONDARY : null;
+      this.secondaryProgram = staffSecondaryProgram; // Boolean for Yes/No column
+      this.secondaryProgramType = staffSecondaryProgram ? PROGRAMS.SECONDARY : null;
     }
     
     this.isActive = isActive;
@@ -234,7 +248,7 @@ export class Student {
 
     this.id = id;
     this.name = name;
-    this.program = program; // PRIMARY or SECONDARY
+    this.program = normalizeProgram(program);
     
     // Preserve explicit AM/PM ratios when present and only fall back to legacy single ratio.
     if (!hasExplicitRatioAM && !hasExplicitRatioPM && ratio) {

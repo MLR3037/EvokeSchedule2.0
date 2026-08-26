@@ -1,4 +1,4 @@
-import { Staff, Student, Assignment, Schedule, PROGRAMS } from '../types/index.js';
+import { Staff, Student, Assignment, Schedule, PROGRAMS, normalizeProgram } from '../types/index.js';
 import { PublicClientApplication } from '@azure/msal-browser';
 
 /**
@@ -396,7 +396,7 @@ export class SharePointService {
         'OutOfSessionFullDay'
       ];
 
-      const optionalFields = ['AbsentAMArrivalTime', 'AbsentPMDepartureTime'];
+      const optionalFields = ['AbsentAMArrivalTime', 'AbsentPMDepartureTime', 'Program'];
       let availableOptionalFields = [];
 
       try {
@@ -494,6 +494,7 @@ export class SharePointService {
           name: staffName,
           role: item.Role || 'RBT',
           email: staffEmail,
+          program: item.Program || null,
           primaryProgram: item.PrimaryProgram === true,
           secondaryProgram: item.SecondaryProgram === true,
           isActive: item.IsActive !== false,
@@ -836,7 +837,7 @@ export class SharePointService {
       const normalizedName = typeof item.Title === 'string' && item.Title.trim().length > 0
         ? item.Title.trim()
         : `Client ${item.Id}`;
-      const normalizedProgram = item.Program === PROGRAMS.SECONDARY ? PROGRAMS.SECONDARY : PROGRAMS.PRIMARY;
+      const normalizedProgram = normalizeProgram(item.Program);
       const normalizedRatioAM = ['1:1', '2:1', '1:2'].includes(item.RatioAM) ? item.RatioAM : '1:1';
       const normalizedRatioPM = ['1:1', '2:1', '1:2'].includes(item.RatioPM) ? item.RatioPM : '1:1';
       const normalizedPairedWith = Number.isFinite(Number(item.PairedWith)) ? Number(item.PairedWith) : null;
