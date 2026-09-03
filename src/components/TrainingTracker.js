@@ -73,6 +73,9 @@ export const TrainingTracker = ({ staff, students, sharePointService }) => {
               );
               
               const firstSession = sortedSessions.length > 0 ? new Date(sortedSessions[0].ScheduleDate) : null;
+              const lastSession = sortedSessions.length > 0
+                ? new Date(sortedSessions[sortedSessions.length - 1].ScheduleDate)
+                : null;
               
               trainingClients.push({
                 studentId: student.id,
@@ -80,6 +83,7 @@ export const TrainingTracker = ({ staff, students, sharePointService }) => {
                 program: student.program,
                 trainingStatus: trainingStatus,
                 firstSession: firstSession,
+                lastSession: lastSession,
                 sessionsCompleted: sessions.length,
                 sessions: sortedSessions
               });
@@ -355,6 +359,10 @@ export const TrainingTracker = ({ staff, students, sharePointService }) => {
                       const requiredSessions = getRequiredTrainingSessions(staffData.staffId, client.studentId);
                       const isTrainingComplete = client.sessionsCompleted >= requiredSessions;
                       const isOverTarget = client.sessionsCompleted > requiredSessions;
+                      const daysSinceLastTraining = client.lastSession
+                        ? Math.floor((new Date().setHours(0, 0, 0, 0) - new Date(client.lastSession).setHours(0, 0, 0, 0)) / (1000 * 60 * 60 * 24))
+                        : null;
+                      const isTrainingOverdue = daysSinceLastTraining !== null && daysSinceLastTraining > 7;
                       const sessionsColor =
                         client.sessionsCompleted === 0
                           ? 'text-gray-400'
@@ -365,6 +373,8 @@ export const TrainingTracker = ({ staff, students, sharePointService }) => {
                             : 'text-yellow-600';
                       const rowClassName = isOverTarget
                         ? 'bg-yellow-50 hover:bg-yellow-100'
+                        : isTrainingComplete
+                        ? 'bg-green-50 hover:bg-green-100'
                         : 'hover:bg-gray-50';
 
                       return (
@@ -388,6 +398,12 @@ export const TrainingTracker = ({ staff, students, sharePointService }) => {
                           <div>
                             <div className="text-sm font-medium text-gray-900">{client.studentName}</div>
                             <div className="text-xs text-gray-500">{client.program}</div>
+                            {isTrainingComplete && (
+                              <span className="inline-flex items-center gap-1 mt-1 px-2 py-0.5 rounded text-xs font-medium bg-green-100 text-green-800 border border-green-300">
+                                <Award className="w-3 h-3" />
+                                Ready for TI
+                              </span>
+                            )}
                           </div>
                         </td>
                         <td className="px-6 py-4">
@@ -395,9 +411,14 @@ export const TrainingTracker = ({ staff, students, sharePointService }) => {
                         </td>
                         <td className="px-6 py-4 whitespace-nowrap">
                           {client.firstSession ? (
-                            <div className="flex items-center gap-2 text-sm text-gray-900">
-                              <Calendar className="w-4 h-4 text-gray-400" />
-                              {client.firstSession.toLocaleDateString()}
+                            <div className={`flex items-center gap-2 text-sm ${isTrainingOverdue ? 'font-medium text-red-700' : 'text-gray-900'}`}>
+                              <Calendar className={`w-4 h-4 ${isTrainingOverdue ? 'text-red-500' : 'text-gray-400'}`} />
+                              <span>{client.firstSession.toLocaleDateString()}</span>
+                              {isTrainingOverdue && (
+                                <span className="text-xs font-medium text-red-700">
+                                  Last training {client.lastSession.toLocaleDateString()}
+                                </span>
+                              )}
                             </div>
                           ) : (
                             <span className="text-sm text-gray-400 italic">No sessions yet</span>

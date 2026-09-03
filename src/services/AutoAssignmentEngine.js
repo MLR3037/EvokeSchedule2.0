@@ -414,10 +414,12 @@ export class AutoAssignmentEngine {
     const requiredStaffCount = this.getRequiredStaffCount(targetStudent, targetSession);
 
     // Get ALL of target student's team members (even if busy) — RBT/BS only
+    // CRITICAL: Exclude staff in training for targetStudent - they must never become primary/solo staff
     const teamStaff = staff.filter(s =>
       targetStudent.teamIds.includes(s.id) &&
       ['RBT', 'BS'].includes(s.role) &&
-      this.canStaffDoDirectService(s)
+      this.canStaffDoDirectService(s) &&
+      !this.isStaffInTrainingForStudent(s, targetStudent)
     );
 
     console.log(`    📊 ${targetStudent.name} has ${teamStaff.length} team members total`);
@@ -623,6 +625,8 @@ export class AutoAssignmentEngine {
       if (!student.teamIds.includes(s.id)) return false;
       if (!this.canStaffDoDirectService(s)) return false;
       if (schedule.hasStaffWorkedWithStudentToday(s.id, student.id)) return false; // No same-student all day
+      // CRITICAL: Exclude staff in training for this student - they must never become primary/solo staff
+      if (this.isStaffInTrainingForStudent(s, student)) return false;
       // Don't check availability here - we want ALL team members
       return true;
     });
@@ -762,6 +766,10 @@ export class AutoAssignmentEngine {
     // For each unassigned student, try increasingly aggressive strategies
     const allSwaps = [];
     const allNewAssignments = [];
+    // CRITICAL: Track IDs of assignments removed/superseded during reshuffle so the caller
+    // can prune them from its own flat tracking array (otherwise stale, already-swapped-away
+    // assignments linger and cause duplicate/conflicting entries later)
+    const allRemovedAssignmentIds = [];
     let iteration = 0;
     const maxIterations = 20;
 
@@ -786,7 +794,10 @@ export class AutoAssignmentEngine {
 
         smartSwap.changes.forEach(change => {
           if (change.type === 'add') schedule.addAssignment(change.assignment);
-          else if (change.type === 'remove') schedule.removeAssignment(change.assignmentId);
+          else if (change.type === 'remove') {
+            schedule.removeAssignment(change.assignmentId);
+            allRemovedAssignmentIds.push(change.assignmentId);
+          }
         });
 
         unassignedStudents.shift();
@@ -806,7 +817,10 @@ export class AutoAssignmentEngine {
         // Apply changes
         swapResult.changes.forEach(change => {
           if (change.type === 'add') schedule.addAssignment(change.assignment);
-          else if (change.type === 'remove') schedule.removeAssignment(change.assignmentId);
+          else if (change.type === 'remove') {
+            schedule.removeAssignment(change.assignmentId);
+            allRemovedAssignmentIds.push(change.assignmentId);
+          }
         });
 
         // Remove from unassigned list
@@ -826,7 +840,10 @@ export class AutoAssignmentEngine {
 
         redistributeResult.changes.forEach(change => {
           if (change.type === 'add') schedule.addAssignment(change.assignment);
-          else if (change.type === 'remove') schedule.removeAssignment(change.assignmentId);
+          else if (change.type === 'remove') {
+            schedule.removeAssignment(change.assignmentId);
+            allRemovedAssignmentIds.push(change.assignmentId);
+          }
         });
 
         unassignedStudents.shift();
@@ -854,6 +871,7 @@ export class AutoAssignmentEngine {
       success: unassignedStudents.length === 0,
       swaps: allSwaps,
       newAssignments: allNewAssignments,
+      removedAssignmentIds: allRemovedAssignmentIds,
       remainingUnassigned: unassignedStudents
     };
   }
@@ -1190,6 +1208,17 @@ export class AutoAssignmentEngine {
 
       if (reshuffleResults.success) {
         console.log(`\n🎉 RESHUFFLE SUCCESS: All students assigned!`);
+        // CRITICAL: Prune any earlier-tracked assignment that was swapped away during
+        // reshuffle - otherwise the stale (superseded) assignment lingers in newAssignments
+        // even though it was removed from `schedule`, causing duplicate/conflicting entries
+        if (reshuffleResults.removedAssignmentIds.length > 0) {
+          const removedIds = new Set(reshuffleResults.removedAssignmentIds);
+          for (let i = newAssignments.length - 1; i >= 0; i--) {
+            if (removedIds.has(newAssignments[i].id)) {
+              newAssignments.splice(i, 1);
+            }
+          }
+        }
         newAssignments.push(...reshuffleResults.newAssignments);
       } else {
         console.log(`\n⚠️ RESHUFFLE INCOMPLETE: ${reshuffleResults.remainingUnassigned.length} still unassigned`);
@@ -1211,10 +1240,23 @@ export class AutoAssignmentEngine {
       
       if (swapResults.swapsMade > 0) {
         console.log(`\n✅ SWAP OPTIMIZATION: Made ${swapResults.swapsMade} swaps, filled ${swapResults.gapsFilled} gaps`);
-        newAssignments.push(...swapResults.newAssignments);
+
+        // CRITICAL: performSwapOptimization does NOT mutate `schedule` itself (by design,
+        // so it can be reused by the standalone Smart Swap button). Here we must apply the
+        // superseded-assignment removals ourselves so `schedule` and `newAssignments` stay
+        // in sync - otherwise the old assignment lingers and conflicts with the new one.
         swapResults.swaps.forEach(swap => {
           console.log(`  ✓ ${swap.description}`);
+          if (swap.oldAssignment) {
+            schedule.removeAssignment(swap.oldAssignment.id);
+            const staleIndex = newAssignments.findIndex(a => a.id === swap.oldAssignment.id);
+            if (staleIndex > -1) {
+              newAssignments.splice(staleIndex, 1);
+            }
+          }
         });
+
+        newAssignments.push(...swapResults.newAssignments);
       } else {
         console.log(`\n⚠️ SWAP OPTIMIZATION: No beneficial swaps found`);
       }
@@ -1894,6 +1936,12 @@ export class AutoAssignmentEngine {
       // Staff must be able to work with student2's program
       if (!this.canStaffWorkWithStudent(staffMember, student2, schedule)) {
         this.log(`  ❌ ${staffMember.name} already worked with ${student2.name} today`);
+        return false;
+      }
+
+      // CRITICAL: Also exclude staff in training for student2 - they must never become primary/solo staff
+      if (this.isStaffInTrainingForStudent(staffMember, student2)) {
+        this.log(`  🎓 ${staffMember.name} is in training for ${student2.name} - excluding from paired assignment`);
         return false;
       }
       
