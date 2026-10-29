@@ -144,12 +144,16 @@ export class ExcelExportService {
       }
 
       // Get trainee assignments
-      const amTrainee = schedule.traineeAssignments?.find(
-        t => t.studentId === student.id && t.session === 'AM'
-      );
-      const pmTrainee = schedule.traineeAssignments?.find(
-        t => t.studentId === student.id && t.session === 'PM'
-      );
+      const getTraineesForSession = (session) => {
+        const trainees = (schedule.traineeAssignments || []).filter(
+          trainee => trainee.studentId === student.id && trainee.session === session
+        );
+        return [0, 1].map(slotIndex => trainees.find((trainee, index) =>
+          (trainee.slotIndex ?? index) === slotIndex
+        ));
+      };
+      const amTrainees = getTraineesForSession('AM');
+      const pmTrainees = getTraineesForSession('PM');
 
       // Get staff names (formatted as First Name + Last Initial)
       const amStaffNames = amAssignments.map(a => {
@@ -231,16 +235,17 @@ export class ExcelExportService {
         }
       }
 
-      // Add trainee rows if applicable - ALWAYS add as separate row
-      if (amTrainee && !isAbsentAM) {
-        const traineeStaff = staff.find(s => s.id === amTrainee.staffId);
-        if (traineeStaff) {
+      // Add trainee rows separately from regular staff assignments.
+      amTrainees.forEach((amTrainee, slotIndex) => {
+        if (amTrainee && !isAbsentAM) {
+          const traineeStaff = staff.find(s => s.id === amTrainee.staffId);
+          if (!traineeStaff) return;
           const isPrimary = student.program === 'Primary';
           const amStart = '8:45 AM';
           const amEnd = isPrimary ? '12:05 PM' : '11:30 AM';
           
           data.push([
-            student.name + ' (Trainee)',
+            `${student.name} (Trainee${slotIndex ? ` ${slotIndex + 1}` : ''})`,
             student.program,
             this.formatStaffName(traineeStaff.name), // AM Staff
             amStart, // AM Start
@@ -256,17 +261,18 @@ export class ExcelExportService {
             ''  // PMEndOR2 BLANK
           ]);
         }
-      }
+      });
 
-      if (pmTrainee && !isAbsentPM) {
-        const traineeStaff = staff.find(s => s.id === pmTrainee.staffId);
-        if (traineeStaff) {
+      pmTrainees.forEach((pmTrainee, slotIndex) => {
+        if (pmTrainee && !isAbsentPM) {
+          const traineeStaff = staff.find(s => s.id === pmTrainee.staffId);
+          if (!traineeStaff) return;
           const isPrimary = student.program === 'Primary';
           const pmStart = isPrimary ? '12:35 PM' : '12:00 PM';
           const pmEnd = '3:00 PM';
           
           data.push([
-            student.name + ' (Trainee)',
+            `${student.name} (Trainee${slotIndex ? ` ${slotIndex + 1}` : ''})`,
             student.program,
             '', // AM Staff (trainee is PM only)
             '', // AM Start
@@ -282,7 +288,7 @@ export class ExcelExportService {
             ''  // PMEndOR2 BLANK
           ]);
         }
-      }
+      });
     });
 
     // Add OUT rows for staff with out-of-session assignments

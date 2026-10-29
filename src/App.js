@@ -1221,10 +1221,11 @@ const handleManualAssignment = ({
   program,
   bypassTeamCheck = false,
   isTrainee = false,
+  slotIndex = 0,
   trainerId = null,
   trainerName = null
 }) => {
-  console.log('📝 handleManualAssignment called:', { staffId, studentId, session, program, isTrainee, trainerId });
+  console.log('📝 handleManualAssignment called:', { staffId, studentId, session, program, isTrainee, slotIndex, trainerId });
   
   // Get staff and student names
   const staffMember = staff.find(s => s.id === staffId);
@@ -1292,10 +1293,12 @@ const handleManualAssignment = ({
       studentId: studentId,
       studentName: student.name,
       session: session,
+      slotIndex,
       program: program,
       date: currentDate,
       isTrainee: true,
-      isLocked: true // Trainee assignments are locked by default
+      isLocked: true, // Trainee assignments are locked by default
+      assignedBy: 'manual'
     });
   } else {
     schedule.addAssignment(assignment);
@@ -1327,10 +1330,12 @@ const handleManualAssignment = ({
             studentId: pairedStudent.id,
             studentName: pairedStudent.name,
             session: session,
+            slotIndex,
             program: pairedStudent.program,
             date: currentDate,
             isTrainee: true,
-            isLocked: true
+            isLocked: true,
+            assignedBy: 'manual'
           });
         } else {
           const pairedAssignment = new Assignment({
@@ -1374,6 +1379,7 @@ const handleAssignmentRemove = (assignmentId) => {
   console.log('🗑️ Removing assignment:', assignmentId);
   
   let removedAssignment = null;
+  let removedTraineeSlotIndex = null;
   
   // Check if this is a trainee assignment (starts with 'trainee_')
   if (assignmentId && assignmentId.startsWith('trainee_')) {
@@ -1381,7 +1387,11 @@ const handleAssignmentRemove = (assignmentId) => {
     const traineeToRemove = schedule.traineeAssignments.find(a => a.id === assignmentId);
     if (traineeToRemove) {
       removedAssignment = traineeToRemove;
-      schedule.removeTraineeAssignment(traineeToRemove.studentId, traineeToRemove.session);
+      const sessionTrainees = schedule.traineeAssignments.filter(a =>
+        a.studentId === traineeToRemove.studentId && a.session === traineeToRemove.session
+      );
+      removedTraineeSlotIndex = traineeToRemove.slotIndex ?? sessionTrainees.indexOf(traineeToRemove);
+      schedule.removeTraineeAssignment(traineeToRemove.studentId, traineeToRemove.session, assignmentId);
       console.log('✅ Trainee assignment removed');
     }
   } else {
@@ -1392,7 +1402,7 @@ const handleAssignmentRemove = (assignmentId) => {
   }
   
   // PAIRED STUDENT SYNC: If the removed assignment was manual and the student is paired, also remove from paired student
-  if (removedAssignment && removedAssignment.assignedBy === 'manual') {
+  if (removedAssignment && (removedAssignment.assignedBy === 'manual' || removedAssignment.isTrainee)) {
     const student = students.find(s => s.id === removedAssignment.studentId);
     
     if (student && student.isPaired()) {
@@ -1404,13 +1414,14 @@ const handleAssignmentRemove = (assignmentId) => {
         // Find and remove the corresponding assignment from the paired student
         if (removedAssignment.id && removedAssignment.id.startsWith('trainee_')) {
           // Remove paired trainee assignment
-          const pairedTraineeAssignment = schedule.traineeAssignments.find(a => 
-            a.staffId === removedAssignment.staffId && 
-            a.studentId === pairedStudent.id && 
-            a.session === removedAssignment.session
+          const pairedTraineeAssignments = schedule.traineeAssignments.filter(a =>
+            a.studentId === pairedStudent.id && a.session === removedAssignment.session
+          );
+          const pairedTraineeAssignment = pairedTraineeAssignments.find((a, index) =>
+            a.staffId === removedAssignment.staffId && (a.slotIndex ?? index) === removedTraineeSlotIndex
           );
           if (pairedTraineeAssignment) {
-            schedule.removeTraineeAssignment(pairedTraineeAssignment.studentId, pairedTraineeAssignment.session);
+            schedule.removeTraineeAssignment(pairedTraineeAssignment.studentId, pairedTraineeAssignment.session, pairedTraineeAssignment.id);
             console.log(`✅ Removed paired trainee assignment: ${removedAssignment.staffName} → ${pairedStudent.name}`);
           }
         } else {

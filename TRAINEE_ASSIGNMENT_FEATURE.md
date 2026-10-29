@@ -14,9 +14,10 @@ Added a comprehensive trainee assignment system that allows schedulers to manual
 - Certified status no longer shows a visual indicator (cleaner UI)
 - Only training-in-progress statuses show icons (trainer ⭐, staff overlap 🎓, BCBA overlap 🎓)
 
-### 2. **Trainee Dropdown in Schedule** 🎓
-- Added a **second dropdown** below the main staff assignment dropdown
+### 2. **Two Trainee Slots per Session** 🎓
+- Added **two trainee dropdowns** below the main staff assignment dropdown
 - Located in each session box (AM/PM) for every student
+- Each slot can be assigned independently, with the same trainee excluded from both slots
 - Orange-tinted border to distinguish from regular staff assignment
 - Label: "Trainee (optional)..."
 
@@ -115,10 +116,13 @@ Added new column for trainee assignments:
     "studentId": 45,
     "session": "AM",
     "program": "Primary",
+    "slotIndex": 0,
     "isTrainee": true
   }
 ]
 ```
+
+`slotIndex` is `0` for Trainee 1 and `1` for Trainee 2. Older assignments without a slot index are treated as the first slot.
 
 #### Save/Load Methods
 - `saveSchedule()` - Stringifies traineeAssignments to JSON
@@ -132,7 +136,7 @@ Added new column for trainee assignments:
 
 1. **Navigate to Schedule tab**
 2. **Find the student** you want to assign a trainee to
-3. **In the AM or PM column**, below the main staff dropdown, you'll see a second dropdown labeled "Trainee (optional)..."
+3. **In the AM or PM column**, below the main staff dropdown, you'll see two trainee dropdowns labeled "Trainee 1" and "Trainee 2"
 4. **Click the trainee dropdown**
    - Only staff marked as "Staff Overlap" or "BCBA Overlap" in the Training tab will appear
    - Shows their name, role, and a 🎓 icon
@@ -239,4 +243,3 @@ If trainee assignments aren't working:
 3. **Verify training status** is set correctly in Training tab
 4. **Refresh page** to reload data from SharePoint
 5. **Check staff availability** - they may already be assigned elsewhere
-

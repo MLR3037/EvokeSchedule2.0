@@ -621,9 +621,9 @@ export class Schedule {
     this.traineeAssignments.push(traineeAssignment);
   }
 
-  removeTraineeAssignment(studentId, session) {
+  removeTraineeAssignment(studentId, session, assignmentId = null) {
     this.traineeAssignments = this.traineeAssignments.filter(
-      a => !(a.studentId === studentId && a.session === session)
+      a => !(a.studentId === studentId && a.session === session && (!assignmentId || a.id === assignmentId))
     );
   }
 

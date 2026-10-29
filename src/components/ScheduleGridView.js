@@ -432,9 +432,9 @@ const ScheduleGridView = ({
   };
 
   // Render trainee dropdown (ONLY staff who are in training for this student)
-  const renderTraineeDropdown = (student, session, value, onChange, placeholder = "-- None --", disabled = false) => {
+  const renderTraineeDropdown = (student, session, value, onChange, placeholder = "-- None --", disabled = false, slotIndex = 0) => {
     const team = getStudentTeam(student);
-    const currentAssignments = getAssignments(student, session);
+    const currentTrainees = getTraineeAssignments(student, session);
     
     // Filter team to ONLY show staff who are in training (overlap-staff or overlap-bcba status)
     const traineesInTraining = team.filter(teamMember => {
@@ -447,6 +447,11 @@ const ScheduleGridView = ({
       if (value && teamMember.id == value) {
         return true;
       }
+      const alreadySelectedInAnotherSlot = currentTrainees.some((assignment, index) =>
+        (assignment.slotIndex ?? index) !== slotIndex &&
+        String(assignment.staffId) === String(teamMember.id)
+      );
+      if (alreadySelectedInAnotherSlot) return false;
       // Check if staff is available for this session
       const staffMember = staff.find(s => s.id === teamMember.id || s.id == teamMember.id);
       if (!staffMember) return false;
@@ -510,7 +515,7 @@ const ScheduleGridView = ({
   // Get only trainee assignment
   const getTraineeAssignments = (student, session) => {
     // Look in schedule.traineeAssignments (where trainees are actually stored)
-    const trainees = schedule.traineeAssignments.filter(
+    const trainees = (schedule.traineeAssignments || []).filter(
       a => String(a.studentId) === String(student.id) && normalizeSession(a.session) === normalizeSession(session)
     );
     
@@ -536,11 +541,11 @@ const ScheduleGridView = ({
   };
 
   // Get trainee assignment for student/session
-  const getTraineeAssignment = (student, session) => {
+  const getTraineeAssignment = (student, session, slotIndex) => {
     if (!schedule.traineeAssignments) return null;
-    return schedule.traineeAssignments.find(
-      ta => String(ta.studentId) === String(student.id) && normalizeSession(ta.session) === normalizeSession(session)
-    );
+    return getTraineeAssignments(student, session).find((assignment, index) =>
+      (assignment.slotIndex ?? index) === slotIndex
+    ) || null;
   };
 
   // Handle main staff selection
@@ -574,26 +579,22 @@ const ScheduleGridView = ({
   };
   
   // Handle trainee selection (additional staff for training)
-  const handleTraineeSelect = (student, session, staffId) => {
-    console.log('🎓 handleTraineeSelect called:', { studentName: student.name, session, staffId });
+  const handleTraineeSelect = (student, session, staffId, slotIndex) => {
+    console.log('🎓 handleTraineeSelect called:', { studentName: student.name, session, staffId, slotIndex });
+    const existingTrainee = getTraineeAssignment(student, session, slotIndex);
     
     if (!staffId) {
       // Remove trainee assignment
-      const traineeAssignments = getTraineeAssignments(student, session);
-      console.log('  Removing trainee, found:', traineeAssignments.length);
-      if (traineeAssignments.length > 0) {
-        onAssignmentRemove(traineeAssignments[0].id);
+      if (existingTrainee) {
+        onAssignmentRemove(existingTrainee.id);
       }
       return;
     }
 
     const parsedStaffId = parseInt(staffId);
     
-    // Remove existing trainee assignment first
-    const existingTrainees = getTraineeAssignments(student, session);
-    console.log('  Existing trainees:', existingTrainees.length);
-    if (existingTrainees.length > 0) {
-      onAssignmentRemove(existingTrainees[0].id);
+    if (existingTrainee) {
+      onAssignmentRemove(existingTrainee.id);
     }
 
     console.log('  Creating trainee assignment with isTrainee: true');
@@ -604,6 +605,7 @@ const ScheduleGridView = ({
       session: session,
       program: student.program,
       isTrainee: true,
+      slotIndex,
       bypassTeamCheck: true
     });
   };
@@ -840,13 +842,13 @@ const ScheduleGridView = ({
             <tr>
               <th>Client</th>
               <th>AM Staff</th>
-              <th>AM Trainee</th>
+              <th>AM Trainees</th>
               <th>Start</th>
               <th>End</th>
               <th>L1</th>
               <th>L2</th>
               <th>PM Staff</th>
-              <th>PM Trainee</th>
+              <th>PM Trainees</th>
               <th>Start</th>
               <th>End</th>
             </tr>
@@ -881,10 +883,20 @@ const ScheduleGridView = ({
                 pmStaffDisplay = staff1 + (staff2 ? '<br/>' + staff2 : '');
               }
               
-              const amTraineeIndex = student.ratioAM === '2:1' ? 2 : 1;
-              const pmTraineeIndex = student.ratioPM === '2:1' ? 2 : 1;
-              const amTraineeName = amAssignments[amTraineeIndex] ? formatNameShort(staff.find(s => s.id === amAssignments[amTraineeIndex].staffId)?.name || '') : '';
-              const pmTraineeName = pmAssignments[pmTraineeIndex] ? formatNameShort(staff.find(s => s.id === pmAssignments[pmTraineeIndex].staffId)?.name || '') : '';
+              const amTraineeName = (schedule.traineeAssignments || [])
+                .filter(assignment => assignment.studentId === student.id && assignment.session === 'AM')
+                .map((assignment, index) => ({ assignment, slotIndex: assignment.slotIndex ?? index }))
+                .sort((a, b) => a.slotIndex - b.slotIndex)
+                .map(({ assignment }) => formatNameShort(staff.find(s => s.id === assignment.staffId)?.name || ''))
+                .filter(Boolean)
+                .join('<br/>');
+              const pmTraineeName = (schedule.traineeAssignments || [])
+                .filter(assignment => assignment.studentId === student.id && assignment.session === 'PM')
+                .map((assignment, index) => ({ assignment, slotIndex: assignment.slotIndex ?? index }))
+                .sort((a, b) => a.slotIndex - b.slotIndex)
+                .map(({ assignment }) => formatNameShort(staff.find(s => s.id === assignment.staffId)?.name || ''))
+                .filter(Boolean)
+                .join('<br/>');
               
               // Check if lunch coverage is needed
               const amEnd = data.amEnd || defaults.amEnd;
@@ -926,13 +938,13 @@ const ScheduleGridView = ({
             <tr>
               <th>Client</th>
               <th>AM Staff</th>
-              <th>AM Trainee</th>
+              <th>AM Trainees</th>
               <th>Start</th>
               <th>End</th>
               <th>L1</th>
               <th>L2</th>
               <th>PM Staff</th>
-              <th>PM Trainee</th>
+              <th>PM Trainees</th>
               <th>Start</th>
               <th>End</th>
             </tr>
@@ -967,10 +979,20 @@ const ScheduleGridView = ({
                 pmStaffDisplay = staff1 + (staff2 ? '<br/>' + staff2 : '');
               }
               
-              const amTraineeIndex = student.ratioAM === '2:1' ? 2 : 1;
-              const pmTraineeIndex = student.ratioPM === '2:1' ? 2 : 1;
-              const amTraineeName = amAssignments[amTraineeIndex] ? formatNameShort(staff.find(s => s.id === amAssignments[amTraineeIndex].staffId)?.name || '') : '';
-              const pmTraineeName = pmAssignments[pmTraineeIndex] ? formatNameShort(staff.find(s => s.id === pmAssignments[pmTraineeIndex].staffId)?.name || '') : '';
+              const amTraineeName = (schedule.traineeAssignments || [])
+                .filter(assignment => assignment.studentId === student.id && assignment.session === 'AM')
+                .map((assignment, index) => ({ assignment, slotIndex: assignment.slotIndex ?? index }))
+                .sort((a, b) => a.slotIndex - b.slotIndex)
+                .map(({ assignment }) => formatNameShort(staff.find(s => s.id === assignment.staffId)?.name || ''))
+                .filter(Boolean)
+                .join('<br/>');
+              const pmTraineeName = (schedule.traineeAssignments || [])
+                .filter(assignment => assignment.studentId === student.id && assignment.session === 'PM')
+                .map((assignment, index) => ({ assignment, slotIndex: assignment.slotIndex ?? index }))
+                .sort((a, b) => a.slotIndex - b.slotIndex)
+                .map(({ assignment }) => formatNameShort(staff.find(s => s.id === assignment.staffId)?.name || ''))
+                .filter(Boolean)
+                .join('<br/>');
               
               // Check if lunch coverage is needed
               const amEnd = data.amEnd || defaults.amEnd;
@@ -1077,13 +1099,13 @@ const ScheduleGridView = ({
               <tr>
                 <th className="px-3 py-1.5 text-left text-[10px] font-semibold text-white uppercase">Client</th>
             <th className="px-3 py-1.5 text-left text-[10px] font-semibold text-white uppercase">AM Staff</th>
-            <th className="px-3 py-1.5 text-left text-[10px] font-semibold text-white uppercase">AM Trainee</th>
+            <th className="px-3 py-1.5 text-left text-[10px] font-semibold text-white uppercase">AM Trainees</th>
             <th className="px-2 py-1.5 text-left text-[10px] font-semibold text-white uppercase">Start</th>
             <th className="px-2 py-1.5 text-left text-[10px] font-semibold text-white uppercase">End</th>
             <th className="px-2 py-1.5 text-left text-[10px] font-semibold text-white uppercase">L1</th>
             <th className="px-2 py-1.5 text-left text-[10px] font-semibold text-white uppercase">L2</th>
             <th className="px-3 py-1.5 text-left text-[10px] font-semibold text-white uppercase">PM Staff</th>
-            <th className="px-3 py-1.5 text-left text-[10px] font-semibold text-white uppercase">PM Trainee</th>
+            <th className="px-3 py-1.5 text-left text-[10px] font-semibold text-white uppercase">PM Trainees</th>
             <th className="px-2 py-1.5 text-left text-[10px] font-semibold text-white uppercase">Start</th>
             <th className="px-2 py-1.5 text-left text-[10px] font-semibold text-white uppercase">End</th>
           </tr>
@@ -1195,36 +1217,45 @@ const ScheduleGridView = ({
                   <td className={`px-3 py-1.5 ${amSessionShadeClass}`}>
                     {!isAbsentAM && (() => {
                       const traineeAssignments = getTraineeAssignments(student, 'AM');
-                      const traineeStaffId = traineeAssignments[0]?.staffId || null;
                       return (
-                        <div className="flex items-center gap-1">
-                          {renderTraineeDropdown(
-                            student, 
-                            'AM', 
-                            traineeStaffId, 
-                            (e) => handleTraineeSelect(student, 'AM', e.target.value),
-                            "-- None --"
-                          )}
-                          {traineeAssignments.length > 0 && (
-                            <button
-                              onClick={() => {
-                                const assignment = traineeAssignments[0];
-                                if (assignment.isLocked) {
-                                  onAssignmentUnlock(assignment.id);
-                                } else {
-                                  onAssignmentLock(assignment.id);
-                                }
-                              }}
-                              className={`p-1 rounded ${
-                                traineeAssignments[0].isLocked
-                                  ? 'text-red-600 hover:text-red-800 hover:bg-red-50'
-                                  : 'text-green-600 hover:text-green-800 hover:bg-green-50'
-                              }`}
-                              title={traineeAssignments[0].isLocked ? 'Locked (click to unlock)' : 'Unlocked (click to lock)'}
-                            >
-                              {traineeAssignments[0].isLocked ? <Lock className="w-3 h-3" /> : <Unlock className="w-3 h-3" />}
-                            </button>
-                          )}
+                        <div className="space-y-1">
+                          {[0, 1].map(slotIndex => {
+                            const assignment = traineeAssignments.find((trainee, index) =>
+                              (trainee.slotIndex ?? index) === slotIndex
+                            );
+                            return (
+                              <div key={`am-trainee-${slotIndex}`} className="flex items-center gap-1">
+                                {renderTraineeDropdown(
+                                  student,
+                                  'AM',
+                                  assignment?.staffId,
+                                  (e) => handleTraineeSelect(student, 'AM', e.target.value, slotIndex),
+                                  `-- Trainee ${slotIndex + 1} --`,
+                                  false,
+                                  slotIndex
+                                )}
+                                {assignment && (
+                                  <button
+                                    onClick={() => {
+                                      if (assignment.isLocked) {
+                                        onAssignmentUnlock(assignment.id);
+                                      } else {
+                                        onAssignmentLock(assignment.id);
+                                      }
+                                    }}
+                                    className={`p-1 rounded ${
+                                      assignment.isLocked
+                                        ? 'text-red-600 hover:text-red-800 hover:bg-red-50'
+                                        : 'text-green-600 hover:text-green-800 hover:bg-green-50'
+                                    }`}
+                                    title={assignment.isLocked ? 'Locked (click to unlock)' : 'Unlocked (click to lock)'}
+                                  >
+                                    {assignment.isLocked ? <Lock className="w-3 h-3" /> : <Unlock className="w-3 h-3" />}
+                                  </button>
+                                )}
+                              </div>
+                            );
+                          })}
                         </div>
                       );
                     })()}
@@ -1374,36 +1405,45 @@ const ScheduleGridView = ({
                   <td className={`px-3 py-1.5 ${pmSessionShadeClass}`}>
                     {!isAbsentPM && (() => {
                       const traineeAssignments = getTraineeAssignments(student, 'PM');
-                      const traineeStaffId = traineeAssignments[0]?.staffId || null;
                       return (
-                        <div className="flex items-center gap-1">
-                          {renderTraineeDropdown(
-                            student, 
-                            'PM', 
-                            traineeStaffId, 
-                            (e) => handleTraineeSelect(student, 'PM', e.target.value),
-                            "-- None --"
-                          )}
-                          {traineeAssignments.length > 0 && (
-                            <button
-                              onClick={() => {
-                                const assignment = traineeAssignments[0];
-                                if (assignment.isLocked) {
-                                  onAssignmentUnlock(assignment.id);
-                                } else {
-                                  onAssignmentLock(assignment.id);
-                                }
-                              }}
-                              className={`p-1 rounded ${
-                                traineeAssignments[0].isLocked
-                                  ? 'text-red-600 hover:text-red-800 hover:bg-red-50'
-                                  : 'text-green-600 hover:text-green-800 hover:bg-green-50'
-                              }`}
-                              title={traineeAssignments[0].isLocked ? 'Locked (click to unlock)' : 'Unlocked (click to lock)'}
-                            >
-                              {traineeAssignments[0].isLocked ? <Lock className="w-3 h-3" /> : <Unlock className="w-3 h-3" />}
-                            </button>
-                          )}
+                        <div className="space-y-1">
+                          {[0, 1].map(slotIndex => {
+                            const assignment = traineeAssignments.find((trainee, index) =>
+                              (trainee.slotIndex ?? index) === slotIndex
+                            );
+                            return (
+                              <div key={`pm-trainee-${slotIndex}`} className="flex items-center gap-1">
+                                {renderTraineeDropdown(
+                                  student,
+                                  'PM',
+                                  assignment?.staffId,
+                                  (e) => handleTraineeSelect(student, 'PM', e.target.value, slotIndex),
+                                  `-- Trainee ${slotIndex + 1} --`,
+                                  false,
+                                  slotIndex
+                                )}
+                                {assignment && (
+                                  <button
+                                    onClick={() => {
+                                      if (assignment.isLocked) {
+                                        onAssignmentUnlock(assignment.id);
+                                      } else {
+                                        onAssignmentLock(assignment.id);
+                                      }
+                                    }}
+                                    className={`p-1 rounded ${
+                                      assignment.isLocked
+                                        ? 'text-red-600 hover:text-red-800 hover:bg-red-50'
+                                        : 'text-green-600 hover:text-green-800 hover:bg-green-50'
+                                    }`}
+                                    title={assignment.isLocked ? 'Locked (click to unlock)' : 'Unlocked (click to lock)'}
+                                  >
+                                    {assignment.isLocked ? <Lock className="w-3 h-3" /> : <Unlock className="w-3 h-3" />}
+                                  </button>
+                                )}
+                              </div>
+                            );
+                          })}
                         </div>
                       );
                     })()}

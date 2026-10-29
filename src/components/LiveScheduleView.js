@@ -200,25 +200,31 @@ const LiveScheduleView = ({ schedule, students, staff, currentDate, onUpdateSche
       }
 
       // Add trainee rows - CONSOLIDATED: AM and PM trainees on same line
-      const amTrainee = schedule.traineeAssignments?.find(
-        t => t.studentId === student.id && t.session === 'AM'
-      );
-      const pmTrainee = schedule.traineeAssignments?.find(
-        t => t.studentId === student.id && t.session === 'PM'
-      );
+      const getTraineeForSlot = (session, slotIndex) => {
+        const sessionTrainees = (schedule.traineeAssignments || []).filter(
+          trainee => trainee.studentId === student.id && trainee.session === session
+        );
+        return sessionTrainees.find((trainee, index) =>
+          (trainee.slotIndex ?? index) === slotIndex
+        );
+      };
 
-      // If either AM or PM trainee exists, create ONE row with both
-      if ((amTrainee && !isAbsentAM) || (pmTrainee && !isAbsentPM)) {
-        const traineeKey = `${student.id}-trainee`;
+      [0, 1].forEach(slotIndex => {
+        const amTrainee = getTraineeForSlot('AM', slotIndex);
+        const pmTrainee = getTraineeForSlot('PM', slotIndex);
+        if ((!amTrainee || isAbsentAM) && (!pmTrainee || isAbsentPM)) return;
+
+        const traineeKey = slotIndex === 0
+          ? `${student.id}-trainee`
+          : `${student.id}-trainee-${slotIndex}`;
         const traineeData = editableData[traineeKey] || {};
-        
         const amTraineeStaff = amTrainee && !isAbsentAM ? staff.find(s => s.id === amTrainee.staffId) : null;
         const pmTraineeStaff = pmTrainee && !isAbsentPM ? staff.find(s => s.id === pmTrainee.staffId) : null;
-        
+
         rows.push({
           id: traineeKey,
           studentId: student.id,
-          studentName: `${student.name} (Trainee)`,
+          studentName: `${student.name} (Trainee${slotIndex ? ` ${slotIndex + 1}` : ''})`,
           program: student.program,
           amStaff: amTraineeStaff ? formatStaffNameShort(amTraineeStaff.name) : '',
           pmStaff: pmTraineeStaff ? formatStaffNameShort(pmTraineeStaff.name) : '',
@@ -230,7 +236,7 @@ const LiveScheduleView = ({ schedule, students, staff, currentDate, onUpdateSche
           pmEnd: traineeData.pmEnd || (pmTraineeStaff ? defaultPmEnd : ''),
           isTrainee: true
         });
-      }
+      });
     });
 
     console.log('📊 Generated', rows.length, 'schedule rows from', schedule.assignments.length, 'assignments');
