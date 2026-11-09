@@ -293,6 +293,7 @@ export const TrainingTracker = ({ staff, students, sharePointService }) => {
             <option value="All">All Programs</option>
             <option value="Primary">Primary</option>
             <option value="Secondary">Secondary</option>
+            <option value="Transition">Transition</option>
           </select>
 
           {activeTab === 'current' && (

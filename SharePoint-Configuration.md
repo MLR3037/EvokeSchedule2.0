@@ -67,6 +67,7 @@ $select=Title,Program,RatioAM,RatioPM,Team/Title,Team/EMail,Team/Id,IsActive&$ex
 | IsActive | Yes/No | Yes | Whether staff member is currently active |
 | PrimaryProgram | Yes/No | Yes | **Yes/No field** - Can work Primary program |
 | SecondaryProgram | Yes/No | Yes | **Yes/No field** - Can work Secondary program |
+| TransitionProgram | Yes/No | Yes | **Yes/No field** - Can work Transition program |
 | CertificationExpiry | Date and Time | No | Certification expiration date |
 | UserId | Single line of text | Yes | SharePoint User ID (auto-populated) |
 
@@ -100,6 +101,11 @@ $select=Title,Program,RatioAM,RatioPM,Team/Title,Team/EMail,Team/Id,IsActive&$ex
 **Program choices:**
 - Primary
 - Secondary
+- Transition
+
+The `Program` choice column in the `DailyAssignments` list must also allow
+`Transition` so Transition assignments can be saved. Existing Secondary
+assignments remain Secondary; update client classifications deliberately.
 
 **RatioAM choices:**
 - 1:1

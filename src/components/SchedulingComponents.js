@@ -20,6 +20,7 @@ export const ScheduleTableView = ({
     const normalized = String(value || '').trim().toLowerCase();
     if (normalized === 'primary') return 'Primary';
     if (normalized === 'secondary') return 'Secondary';
+    if (normalized === 'transition') return 'Transition';
     return String(value || '').trim();
   };
 
@@ -2290,9 +2291,7 @@ export const SessionSummary = ({ schedule, staff, students, session, program, se
     if (!s.isActive) return false;
     if (s.isAvailableForSession(session, selectedDate)) return false;
     // Only show staff who work with this program
-    const worksWithProgram = program === 'Primary' 
-      ? s.primaryProgram 
-      : s.secondaryProgram;
+    const worksWithProgram = s.canWorkProgram(program);
     if (!worksWithProgram) return false;
     // Exclude if they're out-of-session (we'll show them separately)
     if (session === 'AM' && (s.outOfSessionAM || s.outOfSessionFullDay)) return false;
@@ -2314,9 +2313,7 @@ export const SessionSummary = ({ schedule, staff, students, session, program, se
   const outStaff = staff.filter(s => {
     if (!s.isActive) return false;
     // Only show staff who work with this program
-    const worksWithProgram = program === 'Primary' 
-      ? s.primaryProgram 
-      : s.secondaryProgram;
+    const worksWithProgram = s.canWorkProgram(program);
     if (!worksWithProgram) return false;
     if (session === 'AM' && (s.outOfSessionAM || s.outOfSessionFullDay)) return true;
     if (session === 'PM' && (s.outOfSessionPM || s.outOfSessionFullDay)) return true;
@@ -2492,9 +2489,7 @@ export const SessionSummary = ({ schedule, staff, students, session, program, se
     if (!staffMember.isAvailableForSession(session, selectedDate)) return false;
     
     // Check if staff works with this program
-    const worksWithProgram = program === 'Primary' 
-      ? staffMember.primaryProgram 
-      : staffMember.secondaryProgram;
+    const worksWithProgram = staffMember.canWorkProgram(program);
     
     if (!worksWithProgram) return false;
     
@@ -2550,9 +2545,7 @@ export const SessionSummary = ({ schedule, staff, students, session, program, se
     if (!staffMember.isActive) return false;
     
     // Check if staff works with this program
-    const worksWithProgram = program === 'Primary' 
-      ? staffMember.primaryProgram 
-      : staffMember.secondaryProgram;
+    const worksWithProgram = staffMember.canWorkProgram(program);
     
     if (!worksWithProgram) return false;
     
@@ -2578,9 +2571,7 @@ export const SessionSummary = ({ schedule, staff, students, session, program, se
         const staffMember = staff.find(s => s.id === tempStaff.staffId);
         if (staffMember && (staffMember.role === 'RBT' || staffMember.role === 'BS')) {
           // Check if staff normally works with THIS program
-          const staffWorksWithThisProgram = program === 'Primary' 
-            ? staffMember.primaryProgram 
-            : staffMember.secondaryProgram;
+          const staffWorksWithThisProgram = staffMember.canWorkProgram(program);
           
           if (student.program === program) {
             // This temp staff is assigned TO this program
@@ -2704,9 +2695,7 @@ export const SessionSummary = ({ schedule, staff, students, session, program, se
     const staffMember = staff.find(s => s.id === assignment.staffId);
     if (staffMember && staffMember.role !== 'RBT' && staffMember.role !== 'BS') {
       // This is a non-direct staff (BCBA, etc.) who is assigned to a client
-      const worksWithProgram = program === 'Primary' 
-        ? staffMember.primaryProgram 
-        : staffMember.secondaryProgram;
+      const worksWithProgram = staffMember.canWorkProgram(program);
       
       // Only count if they normally work with this program
       if (worksWithProgram) {

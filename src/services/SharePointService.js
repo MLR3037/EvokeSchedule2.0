@@ -387,6 +387,7 @@ export class SharePointService {
         'Role',
         'PrimaryProgram',
         'SecondaryProgram',
+        'TransitionProgram',
         'IsActive',
         'AbsentAM',
         'AbsentPM',
@@ -494,9 +495,11 @@ export class SharePointService {
           name: staffName,
           role: item.Role || 'RBT',
           email: staffEmail,
-          program: item.Program || null,
+          program: !item.PrimaryProgram && !item.SecondaryProgram && !item.TransitionProgram
+            ? item.Program || null : null,
           primaryProgram: item.PrimaryProgram === true,
           secondaryProgram: item.SecondaryProgram === true,
+          transitionProgram: item.TransitionProgram === true,
           isActive: item.IsActive !== false,
           absentAM: item.AbsentAM === true,
           absentPM: item.AbsentPM === true,
@@ -508,7 +511,7 @@ export class SharePointService {
           outOfSessionFullDay: item.OutOfSessionFullDay === true
         });
 
-        console.log(`✅ Loaded staff: ${staff.name} (${staff.role}) - Primary: ${staff.primaryProgram}, Secondary: ${staff.secondaryProgram}`);
+        console.log(`✅ Loaded staff: ${staff.name} (${staff.role}) - Primary: ${staff.primaryProgram}, Secondary: ${staff.secondaryProgram}, Transition: ${staff.transitionProgram}`);
         return staff;
       });
 
@@ -1080,6 +1083,7 @@ export class SharePointService {
         Role: staff.role,
         PrimaryProgram: staff.primaryProgram,
         SecondaryProgram: staff.secondaryProgram,
+        TransitionProgram: staff.transitionProgram,
         IsActive: staff.isActive,
         AbsentAM: staff.absentAM || false,
         AbsentPM: staff.absentPM || false,
@@ -1855,6 +1859,9 @@ export class SharePointService {
     }
     if (normalized === 'secondary') {
       return 'Secondary';
+    }
+    if (normalized === 'transition') {
+      return 'Transition';
     }
 
     return String(program || '').trim();

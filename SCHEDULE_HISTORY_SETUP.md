@@ -37,7 +37,7 @@ The enhanced save functionality requires two additional SharePoint lists to trac
 | StaffID | Number | Yes | - | ID of assigned staff member |
 | StudentID | Number | Yes | - | ID of assigned student |
 | Session | Choice | Yes | - | AM or PM session |
-| Program | Choice | Yes | - | Primary or Secondary program |
+| Program | Choice | Yes | - | Primary, Secondary, or Transition program |
 | AssignmentType | Single line of text | No | Standard | Type of assignment |
 | CreatedDate | Date and Time | No | Today | When assignment was created |
 | IsLocked | Yes/No | No | No | Whether assignment was manually locked |
@@ -118,7 +118,7 @@ The enhanced save functionality requires two additional SharePoint lists to trac
    
    **Program:**
    - Type: Choice
-   - Choices: Primary, Secondary
+   - Choices: Primary, Secondary, Transition
    - Required: Yes
    
    **AssignmentType:**

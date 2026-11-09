@@ -20,6 +20,7 @@ export const StaffForm = ({
     isActive: staff?.isActive ?? true,
     primaryProgram: staff?.primaryProgram || false, // Yes/No field
     secondaryProgram: staff?.secondaryProgram || false, // Yes/No field
+    transitionProgram: staff?.transitionProgram || false,
     userId: staff?.userId || '',
     staffPerson: staff?.staffPerson || null
   });
@@ -87,7 +88,7 @@ export const StaffForm = ({
       newErrors.role = 'Role is required';
     }
 
-    if (!formData.primaryProgram && !formData.secondaryProgram) {
+    if (!formData.primaryProgram && !formData.secondaryProgram && !formData.transitionProgram) {
       newErrors.programs = 'At least one program must be selected';
     }
 
@@ -231,6 +232,15 @@ export const StaffForm = ({
                   className="rounded border-gray-300 text-blue-600 focus:ring-blue-500"
                 />
                 <span className="text-sm">Secondary Program</span>
+              </label>
+              <label className="flex items-center space-x-2">
+                <input
+                  type="checkbox"
+                  checked={formData.transitionProgram}
+                  onChange={(e) => handleInputChange('transitionProgram', e.target.checked)}
+                  className="rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                />
+                <span className="text-sm">Transition Program</span>
               </label>
             </div>
             {errors.programs && (

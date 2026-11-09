@@ -552,6 +552,7 @@ const LiveScheduleView = ({ schedule, students, staff, currentDate, onUpdateSche
                 <option value="All" ${programFilter === 'All' ? 'selected' : ''}>All Programs</option>
                 <option value="Primary" ${programFilter === 'Primary' ? 'selected' : ''}>Primary</option>
                 <option value="Secondary" ${programFilter === 'Secondary' ? 'selected' : ''}>Secondary</option>
+                <option value="Transition" ${programFilter === 'Transition' ? 'selected' : ''}>Transition</option>
               </select>
               <label class="filter-label">Sort:</label>
               <select id="sortBy" onchange="updateSort()">
@@ -1020,6 +1021,7 @@ const LiveScheduleView = ({ schedule, students, staff, currentDate, onUpdateSche
               <option value="All">All Programs</option>
               <option value="Primary">Primary</option>
               <option value="Secondary">Secondary</option>
+              <option value="Transition">Transition</option>
             </select>
           </div>
           

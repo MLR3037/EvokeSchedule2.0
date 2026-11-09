@@ -189,9 +189,7 @@ export const TeamManagement = ({
     if (view === 'clients-by-staff') {
       data = Object.values(clientsByStaff).filter(item => {
         const matchesSearch = item.staff.name.toLowerCase().includes(searchTerm.toLowerCase());
-        const matchesProgram = !selectedProgram || 
-          (selectedProgram === 'Primary' && item.staff.primaryProgram) ||
-          (selectedProgram === 'Secondary' && item.staff.secondaryProgram);
+        const matchesProgram = !selectedProgram || item.staff.canWorkProgram(selectedProgram);
         return matchesSearch && matchesProgram;
       });
       // Sort by role first, then alphabetically by name
@@ -365,6 +363,7 @@ export const TeamManagement = ({
                 <option value="">All Programs</option>
                 <option value="Primary">Primary</option>
                 <option value="Secondary">Secondary</option>
+                <option value="Transition">Transition</option>
               </select>
             </div>
           </div>
@@ -400,6 +399,9 @@ export const TeamManagement = ({
                               )}
                               {item.staff.secondaryProgram && (
                                 <span className="px-2 py-1 bg-green-100 text-green-700 rounded text-xs">Secondary</span>
+                              )}
+                              {item.staff.transitionProgram && (
+                                <span className="px-2 py-1 bg-purple-100 text-purple-700 rounded text-xs">Transition</span>
                               )}
                             </div>
                           </div>

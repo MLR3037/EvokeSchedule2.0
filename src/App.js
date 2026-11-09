@@ -1236,6 +1236,18 @@ const handleManualAssignment = ({
     return;
   }
 
+  const pairedStudent = student.isPaired() ? student.getPairedStudent(students) : null;
+  if (pairedStudent && pairedStudent.program !== student.program &&
+      (student.program === 'Transition' || pairedStudent.program === 'Transition')) {
+    alert('Paired clients must be in the same program before assigning staff.');
+    return;
+  }
+
+  if (schedule.isStaffAssignedToOtherProgram(staffId, session, student.program)) {
+    alert(`${staffMember.name} is already assigned to another program during ${session}.`);
+    return;
+  }
+
   // CRITICAL CHECK 1: Staff must be on student's team (unless bypassed for temp assignments)
   if (!bypassTeamCheck && !student.teamIds.includes(staffId)) {
     alert(`❌ Cannot assign ${staffMember.name} to ${student.name}.\n\n${staffMember.name} is not on ${student.name}'s team.\n\nOnly team members can be assigned to a student.`);
@@ -2477,6 +2489,20 @@ const handleAssignmentRemove = (assignmentId) => {
                     onAssignmentRemove={handleAssignmentRemove}
                     onGetRecentTrainingPairs={handleGetRecentTrainingPairs}
                   />
+                  {['AM', 'PM'].map(session => (
+                    <SessionSummary
+                      key={`Transition-${session}`}
+                      schedule={schedule}
+                      staff={staff}
+                      students={students}
+                      session={session}
+                      program="Transition"
+                      selectedDate={currentDate}
+                      onManualAssignment={handleManualAssignment}
+                      onAssignmentRemove={handleAssignmentRemove}
+                      onGetRecentTrainingPairs={handleGetRecentTrainingPairs}
+                    />
+                  ))}
                 </div>
                 
                 {/* Schedule Grid View */}
@@ -2552,6 +2578,7 @@ const handleAssignmentRemove = (assignmentId) => {
                         <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Role</th>
                         <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Primary Program</th>
                         <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Secondary Program</th>
+                        <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Transition Program</th>
                         <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Status</th>
                         <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">Actions</th>
                       </tr>
@@ -2574,6 +2601,13 @@ const handleAssignmentRemove = (assignmentId) => {
                           </td>
                           <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
                             {staffMember.secondaryProgram ? (
+                              <Check className="w-5 h-5 text-green-600" />
+                            ) : (
+                              <span className="text-gray-300">-</span>
+                            )}
+                          </td>
+                          <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                            {staffMember.transitionProgram ? (
                               <Check className="w-5 h-5 text-green-600" />
                             ) : (
                               <span className="text-gray-300">-</span>

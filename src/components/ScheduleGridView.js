@@ -21,11 +21,12 @@ const ScheduleGridView = ({
     const normalized = String(value || '').trim().toLowerCase();
     if (normalized === 'primary') return 'Primary';
     if (normalized === 'secondary') return 'Secondary';
+    if (normalized === 'transition') return 'Transition';
     return String(value || '').trim();
   };
 
   const [editableData, setEditableData] = useState({});
-  const [expandedProgram, setExpandedProgram] = useState('Primary'); // 'Primary', 'Secondary', or null for both
+  const [expandedProgram, setExpandedProgram] = useState('Primary'); // null shows all programs
   const [fullScreenMode, setFullScreenMode] = useState(false); // Toggle for full screen view
 
   // Generate a unique localStorage key based on the selected date
@@ -76,6 +77,9 @@ const ScheduleGridView = ({
   
   const secondaryStudents = students
     .filter(s => s.isActive && s.program === 'Secondary')
+    .sort((a, b) => (a?.name || '').localeCompare(b?.name || ''));
+  const transitionStudents = students
+    .filter(s => s.isActive && s.program === 'Transition')
     .sort((a, b) => (a?.name || '').localeCompare(b?.name || ''));
 
   // Calculate staff usage and determine highlighting colors
@@ -455,6 +459,8 @@ const ScheduleGridView = ({
       // Check if staff is available for this session
       const staffMember = staff.find(s => s.id === teamMember.id || s.id == teamMember.id);
       if (!staffMember) return false;
+
+      if (schedule.isStaffAssignedToOtherProgram(staffMember.id, session, student.program)) return false;
       
       // EXCLUDE staff who are absent or out of session for this session
       if (!staffMember.isAvailableForSession(session)) {
@@ -699,11 +705,11 @@ const ScheduleGridView = ({
 
   // Generate static HTML for popup
   const generatePopupHTML = () => {
-    // Build absent/out summary for both programs
+    // Build absent/out summary across programs
     const absentClients = [];
     const outClients = [];
     
-    [...primaryStudents, ...secondaryStudents].forEach(student => {
+    [...primaryStudents, ...secondaryStudents, ...transitionStudents].forEach(student => {
       const isAbsentAM = !student.isAvailableForSession('AM', selectedDate);
       const isAbsentPM = !student.isAvailableForSession('PM', selectedDate);
       const isFullyAbsent = isAbsentAM && isAbsentPM;
@@ -932,7 +938,8 @@ const ScheduleGridView = ({
           </tbody>
         </table>
         
-        <h2 style="margin-top: 30px; color: #7c3aed;">Secondary</h2>
+        ${[['Secondary', secondaryStudents], ['Transition', transitionStudents]].map(([programName, programStudents]) => `
+        <h2 style="margin-top: 30px; color: #7c3aed;">${programName}</h2>
         <table>
           <thead>
             <tr>
@@ -950,7 +957,7 @@ const ScheduleGridView = ({
             </tr>
           </thead>
           <tbody>
-            ${secondaryStudents.map(student => {
+            ${programStudents.map(student => {
               const amAssignments = getAssignments(student, 'AM');
               const pmAssignments = getAssignments(student, 'PM');
               
@@ -1026,7 +1033,7 @@ const ScheduleGridView = ({
               `;
             }).join('')}
           </tbody>
-        </table>
+        </table>`).join('')}
       </body>
       </html>
     `;
@@ -1042,7 +1049,7 @@ const ScheduleGridView = ({
         <div className="bg-white rounded-lg shadow p-3">
           <button
             onClick={() => setExpandedProgram(programName)}
-            className={`text-sm font-semibold ${headerColor === 'bg-blue-600' ? 'text-blue-600' : 'text-purple-600'} hover:underline`}
+            className={`text-sm font-semibold ${headerColor === 'bg-blue-600' ? 'text-blue-600' : headerColor === 'bg-green-600' ? 'text-green-600' : 'text-purple-600'} hover:underline`}
           >
             + Expand {programName}
           </button>
@@ -1089,7 +1096,7 @@ const ScheduleGridView = ({
               onClick={() => setExpandedProgram(null)}
               className="text-white text-xs hover:underline"
             >
-              {isExpanded ? 'Show Both Programs' : ''}
+              {isExpanded ? 'Show All Programs' : ''}
             </button>
           </div>
         </div>
@@ -1535,6 +1542,8 @@ const ScheduleGridView = ({
 
       {/* Secondary Program Table */}
       {renderProgramTable(secondaryStudents, 'Secondary', 'bg-purple-600')}
+
+      {renderProgramTable(transitionStudents, 'Transition', 'bg-green-600')}
     </div>
   );
 };

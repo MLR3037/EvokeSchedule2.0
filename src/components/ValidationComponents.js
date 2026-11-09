@@ -497,7 +497,7 @@ export const ConstraintRulesDisplay = () => {
       description: 'Assignments must respect program-specific session times',
       examples: [
         'Primary AM: 8:45-11:30, PM: 12:00-15:00',
-        'Secondary AM: 8:45-12:00, PM: 12:30-15:00'
+        'Secondary and Transition AM: 8:45-12:00, PM: 12:30-15:00'
       ]
     }
   ];

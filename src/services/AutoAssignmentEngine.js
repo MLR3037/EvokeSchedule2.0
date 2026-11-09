@@ -734,7 +734,7 @@ export class AutoAssignmentEngine {
     console.log('📊 Starting comprehensive reassignment to eliminate all gaps...');
 
     const sessions = ['AM', 'PM'];
-    const programs = [PROGRAMS.PRIMARY, PROGRAMS.SECONDARY];
+    const programs = Object.values(PROGRAMS);
 
     // First, identify all unassigned students
     const unassignedStudents = [];
@@ -882,6 +882,10 @@ export class AutoAssignmentEngine {
    * Returns true on success, false if the trainer slot is no longer available.
    */
   placeTrainingPair(trainee, trainer, student, session, schedule) {
+    if (schedule.isStaffAssignedToOtherProgram(trainee.id, session, student.program)) {
+      console.log(`  ⚠️ Trainee ${trainee.name} is assigned to another program for ${session} — skipping`);
+      return false;
+    }
     // Re-check trainer availability at placement time (state may have changed during loop)
     if (!schedule.isStaffAvailable(trainer.id, session, student.program)) {
       console.log(`  ⚠️ Trainer ${trainer.name} no longer available for ${session} — skipping`);
@@ -1123,7 +1127,7 @@ export class AutoAssignmentEngine {
 
     // PHASE 1: Initial assignment pass
     const sessions = ['AM', 'PM'];
-    const programs = [PROGRAMS.PRIMARY, PROGRAMS.SECONDARY];
+    const programs = Object.values(PROGRAMS);
 
     for (const program of programs) {
       for (const session of sessions) {
@@ -1872,7 +1876,7 @@ export class AutoAssignmentEngine {
 
     // Assignments by session
     ['AM', 'PM'].forEach(session => {
-      [PROGRAMS.PRIMARY, PROGRAMS.SECONDARY].forEach(program => {
+      Object.values(PROGRAMS).forEach(program => {
         const key = `${program}_${session}`;
         // Defensive check: ensure schedule has the required method
         if (typeof schedule.getAssignmentsForSession === 'function') {
@@ -2260,7 +2264,7 @@ export class AutoAssignmentEngine {
    */
   generateUltimateFinalReport(schedule, staff, students) {
     const sessions = ['AM', 'PM'];
-    const programs = [PROGRAMS.PRIMARY, PROGRAMS.SECONDARY];
+    const programs = Object.values(PROGRAMS);
     const unassigned = [];
     let totalAssignments = 0;
 
@@ -2591,7 +2595,7 @@ export class AutoAssignmentEngine {
 
     // Find all unassigned students (gaps)
     const sessions = ['AM', 'PM'];
-    const programs = [PROGRAMS.PRIMARY, PROGRAMS.SECONDARY];
+    const programs = Object.values(PROGRAMS);
 
     // Perform one pass of swap optimization
     // User can click Smart Swap again if they want more improvements

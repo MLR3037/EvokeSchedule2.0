@@ -16,7 +16,7 @@ export const AttendanceManagement = ({
   const DEFAULT_EXPECTED_TIME = '12:00 PM';
   const [view, setView] = useState('staff'); // 'staff' or 'clients'
   const [searchTerm, setSearchTerm] = useState('');
-  const [programFilter, setProgramFilter] = useState('All'); // 'All' | 'Primary' | 'Secondary'
+  const [programFilter, setProgramFilter] = useState('All');
   const [sortOrder, setSortOrder] = useState('asc'); // 'asc' | 'desc'
 
   const selectedDate = useMemo(() => {
@@ -431,7 +431,7 @@ export const AttendanceManagement = ({
           {/* Program filter — clients view only */}
           {view === 'clients' && (
             <div className="flex bg-gray-100 rounded-lg p-1">
-              {['All', 'Primary', 'Secondary'].map(prog => (
+              {['All', 'Primary', 'Secondary', 'Transition'].map(prog => (
                 <button
                   key={prog}
                   onClick={() => setProgramFilter(prog)}

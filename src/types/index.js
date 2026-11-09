@@ -21,14 +21,15 @@ export const ROLES = STAFF_ROLES;
 // Program types (Yes/No columns)
 export const PROGRAMS = {
   PRIMARY: 'Primary',
-  SECONDARY: 'Secondary'
+  SECONDARY: 'Secondary',
+  TRANSITION: 'Transition'
 };
 
-// Collapse the future four-program taxonomy into the app's two scheduling buckets.
 export const normalizeProgram = (program) => {
   const normalized = String(program || '').trim().toLowerCase();
   if (normalized === 'ei' || normalized === 'primary') return PROGRAMS.PRIMARY;
-  if (normalized === 'secondary' || normalized === 'transition') return PROGRAMS.SECONDARY;
+  if (normalized === 'secondary') return PROGRAMS.SECONDARY;
+  if (normalized === 'transition') return PROGRAMS.TRANSITION;
   return PROGRAMS.PRIMARY;
 };
 
@@ -39,6 +40,10 @@ export const SESSION_TIMES = {
     PM: { start: '12:00', end: '15:00' }
   },
   SECONDARY: {
+    AM: { start: '8:45', end: '12:00' },
+    PM: { start: '12:30', end: '15:00' }
+  },
+  TRANSITION: {
     AM: { start: '8:45', end: '12:00' },
     PM: { start: '12:30', end: '15:00' }
   }
@@ -66,6 +71,7 @@ export class Staff {
     program = null,
     primaryProgram = false, // Can be boolean or program string
     secondaryProgram = false, // Can be boolean or program string
+    transitionProgram = false,
     isActive = true,
     absentAM = false, // Absent for AM session
     absentPM = false, // Absent for PM session
@@ -107,6 +113,9 @@ export class Staff {
       this.secondaryProgram = staffSecondaryProgram; // Boolean for Yes/No column
       this.secondaryProgramType = staffSecondaryProgram ? PROGRAMS.SECONDARY : null;
     }
+    this.transitionProgram = typeof transitionProgram === 'string'
+      ? normalizeProgram(transitionProgram) === PROGRAMS.TRANSITION
+      : transitionProgram || (rawStaffProgram && normalizeProgram(rawStaffProgram) === PROGRAMS.TRANSITION) || false;
     
     this.isActive = isActive;
     
@@ -132,6 +141,8 @@ export class Staff {
       return this.primaryProgram;
     } else if (program === PROGRAMS.SECONDARY || program === 'Secondary') {
       return this.secondaryProgram;
+    } else if (program === PROGRAMS.TRANSITION || program === 'Transition') {
+      return this.transitionProgram;
     }
     return false;
   }
@@ -458,7 +469,7 @@ export class Assignment {
     studentId,
     studentName = '',
     session, // 'AM' or 'PM'
-    program, // 'Primary' or 'Secondary'
+    program,
     date,
     isLocked = false,
     assignedBy = 'auto', // 'auto' or 'manual'
@@ -519,9 +530,18 @@ export class Schedule {
     return this.assignments.filter(a => String(a.studentId) === String(studentId));
   }
 
+  isStaffAssignedToOtherProgram(staffId, session, program) {
+    const normalize = value => String(value || '').trim().toLowerCase();
+    return [...this.assignments, ...this.traineeAssignments].some(assignment =>
+      String(assignment.staffId) === String(staffId) &&
+      normalize(assignment.session) === normalize(session) &&
+      normalize(assignment.program) !== normalize(program)
+    );
+  }
+
   isStaffAvailable(staffId, session, program) {
     // Check for conflicts in the SAME SESSION across ALL PROGRAMS
-    // A staff member can't work both Primary and Secondary in the same session
+    // A staff member can't work in multiple programs in the same session
     // Normalize session values to ensure case-insensitive comparison (AM/am/Am all match)
     const normalizedSession = String(session || '').trim().toUpperCase();
     const sessionAssignments = this.assignments.filter(a => 
